@@ -27,6 +27,9 @@ jobs:
           node-version: 22
 
 
+      - name: Configure git for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.CARGO_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install npm deps
         run: npm install
 
