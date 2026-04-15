@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "io.librewin.fade",
+  "name": "Fade",
+  "version": "0.1.0",
+  "description": "Convert and process images, video, and audio",
+  "permissions": {
+    "filesystem": {
+      "read": true,
+      "write": true,
+      "scope": ["$ALL"]
+    },
+    "network": {
+      "outbound": false,
+      "inbound": false
+    },
+    "subprocess": ["ffmpeg", "magick", "convert"],
+    "webview": false,
+    "notifications": false,
+    "xattr": false
+  },
+  "runtime_deps": ["ffmpeg", "imagemagick"]
+}

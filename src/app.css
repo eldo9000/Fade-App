@@ -1,0 +1,5 @@
+@import "tailwindcss";
+@import "@fontsource/geist/latin.css";
+@import "@libre/ui/src/tokens.css";
+
+@variant dark (&:where(.dark, .dark *));

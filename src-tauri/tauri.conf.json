@@ -1,0 +1,54 @@
+{
+  "productName": "Fade",
+  "version": "0.1.0",
+  "identifier": "io.librewin.fade",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1427",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Fade",
+        "width": 980,
+        "height": 660,
+        "minWidth": 720,
+        "minHeight": 500,
+        "decorations": false,
+        "resizable": true,
+        "center": true,
+        "transparent": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "linux": {
+      "deb": {
+        "depends": [
+          "ffmpeg",
+          "imagemagick"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "ffmpeg",
+          "ImageMagick"
+        ]
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ]
+  }
+}

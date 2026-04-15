@@ -1,0 +1,28 @@
+{
+  "name": "fade",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/geist": "^5.2.8",
+    "@libre/ui": "file:./common-js",
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7",
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "^2",
+    "svelte": "^5",
+    "tailwindcss": "^4",
+    "vite": "^8",
+    "vitest": "^3.0.0",
+    "jsdom": "^26.0.0"
+  }
+}
