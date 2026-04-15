@@ -49,8 +49,244 @@
   // Browse file input
   let fileInput = $state(null);
 
+  // Preview video element — bound so Timeline can drive it
+  let videoEl = $state(null);
+
+  // Advanced audio panel — persists across file switches
+  let vizExpanded = $state(false);
+
+  // Compression diff preview
+  let diffClipPath   = $state(null);
+  let diffLoading    = $state(false);
+  let diffError      = $state(null);
+  let diffNote       = $state(null);
+  let diffHandleSecs = $state(3); // 1 = fast, 3 = accurate, 10 = AV1-safe
+
+  // Mini scrubber state for the diff clip
+  let diffVideoEl     = $state(null);
+  let diffCurrentTime = $state(0);
+  let diffDuration    = $state(0);
+  let diffPlaying     = $state(false);
+  let diffTrackEl     = $state(null);
+  let diffDragging    = $state(false);
+
+  function toggleDiffPlay() {
+    if (!diffVideoEl) return;
+    if (diffPlaying) diffVideoEl.pause();
+    else diffVideoEl.play().catch(() => {});
+  }
+
+  function _seekDiffAt(clientX) {
+    if (!diffTrackEl || !diffVideoEl || !diffDuration) return;
+    const r = diffTrackEl.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    diffVideoEl.currentTime = f * diffDuration;
+  }
+
+  function onDiffTrackDown(e) {
+    if (!diffVideoEl || !diffDuration) return;
+    diffDragging = true;
+    diffVideoEl.pause();
+    _seekDiffAt(e.clientX);
+  }
+
+  function onDiffWindowMouseMove(e) {
+    if (diffDragging) _seekDiffAt(e.clientX);
+  }
+
+  function onDiffWindowMouseUp() {
+    diffDragging = false;
+    if (_qualityDragging) { _qualityDragging = false; onQualityEnd(); }
+  }
+
+  // ── Image quality diff ────────────────────────────────────────────────────
+  let imgDiffMode       = $state(false);
+  let imgDiffPath       = $state(null);
+  let imgCompressedPath = $state(null);
+  let imgDiffLoading    = $state(false);
+  let _imgDiffTimer     = null;
+  let _qualityDragging  = false;
+
+  function _clearImageDiff() {
+    imgDiffMode = false; imgDiffPath = null; imgCompressedPath = null;
+  }
+
+  async function _runImageDiff() {
+    if (!selectedItem || selectedItem.mediaType !== 'image') return;
+    imgDiffLoading = true;
+    try {
+      const result = await invoke('preview_image_quality', {
+        path: selectedItem.path,
+        quality: imageOptions.quality,
+        outputFormat: imageOptions.output_format,
+      });
+      imgDiffPath       = result.diff_path;
+      imgCompressedPath = result.compressed_path;
+    } catch { /* non-fatal — lossless format or magick missing */ }
+    finally { imgDiffLoading = false; }
+  }
+
+  function onQualityStart() {
+    if (!['jpeg', 'webp'].includes(imageOptions.output_format)) return;
+    _qualityDragging = true;
+    imgDiffMode = true;
+    _runImageDiff();
+  }
+
+  function onQualityInput() {
+    if (!imgDiffMode) return;
+    if (_imgDiffTimer) clearTimeout(_imgDiffTimer);
+    _imgDiffTimer = setTimeout(_runImageDiff, 150);
+  }
+
+  function onQualityEnd() {
+    if (_imgDiffTimer) { clearTimeout(_imgDiffTimer); _imgDiffTimer = null; }
+    imgDiffMode = false;
+    // Leave imgCompressedPath set so the preview shows the compressed result.
+    // It clears on file change or format change.
+  }
+
+  // Clear image diff when the selected file or output format changes
+  $effect(() => { selectedId; _clearImageDiff(); });
+  $effect(() => { imageOptions.output_format; _clearImageDiff(); });
+
+  // ── Crop state ─────────────────────────────────────────────────────────────
+  let previewAreaEl  = $state(null);
+  let imgEl          = $state(null);
+  let imgNaturalW    = $state(0);
+  let imgNaturalH    = $state(0);
+  let cropActive     = $state(false);
+  let cropAspect     = $state(null);
+  let cropRect       = $state({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
+  let cropDrag       = $state(null);
+
+  $effect(() => { selectedId; cropActive = false; imgNaturalW = 0; imgNaturalH = 0; });
+
+  function onImgLoad(e) {
+    imgNaturalW = e.currentTarget.naturalWidth;
+    imgNaturalH = e.currentTarget.naturalHeight;
+  }
+
+  function getImgBounds() {
+    if (!imgEl || !previewAreaEl) return null;
+    const ir = imgEl.getBoundingClientRect();
+    const pr = previewAreaEl.getBoundingClientRect();
+    return { x: ir.left - pr.left, y: ir.top - pr.top, w: ir.width, h: ir.height };
+  }
+
+  function initCropRect(aspect) {
+    if (!aspect || !imgNaturalW || !imgNaturalH) return { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+    const nr = aspect * imgNaturalH / imgNaturalW;
+    if (nr <= 1) {
+      const rw = 0.8, rh = rw / nr;
+      if (rh <= 1) return { x: 0.1, y: (1 - rh) / 2, w: rw, h: rh };
+      const rh2 = 0.8, rw2 = rh2 * nr;
+      return { x: (1 - rw2) / 2, y: 0.1, w: rw2, h: rh2 };
+    }
+    const rh = 0.8, rw = rh * nr;
+    if (rw <= 1) return { x: (1 - rw) / 2, y: 0.1, w: rw, h: rh };
+    const rw2 = 0.8, rh2 = rw2 / nr;
+    return { x: 0.1, y: (1 - rh2) / 2, w: rw2, h: rh2 };
+  }
+
+  function activateCrop(aspect) {
+    cropAspect = aspect;
+    cropRect = initCropRect(aspect);
+    cropActive = true;
+  }
+
+  const CROP_MIN = 0.04;
+
+  function startCropDrag(e, type) {
+    e.stopPropagation();
+    const b = getImgBounds();
+    if (!b) return;
+    cropDrag = { type, sx: e.clientX, sy: e.clientY, r0: { ...cropRect }, b };
+  }
+
+  function onCropDragMove(e) {
+    if (!cropDrag) return;
+    const { type, sx, sy, r0, b } = cropDrag;
+    const dx = (e.clientX - sx) / b.w;
+    const dy = (e.clientY - sy) / b.h;
+    let { x, y, w, h } = r0;
+
+    if (type === 'move') {
+      x = Math.max(0, Math.min(1 - w, x + dx));
+      y = Math.max(0, Math.min(1 - h, y + dy));
+    } else {
+      if (type.includes('w')) { const nx = Math.max(0, Math.min(x + w - CROP_MIN, x + dx)); w = x + w - nx; x = nx; }
+      if (type.includes('e')) w = Math.max(CROP_MIN, Math.min(1 - x, w + dx));
+      if (type.includes('n')) { const ny = Math.max(0, Math.min(y + h - CROP_MIN, y + dy)); h = y + h - ny; y = ny; }
+      if (type.includes('s')) h = Math.max(CROP_MIN, Math.min(1 - y, h + dy));
+      if (cropAspect && imgNaturalW && imgNaturalH) {
+        const nr = cropAspect * imgNaturalH / imgNaturalW;
+        if (type.includes('n') || type === 's') { w = Math.min(1 - x, Math.max(CROP_MIN, h * nr)); }
+        else { h = Math.min(1 - y, Math.max(CROP_MIN, w / nr)); }
+      }
+    }
+    cropRect = { x, y, w, h };
+  }
+
+  function onCropDragEnd() { cropDrag = null; }
+
+  function applyCrop() {
+    if (imgNaturalW && imgNaturalH) {
+      imageOptions.crop_x = Math.round(cropRect.x * imgNaturalW);
+      imageOptions.crop_y = Math.round(cropRect.y * imgNaturalH);
+      imageOptions.crop_width = Math.round(cropRect.w * imgNaturalW);
+      imageOptions.crop_height = Math.round(cropRect.h * imgNaturalH);
+    }
+    cropActive = false;
+  }
+
+  function cancelCrop() { cropActive = false; }
+
+  function clearCropValues() {
+    imageOptions.crop_x = 0; imageOptions.crop_y = 0;
+    imageOptions.crop_width = null; imageOptions.crop_height = null;
+    cropActive = false;
+  }
+
+  // Clear any diff preview when the selected file changes
+  $effect(() => {
+    selectedId;
+    diffClipPath = null; diffError = null; diffNote = null;
+  });
+
+  async function runDiffPreview() {
+    if (!selectedItem || selectedItem.mediaType !== 'video') return;
+    const at = videoEl?.currentTime ?? 0;
+    try { videoEl?.pause(); } catch { /* non-fatal */ }
+    diffLoading = true;
+    diffError = null;
+    diffClipPath = null;
+    diffNote = null;
+    try {
+      const result = await invoke('preview_diff', {
+        path: selectedItem.path,
+        codec: videoOptions.codec ?? 'h264',
+        resolution: videoOptions.resolution ?? 'original',
+        atSecs: at,
+        durationSecs: 1.0,
+        handleSecs: diffHandleSecs,
+        amplify: 8.0,
+      });
+      diffClipPath = result.path;
+      diffNote = result.note;
+    } catch (e) {
+      diffError = String(e);
+    } finally {
+      diffLoading = false;
+    }
+  }
+
+  function dismissDiff() {
+    diffClipPath = null; diffError = null; diffNote = null;
+  }
+
   let imageOptions = $state({
-    output_format: 'webp',
+    output_format: 'jpeg',
     resize_mode: 'none',
     resize_percent: 100,
     resize_width: 1920,
@@ -438,6 +674,11 @@
   );
 </script>
 
+<svelte:window
+  onmousemove={(e) => { onDiffWindowMouseMove(e); onCropDragMove(e); }}
+  onmouseup={() => { onDiffWindowMouseUp(); onCropDragEnd(); }}
+/>
+
 <!-- Hidden file input for Browse button -->
 <input
   type="file"
@@ -584,21 +825,211 @@
     <div class="flex flex-col flex-1 min-w-0">
 
       <!-- Preview area -->
-      <div class="flex-1 min-h-0 bg-[#0d0d0d] flex items-center justify-center relative overflow-hidden">
+      <div class="flex-1 min-h-0 bg-[#0d0d0d] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
         {#key selectedId}
           {#if selectedItem?.mediaType === 'video' && previewSrc}
+            <!-- Main video — always mounted so Timeline stays wired in;
+                 hidden when a diff clip is showing. -->
             <!-- svelte-ignore a11y_media_has_caption -->
             <video
+              bind:this={videoEl}
               src={previewSrc}
-              controls
-              class="max-w-full max-h-full object-contain"
+              preload="metadata"
+              class="max-w-full max-h-full object-contain {diffClipPath ? 'hidden' : ''}"
             ></video>
+            {#if diffClipPath}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video
+                bind:this={diffVideoEl}
+                src={convertFileSrc(diffClipPath)}
+                autoplay
+                loop
+                muted
+                onplay={() => diffPlaying = true}
+                onpause={() => diffPlaying = false}
+                ontimeupdate={(e) => diffCurrentTime = e.currentTarget.currentTime}
+                onloadedmetadata={(e) => diffDuration = e.currentTarget.duration}
+                class="max-w-full max-h-full object-contain"
+              ></video>
+
+              <!-- Floating mini scrubber — bottom-centre -->
+              <div class="absolute left-1/2 bottom-4 -translate-x-1/2 z-20
+                          flex items-center gap-2 px-2.5 py-1.5
+                          rounded-full bg-black/70 backdrop-blur-sm
+                          border border-white/10 shadow-lg"
+                   style="width:min(60%, 420px)">
+                <button
+                  onclick={toggleDiffPlay}
+                  class="w-6 h-6 shrink-0 flex items-center justify-center rounded-full
+                         bg-white/10 hover:bg-white/20 transition-colors"
+                  aria-label={diffPlaying ? 'Pause' : 'Play'}
+                >
+                  {#if diffPlaying}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
+                      <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                    </svg>
+                  {:else}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  {/if}
+                </button>
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  bind:this={diffTrackEl}
+                  onmousedown={onDiffTrackDown}
+                  class="flex-1 h-1 rounded-full bg-white/15 relative cursor-pointer"
+                >
+                  <div class="absolute inset-y-0 left-0 rounded-full bg-white/80"
+                       style="width:{diffDuration ? (diffCurrentTime / diffDuration) * 100 : 0}%"></div>
+                  <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-white shadow"
+                       style="left:{diffDuration ? (diffCurrentTime / diffDuration) * 100 : 0}%"></div>
+                </div>
+                <span class="shrink-0 font-mono tabular-nums text-[10px] text-white/70">
+                  {diffDuration ? `${diffCurrentTime.toFixed(2)}s` : '—'}
+                </span>
+              </div>
+            {/if}
+
+            <!-- Diff controls overlay (top-right) -->
+            <div class="absolute top-2 right-2 z-10 flex items-center gap-1.5">
+              {#if diffNote}
+                <span class="px-2 py-0.5 rounded bg-black/60 text-white/70 font-mono text-[10px]">
+                  {diffNote}
+                </span>
+              {/if}
+              {#if diffClipPath}
+                <button
+                  onclick={dismissDiff}
+                  class="px-2 py-1 rounded bg-[var(--accent)] text-white text-[11px] font-medium hover:opacity-90"
+                  title="Return to source preview"
+                >Exit diff</button>
+              {:else}
+                <select
+                  bind:value={diffHandleSecs}
+                  disabled={diffLoading}
+                  title="Runway (handle) length on each side of the target region.
+1s — fast, less accurate rate control
+3s — accurate for CRF x264 / x265
+10s — needed for long-GOP codecs (AV1)"
+                  class="px-1.5 py-1 rounded bg-black/60 border border-white/15 text-white text-[11px] font-mono
+                         hover:border-[var(--accent)] transition-colors disabled:opacity-50 outline-none"
+                >
+                  <option value={1}>1s · fast</option>
+                  <option value={3}>3s · accurate</option>
+                  <option value={10}>10s · AV1-safe</option>
+                </select>
+                <button
+                  onclick={runDiffPreview}
+                  disabled={diffLoading}
+                  class="px-2 py-1 rounded bg-black/60 border border-white/15 text-white text-[11px] font-medium
+                         hover:bg-black/80 hover:border-[var(--accent)] transition-colors disabled:opacity-50"
+                  title="Encode a 1s snippet at the current cursor with handles on each side and show the amplified difference vs. the source"
+                >
+                  {#if diffLoading}Encoding…{:else}Diff preview{/if}
+                </button>
+              {/if}
+            </div>
+
+            {#if diffError}
+              <div class="absolute bottom-2 left-2 right-2 z-10 px-3 py-2 rounded
+                          bg-red-950/80 border border-red-800 text-red-200 text-[11px] font-mono">
+                {diffError}
+              </div>
+            {/if}
           {:else if selectedItem?.mediaType === 'image' && previewSrc}
-            <img
-              src={previewSrc}
-              alt={selectedItem.name}
-              class="max-w-full max-h-full object-contain"
-            />
+            {#if imgDiffMode && imgDiffPath && !cropActive}
+              <img src={convertFileSrc(imgDiffPath)} alt="Quality diff"
+                   class="max-w-full max-h-full object-contain" />
+            {:else if !imgDiffMode && imgCompressedPath && !cropActive}
+              <img bind:this={imgEl} src={convertFileSrc(imgCompressedPath)} alt="Compressed preview"
+                   class="max-w-full max-h-full object-contain" onload={onImgLoad} />
+            {:else}
+              <img bind:this={imgEl} src={previewSrc} alt={selectedItem.name}
+                   class="max-w-full max-h-full object-contain" onload={onImgLoad} />
+            {/if}
+
+            <!-- Quality mode badge -->
+            {#if imgDiffMode || imgCompressedPath}
+              <div class="absolute top-2 left-1/2 -translate-x-1/2 z-10
+                          px-2.5 py-0.5 rounded-full bg-black/65 border border-white/10
+                          text-white/80 text-[10px] font-mono select-none pointer-events-none">
+                {#if imgDiffLoading}updating…
+                {:else if imgDiffMode}diff · Q{imageOptions.quality}
+                {:else}compressed · Q{imageOptions.quality}
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Crop overlay -->
+            {#if cropActive && imgEl}
+              {@const ib = getImgBounds()}
+              {#if ib}
+                {@const cx = ib.x + cropRect.x * ib.w}
+                {@const cy = ib.y + cropRect.y * ib.h}
+                {@const cw = cropRect.w * ib.w}
+                {@const ch = cropRect.h * ib.h}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="absolute inset-0 z-30 select-none" style="cursor:default">
+                  <!-- Dim: top -->
+                  <div class="absolute bg-black/50 pointer-events-none"
+                       style="left:{ib.x}px; top:{ib.y}px; width:{ib.w}px; height:{cropRect.y * ib.h}px"></div>
+                  <!-- Dim: bottom -->
+                  <div class="absolute bg-black/50 pointer-events-none"
+                       style="left:{ib.x}px; top:{cy + ch}px; width:{ib.w}px; height:{ib.h - (cropRect.y + cropRect.h) * ib.h}px"></div>
+                  <!-- Dim: left -->
+                  <div class="absolute bg-black/50 pointer-events-none"
+                       style="left:{ib.x}px; top:{cy}px; width:{cropRect.x * ib.w}px; height:{ch}px"></div>
+                  <!-- Dim: right -->
+                  <div class="absolute bg-black/50 pointer-events-none"
+                       style="left:{cx + cw}px; top:{cy}px; width:{ib.w - (cropRect.x + cropRect.w) * ib.w}px; height:{ch}px"></div>
+
+                  <!-- Crop border -->
+                  <div class="absolute pointer-events-none"
+                       style="left:{cx}px; top:{cy}px; width:{cw}px; height:{ch}px; border:1.5px solid rgba(255,255,255,0.85); box-sizing:border-box">
+                    <!-- Rule-of-thirds grid -->
+                    <div class="absolute inset-y-0" style="left:33.33%; border-left:1px solid rgba(255,255,255,0.3)"></div>
+                    <div class="absolute inset-y-0" style="left:66.66%; border-left:1px solid rgba(255,255,255,0.3)"></div>
+                    <div class="absolute inset-x-0" style="top:33.33%; border-top:1px solid rgba(255,255,255,0.3)"></div>
+                    <div class="absolute inset-x-0" style="top:66.66%; border-top:1px solid rgba(255,255,255,0.3)"></div>
+                  </div>
+
+                  <!-- Move area -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="absolute" style="left:{cx}px; top:{cy}px; width:{cw}px; height:{ch}px; cursor:move; z-index:1"
+                       onmousedown={(e) => startCropDrag(e, 'move')}></div>
+
+                  <!-- Corner handles -->
+                  {#each [['nw',cx,cy,'nwse-resize'],['ne',cx+cw,cy,'nesw-resize'],['sw',cx,cy+ch,'nesw-resize'],['se',cx+cw,cy+ch,'nwse-resize']] as [type,hx,hy,cur]}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div class="absolute w-3 h-3 bg-white rounded-sm shadow"
+                         style="left:{hx}px; top:{hy}px; transform:translate(-50%,-50%); cursor:{cur}; z-index:3"
+                         onmousedown={(e) => startCropDrag(e, type)}></div>
+                  {/each}
+
+                  <!-- Edge handles -->
+                  {#each [['n',cx+cw/2,cy,'ns-resize'],['s',cx+cw/2,cy+ch,'ns-resize'],['w',cx,cy+ch/2,'ew-resize'],['e',cx+cw,cy+ch/2,'ew-resize']] as [type,hx,hy,cur]}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div class="absolute w-3 h-3 bg-white rounded-sm shadow"
+                         style="left:{hx}px; top:{hy}px; transform:translate(-50%,-50%); cursor:{cur}; z-index:3"
+                         onmousedown={(e) => startCropDrag(e, type)}></div>
+                  {/each}
+
+                  <!-- Apply / Cancel — always visible inside the overlay -->
+                  <div class="absolute bottom-3 right-3 flex gap-2" style="z-index:10">
+                    <button onclick={cancelCrop}
+                            class="px-3 py-1 rounded bg-black/60 border border-white/15 text-white text-[11px] hover:bg-black/80 transition-colors">
+                      Cancel
+                    </button>
+                    <button onclick={applyCrop}
+                            class="px-3 py-1 rounded bg-[var(--accent)] text-white text-[11px] font-medium hover:opacity-90 transition-opacity">
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              {/if}
+            {/if}
           {:else if selectedItem}
             <div class="text-center select-none">
               <p class="text-white/20 text-[11px] font-mono uppercase tracking-widest mb-2">
@@ -625,9 +1056,9 @@
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded />
       {:else if selectedItem?.mediaType === 'audio'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded />
       {:else}
         <div class="h-28 shrink-0 border-t border-[var(--border)] flex items-center justify-center"
              style="background:#0a0a0a">
@@ -672,7 +1103,14 @@
             </p>
           </div>
         {:else if selectedItem.mediaType === 'image'}
-          <ImageOptions bind:options={imageOptions} />
+          <ImageOptions bind:options={imageOptions}
+            onqualitystart={onQualityStart}
+            onqualityinput={onQualityInput}
+            oncropstart={activateCrop}
+            oncropclear={clearCropValues}
+            cropActive={cropActive}
+            cropAspect={cropAspect}
+          />
         {:else if selectedItem.mediaType === 'video'}
           <VideoOptions bind:options={videoOptions} errors={validationErrors} />
         {:else if selectedItem.mediaType === 'audio'}

@@ -1,28 +1,60 @@
 <script>
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
-  let { item, duration = null, options = $bindable(null) } = $props();
+  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false) } = $props();
 
-  // ── Audio element ─────────────────────────────────────────────────────────
-  let audioEl     = $state(null);
-  let isPlaying   = $state(false);
-  let currentTime = $state(0);
-  let _prevAudio  = null;
+  // ── Media element ─────────────────────────────────────────────────────────
+  // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives
+  // it directly. Otherwise it creates an internal Audio object (audio-only files).
+  let audioEl        = $state(null);
+  let isPlaying      = $state(false);
+  let currentTime    = $state(0);
+  let _prevAudio     = null;
+  let _ownedInternal = false;
 
   $effect(() => {
     const it = item;
-    if (_prevAudio) { _prevAudio.pause(); _prevAudio.src = ''; _prevAudio = null; }
+    const external = mediaEl;
+
+    // Teardown previous
+    if (_prevAudio && _ownedInternal) { _prevAudio.pause(); _prevAudio.src = ''; }
+    _prevAudio = null; _ownedInternal = false;
     _teardownGraph();
     isPlaying = false; currentTime = 0; audioEl = null;
     if (!it) return;
-    try {
-      const a = new Audio(convertFileSrc(it.path));
-      a.addEventListener('timeupdate', () => { currentTime = a.currentTime; });
-      a.addEventListener('ended',      () => { isPlaying = false; currentTime = 0; });
-      audioEl = a; _prevAudio = a;
-    } catch { /* non-fatal */ }
+
+    let el;
+    if (external) {
+      el = external;
+      _ownedInternal = false;
+    } else {
+      try { el = new Audio(convertFileSrc(it.path)); }
+      catch { return; }
+      _ownedInternal = true;
+    }
+
+    const onTime  = () => { currentTime = el.currentTime; };
+    const onEnded = () => { isPlaying = false; currentTime = 0; };
+    const onPlay  = () => { isPlaying = true; };
+    const onPause = () => { isPlaying = false; };
+    el.addEventListener('timeupdate', onTime);
+    el.addEventListener('ended',      onEnded);
+    el.addEventListener('play',       onPlay);
+    el.addEventListener('pause',      onPause);
+
+    // If the external element already has a currentTime (e.g. user scrubbed
+    // before Timeline mounted), pick it up immediately.
+    if (!Number.isNaN(el.currentTime)) currentTime = el.currentTime;
+
+    audioEl = el; _prevAudio = el;
+
     return () => {
-      if (_prevAudio) { _prevAudio.pause(); _prevAudio.src = ''; _prevAudio = null; }
+      el.removeEventListener('timeupdate', onTime);
+      el.removeEventListener('ended',      onEnded);
+      el.removeEventListener('play',       onPlay);
+      el.removeEventListener('pause',      onPause);
+      if (_ownedInternal) { el.pause(); el.src = ''; }
+      _prevAudio = null; _ownedInternal = false;
       _teardownGraph();
     };
   });
@@ -60,15 +92,26 @@
   }
 
   // ── Playback controls ─────────────────────────────────────────────────────
+  // First-time _buildGraph() calls createMediaElementSource, which on WebKit
+  // implicitly resets the element (snapping currentTime to 0). We cache & restore.
+  function _ensureGraphAt(secs) {
+    if (_audioCtx || !audioEl) { _buildGraph(); return; }
+    _buildGraph();
+    if (Math.abs(audioEl.currentTime - secs) > 0.05) audioEl.currentTime = secs;
+  }
+
   function togglePlay() {
     if (!audioEl) return;
     if (isPlaying) {
-      audioEl.pause(); isPlaying = false;
+      audioEl.pause();
     } else {
-      _buildGraph();
+      const resumeAt = audioEl.currentTime > 0
+        ? audioEl.currentTime
+        : (options?.trim_start ?? 0);
+      _ensureGraphAt(resumeAt);
       _audioCtx?.resume();
-      if (options?.trim_start != null) audioEl.currentTime = options.trim_start;
-      audioEl.play().then(() => isPlaying = true).catch(() => {});
+      audioEl.currentTime = resumeAt;
+      audioEl.play().catch(() => {});
     }
   }
 
@@ -380,6 +423,7 @@
   // ── Drag ──────────────────────────────────────────────────────────────────
   let trackEl  = $state(null);
   let dragging = $state(null); // 'start' | 'end' | 'playhead'
+  let _wasPlayingBeforeDrag = false;
 
   function getFrac(e) {
     if (!trackEl) return 0;
@@ -387,9 +431,28 @@
     return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
   }
   function fracToSecs(f) { return f * (duration ?? 0); }
+
+  // While scrubbing, keep playback active so the Web Audio analysers have
+  // a live signal for the visualizers. Restore paused state on mouseup.
+  function _beginScrub() {
+    if (!audioEl) return;
+    _wasPlayingBeforeDrag = isPlaying;
+    if (!isPlaying) {
+      _ensureGraphAt(audioEl.currentTime);
+      _audioCtx?.resume();
+      audioEl.play().catch(() => {});
+    }
+  }
+  function _endScrub() {
+    if (audioEl && !_wasPlayingBeforeDrag && isPlaying) audioEl.pause();
+    _wasPlayingBeforeDrag = false;
+  }
+
   function onTrackDown(e) {
     if (!duration) return;
+    onscrubstart?.();
     dragging = 'playhead';
+    _beginScrub();
     seekTo(fracToSecs(getFrac(e)));
   }
   function onWindowMouseMove(e) {
@@ -399,7 +462,10 @@
     else if (dragging === 'end')   options.trim_end   = fracToSecs(Math.max(f, startFrac + 1 / duration));
     else                           seekTo(fracToSecs(f));
   }
-  function onWindowMouseUp() { dragging = null; }
+  function onWindowMouseUp() {
+    if (dragging === 'playhead') _endScrub();
+    dragging = null;
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function fmt(secs) {
@@ -410,7 +476,6 @@
   }
 
   const showTrim   = $derived(options != null && duration != null);
-  let vizExpanded  = $state(false);
 </script>
 
 <svelte:window onmousemove={onWindowMouseMove} onmouseup={onWindowMouseUp} />
@@ -559,7 +624,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="absolute inset-y-0 z-30 cursor-ew-resize"
            style="left:{playFrac * 100}%; transform:translateX(-50%)"
-           onmousedown={(e) => { e.stopPropagation(); dragging = 'playhead'; }}>
+           onmousedown={(e) => { e.stopPropagation(); dragging = 'playhead'; _beginScrub(); }}>
         <div class="absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full"
              style="top:-5px; background:rgba(255,255,255,0.9); box-shadow:0 0 5px rgba(255,255,255,0.5)"></div>
         <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px"
