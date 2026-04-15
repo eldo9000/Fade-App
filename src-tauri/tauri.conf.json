@@ -9,6 +9,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -17,14 +18,20 @@
         "height": 660,
         "minWidth": 720,
         "minHeight": 500,
-        "decorations": false,
+        "decorations": true,
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": true,
         "resizable": true,
         "center": true,
-        "transparent": true
+        "transparent": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {

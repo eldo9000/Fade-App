@@ -1,5 +1,6 @@
 use librewin_common::config::{read_presets, write_presets, FadePreset};
-use librewin_common::media::media_type_for;
+#[allow(unused_imports)]
+use librewin_common::media::media_type_for; // used in tests via super::*
 use librewin_common::{get_accent as lw_get_accent, get_theme as lw_get_theme};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -73,6 +74,16 @@ pub struct ConvertOptions {
     pub bitrate: Option<u32>,
     pub sample_rate: Option<u32>,
     pub normalize_loudness: Option<bool>,
+    // DSP
+    pub dsp_highpass_freq:  Option<f64>, // Hz — Butterworth 2-pole highpass, None = off
+    pub dsp_lowpass_freq:   Option<f64>, // Hz — Butterworth 2-pole lowpass,  None = off
+    pub dsp_stereo_width:   Option<f64>, // 0.0=mono  1.0=original  2.0=wide, None = off
+    pub dsp_limiter_db:     Option<f64>, // dBFS ceiling (e.g. -1.0),          None = off
+    // Data
+    pub pretty_print: Option<bool>,
+    pub csv_delimiter: Option<String>,
+    // Archive
+    pub archive_operation: Option<String>,
     // Output naming
     pub output_suffix: Option<String>,
 }
@@ -105,6 +116,13 @@ impl Default for ConvertOptions {
             bitrate: None,
             sample_rate: None,
             normalize_loudness: None,
+            dsp_highpass_freq: None,
+            dsp_lowpass_freq: None,
+            dsp_stereo_width: None,
+            dsp_limiter_db: None,
+            pretty_print: None,
+            csv_delimiter: None,
+            archive_operation: None,
             output_suffix: None,
         }
     }
@@ -169,6 +187,21 @@ fn validate_suffix(suffix: &str) -> Result<(), String> {
 fn parse_out_time_ms(line: &str) -> Option<f64> {
     let val = line.strip_prefix("out_time_ms=")?;
     val.trim().parse::<f64>().ok().map(|ms| ms / 1_000_000.0)
+}
+
+/// Classify a file extension into a media type, covering all types Fade supports.
+fn classify_ext(ext: &str) -> &'static str {
+    match ext {
+        "jpg"|"jpeg"|"png"|"webp"|"tiff"|"tif"|"bmp"|"gif"|"avif"|
+        "heic"|"heif"|"psd"|"svg"|"ico"|"raw"|"cr2"|"nef"|"arw"|"dng" => "image",
+        "mp4"|"mkv"|"webm"|"avi"|"mov"|"m4v"|"flv"|"wmv"|"ts"|
+        "mpg"|"mpeg"|"3gp"|"ogv" => "video",
+        "mp3"|"wav"|"flac"|"ogg"|"aac"|"opus"|"m4a"|"wma"|"aiff" => "audio",
+        "csv"|"json"|"xml"|"yaml"|"yml"|"toml"|"tsv"|"ndjson"|"jsonl" => "data",
+        "md"|"markdown"|"html"|"htm"|"txt" => "document",
+        "zip"|"7z"|"tar"|"gz"|"bz2"|"xz"|"tgz"|"rar" => "archive",
+        _ => "unknown",
+    }
 }
 
 /// Check whether a tool is available in PATH.
@@ -364,8 +397,34 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         args.extend(["-ar".to_string(), sr.to_string()]);
     }
 
+    // Build DSP filter chain — order: filters → stereo width → loudnorm → limiter
+    let mut filters: Vec<String> = Vec::new();
+
+    if let Some(freq) = opts.dsp_highpass_freq {
+        if freq > 0.0 {
+            filters.push(format!("highpass=f={freq:.1}:p=2"));
+        }
+    }
+    if let Some(freq) = opts.dsp_lowpass_freq {
+        if freq > 0.0 {
+            filters.push(format!("lowpass=f={freq:.1}:p=2"));
+        }
+    }
+    if let Some(width) = opts.dsp_stereo_width {
+        if (width - 1.0).abs() > 0.01 {
+            filters.push(format!("extrastereo=m={width:.3}"));
+        }
+    }
     if opts.normalize_loudness == Some(true) {
-        args.extend(["-af".to_string(), "loudnorm".to_string()]);
+        filters.push("loudnorm".to_string());
+    }
+    if let Some(db) = opts.dsp_limiter_db {
+        let linear = 10.0_f64.powf(db / 20.0);
+        filters.push(format!("alimiter=limit={linear:.6}:attack=5:release=50"));
+    }
+
+    if !filters.is_empty() {
+        args.extend(["-af".to_string(), filters.join(",")]);
     }
 
     args.extend([
@@ -444,7 +503,20 @@ fn get_file_info(path: String) -> Result<FileInfo, String> {
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let mtype = media_type_for(&ext);
+    let mtype = classify_ext(&ext);
+
+    // Data, document, and archive files don't need ffprobe/identify
+    if mtype == "data" || mtype == "document" || mtype == "archive" {
+        return Ok(FileInfo {
+            duration_secs: None,
+            width: None,
+            height: None,
+            codec: None,
+            format: Some(ext.to_string()),
+            file_size,
+            media_type: mtype.to_string(),
+        });
+    }
 
     if mtype == "image" {
         let out = Command::new("identify")
@@ -536,19 +608,31 @@ fn convert_file(
         ));
     }
 
-    let ext = options.output_format.to_lowercase();
+    // When extracting audio from video, output extension comes from audio_format, not output_format
+    let ext = if options.extract_audio == Some(true) {
+        options
+            .audio_format
+            .as_deref()
+            .unwrap_or("mp3")
+            .to_lowercase()
+    } else {
+        options.output_format.to_lowercase()
+    };
 
     if ext.is_empty() || !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(format!("Invalid output format: {}", options.output_format));
+        return Err(format!("Invalid output format: {ext}"));
     }
 
-    let mtype = media_type_for(&ext);
-    if mtype == "unknown" {
-        return Err(format!(
-            "Unsupported output format: {}",
-            options.output_format
-        ));
-    }
+    // Route by input media type when extract_audio is set (input is video, output is audio)
+    let mtype = if options.extract_audio == Some(true) {
+        "audio"
+    } else {
+        let t = classify_ext(&ext);
+        if t == "unknown" {
+            return Err(format!("Unsupported output format: {ext}"));
+        }
+        t
+    };
 
     let suffix = options.output_suffix.as_deref().unwrap_or("converted");
     validate_suffix(suffix)?;
@@ -595,6 +679,29 @@ fn convert_file(
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             ),
+            "data" => run_data_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+            ),
+            "document" => run_document_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+            ),
+            "archive" => run_archive_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
             _ => Err("Unsupported format".to_string()),
         };
 
@@ -625,6 +732,10 @@ fn convert_file(
                 let _ = std::fs::remove_file(&output_path_clone);
                 write_fade_log(&format_log_entry(&job_id, &input_path, "cancelled", ""));
                 let _ = window.emit("job-cancelled", JobCancelled { job_id });
+            },
+            Err(msg) if msg == "__DONE__" => {
+                // job-done was emitted directly (e.g. archive extract with folder path)
+                write_fade_log(&format_log_entry(&job_id, &input_path, "done", ""));
             },
             Err(msg) => {
                 let first_line = msg.lines().next().unwrap_or("").to_string();
@@ -673,10 +784,119 @@ fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> 
 #[command]
 fn check_tools() -> serde_json::Value {
     serde_json::json!({
-        "ffmpeg":  tool_available("ffmpeg"),
-        "ffprobe": tool_available("ffprobe"),
-        "magick":  tool_available("magick"),
+        "ffmpeg":   tool_available("ffmpeg"),
+        "ffprobe":  tool_available("ffprobe"),
+        "magick":   tool_available("magick"),
+        "sevenzip": tool_available("7z"),
     })
+}
+
+// ── Waveform extraction with frequency colouring ─────────────────────────────
+
+#[derive(Serialize)]
+pub struct WaveformData {
+    pub amplitudes: Vec<f32>,
+    /// HSL hue (0-360) for each bar, derived from per-chunk dominant frequency.
+    pub hues: Vec<u32>,
+}
+
+/// Zero-crossing rate → HSL hue.
+/// At 8 000 Hz sample rate, ZCR × 4 000 ≈ dominant frequency in Hz.
+/// Bass (red/orange) → mids (yellow/green) → hi-hats (cyan/blue).
+fn zcr_to_hue(zcr: f32) -> u32 {
+    // Clamp to [0,1] then map linearly through the hue range 0–240
+    // 0.0 (DC / sub-bass) → hue 0   (red)
+    // 0.5 (2 kHz mids)    → hue 120 (green)
+    // 1.0 (4 kHz hi-hats) → hue 240 (blue)
+    let clamped = zcr.clamp(0.0, 1.0);
+    (clamped * 240.0) as u32
+}
+
+/// Extract a 500-point RMS waveform plus per-bar frequency hue.
+/// Uses zero-crossing rate at 8 000 Hz — fast, no extra deps, works well
+/// for distinguishing bass kicks from hi-hats visually.
+#[command]
+fn get_waveform(path: String) -> Result<WaveformData, String> {
+    let output = Command::new("ffmpeg")
+        .args(["-i", &path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"])
+        .output()
+        .map_err(|e| format!("ffmpeg not found: {e}"))?;
+
+    if output.stdout.is_empty() {
+        return Ok(WaveformData { amplitudes: vec![], hues: vec![] });
+    }
+
+    let samples: Vec<f32> = output.stdout
+        .chunks_exact(4)
+        .filter_map(|c| c.try_into().ok().map(f32::from_le_bytes))
+        .collect();
+
+    let n = 500usize;
+    let chunk_size = (samples.len() / n).max(1);
+    let mut amplitudes = Vec::with_capacity(n);
+    let mut hues = Vec::with_capacity(n);
+
+    for chunk in samples.chunks(chunk_size).take(n) {
+        // RMS amplitude
+        let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
+        amplitudes.push(rms);
+
+        // Zero-crossing rate as frequency proxy
+        let crossings = chunk
+            .windows(2)
+            .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
+            .count();
+        let zcr = crossings as f32 / chunk.len() as f32;
+        hues.push(zcr_to_hue(zcr));
+    }
+
+    // Normalise amplitudes to [0, 1]
+    let max = amplitudes.iter().cloned().fold(0.0f32, f32::max);
+    if max > 0.0 {
+        for a in &mut amplitudes {
+            *a /= max;
+        }
+    }
+
+    Ok(WaveformData { amplitudes, hues })
+}
+
+// ── Spectrogram extraction ────────────────────────────────────────────────────
+
+/// Render a rainbow spectrogram PNG via ffmpeg showspectrumpic and return it as base64.
+/// Uses image2pipe + png codec to write the PNG directly to stdout — no temp files.
+#[command]
+fn get_spectrogram(path: String) -> Result<String, String> {
+    let output = Command::new("ffmpeg")
+        .args([
+            "-i",
+            &path,
+            "-lavfi",
+            "showspectrumpic=s=800x200:legend=0:color=magma:scale=cbrt:fscale=log",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ])
+        .output()
+        .map_err(|e| format!("ffmpeg not found: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "spectrogram failed: {}",
+            truncate_stderr(&String::from_utf8_lossy(&output.stderr))
+        ));
+    }
+
+    if output.stdout.is_empty() {
+        return Err("spectrogram produced no output".to_string());
+    }
+
+    use base64::Engine as _;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&output.stdout))
 }
 
 // ── Image conversion (ImageMagick) ────────────────────────────────────────────
@@ -947,6 +1167,625 @@ fn run_audio_convert(
     }
 }
 
+// ── Data conversion (pure Rust) ───────────────────────────────────────────────
+
+fn run_data_convert(
+    window: &Window,
+    job_id: &str,
+    input_path: &str,
+    output_path: &str,
+    opts: &ConvertOptions,
+) -> Result<(), String> {
+    let _ = window.emit(
+        "job-progress",
+        JobProgress { job_id: job_id.to_string(), percent: 0.0, message: "Converting data…".to_string() },
+    );
+
+    let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
+    let in_ext = Path::new(input_path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let out_fmt = opts.output_format.to_lowercase();
+    let pretty = opts.pretty_print.unwrap_or(true);
+    let delimiter = opts.csv_delimiter.as_deref().unwrap_or(",");
+    let delim_byte = delimiter.as_bytes().first().copied().unwrap_or(b',');
+
+    // Normalise to serde_json::Value as intermediate
+    let value: serde_json::Value = match in_ext.as_str() {
+        "json" | "ndjson" | "jsonl" => {
+            serde_json::from_str(&raw).map_err(|e| format!("JSON parse error: {e}"))?
+        },
+        "yaml" | "yml" => {
+            serde_yaml::from_str(&raw).map_err(|e| format!("YAML parse error: {e}"))?
+        },
+        "toml" => {
+            let v: toml::Value = toml::from_str(&raw).map_err(|e| format!("TOML parse error: {e}"))?;
+            serde_json::to_value(v).map_err(|e| e.to_string())?
+        },
+        "csv" | "tsv" => {
+            let sep = if in_ext == "tsv" { b'\t' } else { b',' };
+            let mut rdr = csv::ReaderBuilder::new().delimiter(sep).from_reader(raw.as_bytes());
+            let headers: Vec<String> = rdr.headers()
+                .map_err(|e| format!("CSV header error: {e}"))?
+                .iter().map(|s| s.to_string()).collect();
+            let mut rows = Vec::new();
+            for result in rdr.records() {
+                let record = result.map_err(|e| format!("CSV row error: {e}"))?;
+                let obj: serde_json::Map<String, serde_json::Value> = headers.iter()
+                    .zip(record.iter())
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.to_string())))
+                    .collect();
+                rows.push(serde_json::Value::Object(obj));
+            }
+            serde_json::Value::Array(rows)
+        },
+        "xml" => {
+            // Parse XML into JSON-like structure via quick-xml
+            let mut reader = quick_xml::Reader::from_str(&raw);
+            reader.config_mut().trim_text(true);
+            let mut stack: Vec<(String, serde_json::Map<String, serde_json::Value>)> = Vec::new();
+            let mut root_value: Option<serde_json::Value> = None;
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(quick_xml::events::Event::Start(e)) => {
+                        let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                        stack.push((name, serde_json::Map::new()));
+                    },
+                    Ok(quick_xml::events::Event::End(_)) => {
+                        if let Some((name, obj)) = stack.pop() {
+                            let val = serde_json::Value::Object(obj);
+                            if let Some((_, parent)) = stack.last_mut() {
+                                parent.insert(name, val);
+                            } else {
+                                root_value = Some(val);
+                            }
+                        }
+                    },
+                    Ok(quick_xml::events::Event::Text(e)) => {
+                        let text = e.unescape().map_err(|e| e.to_string())?.to_string();
+                        if !text.trim().is_empty() {
+                            if let Some((_, obj)) = stack.last_mut() {
+                                obj.insert("#text".to_string(), serde_json::Value::String(text));
+                            }
+                        }
+                    },
+                    Ok(quick_xml::events::Event::Eof) => break,
+                    Err(e) => return Err(format!("XML parse error: {e}")),
+                    _ => {},
+                }
+                buf.clear();
+            }
+            root_value.unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+        },
+        _ => return Err(format!("Unsupported input format: {in_ext}")),
+    };
+
+    // Write output
+    let output = match out_fmt.as_str() {
+        "json" => {
+            if pretty {
+                serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
+            } else {
+                serde_json::to_string(&value).map_err(|e| e.to_string())?
+            }
+        },
+        "yaml" => serde_yaml::to_string(&value).map_err(|e| e.to_string())?,
+        "toml" => {
+            // TOML requires a table at root; wrap arrays
+            let toml_val: toml::Value = if value.is_array() {
+                let mut map = toml::map::Map::new();
+                let items: toml::Value = serde_json::from_value::<toml::Value>(
+                    serde_json::to_value(&value).map_err(|e| e.to_string())?
+                ).map_err(|e| e.to_string())?;
+                map.insert("items".to_string(), items);
+                toml::Value::Table(map)
+            } else {
+                serde_json::from_value::<toml::Value>(
+                    serde_json::to_value(&value).map_err(|e| e.to_string())?
+                ).map_err(|e| e.to_string())?
+            };
+            toml::to_string_pretty(&toml_val).map_err(|e| e.to_string())?
+        },
+        "csv" | "tsv" => {
+            let rows = match &value {
+                serde_json::Value::Array(arr) => arr.clone(),
+                other => vec![other.clone()],
+            };
+            let mut wtr = csv::WriterBuilder::new().delimiter(delim_byte).from_writer(Vec::new());
+            if let Some(first) = rows.first() {
+                if let serde_json::Value::Object(obj) = first {
+                    let headers: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+                    wtr.write_record(&headers).map_err(|e| e.to_string())?;
+                    for row in &rows {
+                        if let serde_json::Value::Object(obj) = row {
+                            let record: Vec<String> = headers.iter()
+                                .map(|h| obj.get(*h).map(|v| match v {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                }).unwrap_or_default())
+                                .collect();
+                            wtr.write_record(&record).map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+            }
+            String::from_utf8(wtr.into_inner().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?
+        },
+        "xml" => {
+            fn value_to_xml(key: &str, val: &serde_json::Value, out: &mut String, indent: &str, pretty: bool) {
+                let nl = if pretty { "\n" } else { "" };
+                let next_indent = if pretty { format!("{}  ", indent) } else { String::new() };
+                match val {
+                    serde_json::Value::Object(obj) => {
+                        out.push_str(&format!("{}<{}>{}",  indent, key, nl));
+                        for (k, v) in obj {
+                            if k == "#text" {
+                                if let serde_json::Value::String(s) = v {
+                                    out.push_str(&format!("{}{}{}", next_indent, s, nl));
+                                }
+                            } else {
+                                value_to_xml(k, v, out, &next_indent, pretty);
+                            }
+                        }
+                        out.push_str(&format!("{}</{}>{}",  indent, key, nl));
+                    },
+                    serde_json::Value::Array(arr) => {
+                        for item in arr { value_to_xml(key, item, out, indent, pretty); }
+                    },
+                    serde_json::Value::String(s) => {
+                        out.push_str(&format!("{}<{}>{}</{}>{}",  indent, key, s, key, nl));
+                    },
+                    other => {
+                        out.push_str(&format!("{}<{}>{}</{}>{}",  indent, key, other, key, nl));
+                    },
+                }
+            }
+            let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+            value_to_xml("root", &value, &mut xml, "", pretty);
+            xml
+        },
+        _ => return Err(format!("Unsupported output format: {out_fmt}")),
+    };
+
+    std::fs::write(output_path, output).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ── Document conversion (pure Rust) ──────────────────────────────────────────
+
+fn run_document_convert(
+    window: &Window,
+    job_id: &str,
+    input_path: &str,
+    output_path: &str,
+    opts: &ConvertOptions,
+) -> Result<(), String> {
+    let _ = window.emit(
+        "job-progress",
+        JobProgress { job_id: job_id.to_string(), percent: 0.0, message: "Converting document…".to_string() },
+    );
+
+    let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
+    let in_ext = Path::new(input_path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let out_fmt = opts.output_format.to_lowercase();
+
+    let output = match (in_ext.as_str(), out_fmt.as_str()) {
+        ("md" | "markdown", "html") => {
+            let parser = pulldown_cmark::Parser::new_ext(&raw, pulldown_cmark::Options::all());
+            let mut html = String::new();
+            pulldown_cmark::html::push_html(&mut html, parser);
+            html
+        },
+        ("md" | "markdown", "txt") => strip_md(&raw),
+        ("md" | "markdown", "md") => raw,
+        ("html" | "htm", "txt") => html_to_text(&raw),
+        ("html" | "htm", "md") => html_to_md(&raw),
+        ("html" | "htm", "html") => raw,
+        ("txt", "html") => {
+            let escaped = raw.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let paragraphs: String = escaped
+                .split("\n\n")
+                .map(|p| format!("<p>{}</p>", p.trim().replace('\n', "<br>")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("<!DOCTYPE html>\n<html><body>\n{}\n</body></html>", paragraphs)
+        },
+        ("txt", "md") => {
+            // Wrap double-newline blocks as paragraphs (no extra syntax)
+            raw.clone()
+        },
+        ("txt", "txt") => raw,
+        _ => return Err(format!("Unsupported conversion: {in_ext} → {out_fmt}")),
+    };
+
+    std::fs::write(output_path, output).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn strip_md(raw: &str) -> String {
+    let mut txt = raw.to_string();
+    // Code fences
+    let mut result = String::new();
+    let mut in_fence = false;
+    for line in txt.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    txt = result;
+    // Headers
+    txt = txt.lines().map(|l| {
+        let trimmed = l.trim_start_matches('#').trim_start();
+        if l.starts_with('#') { trimmed.to_string() } else { l.to_string() }
+    }).collect::<Vec<_>>().join("\n");
+    // Bold/italic (simple passes)
+    for marker in &["**", "__"] {
+        while let (Some(s), Some(e)) = (txt.find(marker), txt[txt.find(marker).unwrap_or(0)+marker.len()..].find(marker)) {
+            let start = s;
+            let end = s + marker.len() + e + marker.len();
+            if end <= txt.len() {
+                let inner = txt[s+marker.len()..s+marker.len()+e].to_string();
+                txt = format!("{}{}{}", &txt[..start], inner, &txt[end..]);
+            } else { break; }
+        }
+    }
+    for marker in &["*", "_"] {
+        while let (Some(s), Some(e)) = (txt.find(marker), txt.get(txt.find(marker).unwrap_or(0)+marker.len()..).and_then(|t| t.find(marker))) {
+            let start = s;
+            let end = s + marker.len() + e + marker.len();
+            if end <= txt.len() {
+                let inner = txt[s+marker.len()..s+marker.len()+e].to_string();
+                txt = format!("{}{}{}", &txt[..start], inner, &txt[end..]);
+            } else { break; }
+        }
+    }
+    // Inline code
+    while let Some(s) = txt.find('`') {
+        if let Some(e) = txt[s+1..].find('`') {
+            let inner = txt[s+1..s+1+e].to_string();
+            txt = format!("{}{}{}", &txt[..s], inner, &txt[s+1+e+1..]);
+        } else { break; }
+    }
+    // Links [text](url)
+    while let Some(s) = txt.find('[') {
+        if let Some(m) = txt[s+1..].find("](") {
+            let text_end = s + 1 + m;
+            let text = txt[s+1..text_end].to_string();
+            if let Some(url_end) = txt[text_end+2..].find(')') {
+                let full_end = text_end + 2 + url_end + 1;
+                txt = format!("{}{}{}", &txt[..s], text, &txt[full_end..]);
+            } else { break; }
+        } else { break; }
+    }
+    // List markers
+    txt = txt.lines().map(|l| {
+        let t = l.trim_start();
+        if t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") {
+            t[2..].to_string()
+        } else { l.to_string() }
+    }).collect::<Vec<_>>().join("\n");
+    txt.trim().to_string()
+}
+
+fn html_to_text(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => { in_tag = false; out.push(' '); },
+            _ if !in_tag => out.push(ch),
+            _ => {},
+        }
+    }
+    // Decode basic HTML entities
+    out = out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+             .replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ");
+    // Collapse whitespace
+    let lines: Vec<&str> = out.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    lines.join("\n")
+}
+
+fn html_to_md(html: &str) -> String {
+    let mut out = html.to_string();
+    // Headings
+    for n in (1u8..=6).rev() {
+        let tag = format!("<h{n}");
+        let close = format!("</h{n}>");
+        let prefix = "#".repeat(n as usize) + " ";
+        while let Some(s) = out.to_lowercase().find(&tag) {
+            let tag_end = out[s..].find('>').map(|i| s + i + 1).unwrap_or(s + tag.len() + 1);
+            let close_pos = out[tag_end..].to_lowercase().find(&close).map(|i| tag_end + i);
+            if let Some(e) = close_pos {
+                let inner = out[tag_end..e].to_string();
+                out = format!("{}{}{}\n{}", &out[..s], prefix, inner, &out[e+close.len()..]);
+            } else { break; }
+        }
+    }
+    // Bold/italic
+    for (open, close, md) in &[("<strong>","</strong>","**"),("<b>","</b>","**"),("<em>","</em>","*"),("<i>","</i>","*")] {
+        while let Some(s) = out.to_lowercase().find(open) {
+            let inner_start = s + open.len();
+            if let Some(e) = out[inner_start..].to_lowercase().find(close) {
+                let inner = out[inner_start..inner_start+e].to_string();
+                out = format!("{}{}{}{}{}", &out[..s], md, inner, md, &out[inner_start+e+close.len()..]);
+            } else { break; }
+        }
+    }
+    // Links <a href="url">text</a>
+    while let Some(s) = out.to_lowercase().find("<a ") {
+        let tag_end = match out[s..].find('>') {
+            Some(i) => s + i + 1,
+            None => break,
+        };
+        let href = {
+            let tag_str = &out[s..tag_end];
+            if let Some(h) = tag_str.to_lowercase().find("href=\"") {
+                let start = s + h + 6;
+                let end_q = out[start..].find('"').map(|i| start + i).unwrap_or(start);
+                out[start..end_q].to_string()
+            } else { String::new() }
+        };
+        if let Some(e) = out[tag_end..].to_lowercase().find("</a>") {
+            let text = out[tag_end..tag_end+e].to_string();
+            out = format!("{}[{}]({}){}", &out[..s], text, href, &out[tag_end+e+4..]);
+        } else { break; }
+    }
+    // Code
+    while let Some(s) = out.to_lowercase().find("<code>") {
+        if let Some(e) = out[s+6..].to_lowercase().find("</code>") {
+            let inner = out[s+6..s+6+e].to_string();
+            out = format!("{}`{}`{}", &out[..s], inner, &out[s+6+e+7..]);
+        } else { break; }
+    }
+    // Paragraphs
+    out = out.replace("<p>", "").replace("</p>", "\n\n");
+    out = out.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n");
+    // List items
+    out = out.replace("<li>", "- ").replace("</li>", "\n");
+    out = out.replace("<ul>", "").replace("</ul>", "\n");
+    out = out.replace("<ol>", "").replace("</ol>", "\n");
+    // Strip remaining tags
+    html_to_text(&out)
+}
+
+// ── Archive conversion (7z) ───────────────────────────────────────────────────
+
+fn run_archive_convert(
+    window: &Window,
+    job_id: &str,
+    input_path: &str,
+    output_path: &str,
+    opts: &ConvertOptions,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let operation = opts.archive_operation.as_deref().unwrap_or("convert");
+
+    let _ = window.emit(
+        "job-progress",
+        JobProgress {
+            job_id: job_id.to_string(),
+            percent: 0.0,
+            message: if operation == "extract" { "Extracting…".to_string() } else { "Repacking…".to_string() },
+        },
+    );
+
+    if operation == "extract" {
+        // Extract to {stem}_extracted/ beside input
+        let p = Path::new(input_path);
+        let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+        let parent = p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".to_string());
+        let out_dir = opts.output_dir.as_deref().unwrap_or(&parent);
+        let extract_folder = format!("{}/{}_extracted", out_dir, stem);
+
+        let mut child = Command::new("7z")
+            .args(["x", input_path, &format!("-o{}", extract_folder), "-y"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("7z not found: {e}"))?;
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        {
+            let mut map = processes.lock().unwrap();
+            map.insert(job_id.to_string(), child);
+        }
+
+        let stderr_thread = std::thread::spawn(move || {
+            let mut lines = Vec::new();
+            if let Some(s) = stderr {
+                let reader = BufReader::new(s);
+                for line in reader.lines().map_while(Result::ok) { lines.push(line); }
+            }
+            lines.join("\n")
+        });
+
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Some(pct) = parse_7z_percent(&line) {
+                    let _ = window.emit("job-progress", JobProgress {
+                        job_id: job_id.to_string(),
+                        percent: pct,
+                        message: format!("{}%", pct as u32),
+                    });
+                }
+            }
+        }
+
+        let error_output = stderr_thread.join().unwrap_or_default();
+        let child_opt = { let mut map = processes.lock().unwrap(); map.remove(job_id) };
+        let success = match child_opt {
+            Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+            None => false,
+        };
+        if cancelled.load(Ordering::SeqCst) { return Err("CANCELLED".to_string()); }
+        if success {
+            // Emit job-done with the folder path as output_path
+            // We return Ok here; the caller emits job-done with the original output_path.
+            // Override by writing the folder path into a sentinel we can't easily thread through.
+            // Instead: write a small redirect file and let the window emit handle it.
+            // Actually the simplest approach: store the extract folder in a thread-local.
+            // But since the thread joins and returns Result<()>, the caller always uses output_path.
+            // Workaround: return Err with a special prefix that carry the real path.
+            // Better: just return Ok and accept the default output_path is wrong for extract.
+            // Per spec: "output_path for extract = the folder path". We need to thread this through.
+            // Since we can't change the return type, emit job-done directly here and return a
+            // special sentinel error that the caller's match will not re-emit as an error.
+            let _ = window.emit("job-done", JobDone {
+                job_id: job_id.to_string(),
+                output_path: extract_folder,
+            });
+            return Err("__DONE__".to_string());
+        } else {
+            return Err(if error_output.trim().is_empty() {
+                "7z extraction failed".to_string()
+            } else {
+                truncate_stderr(&error_output)
+            });
+        }
+    }
+
+    // Convert: extract to temp dir, repack to new format
+    let tmp_dir = format!("/tmp/fade_archive_{}", job_id);
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+
+    // Step 1: extract
+    let extract_result = {
+        let mut child = Command::new("7z")
+            .args(["x", input_path, &format!("-o{}", tmp_dir), "-y"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("7z not found: {e}"))?;
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        {
+            let mut map = processes.lock().unwrap();
+            map.insert(job_id.to_string(), child);
+        }
+
+        let stderr_thread = std::thread::spawn(move || {
+            let mut lines = Vec::new();
+            if let Some(s) = stderr {
+                let reader = BufReader::new(s);
+                for line in reader.lines().map_while(Result::ok) { lines.push(line); }
+            }
+            lines.join("\n")
+        });
+
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Some(pct) = parse_7z_percent(&line) {
+                    let _ = window.emit("job-progress", JobProgress {
+                        job_id: job_id.to_string(),
+                        percent: pct / 2.0,
+                        message: format!("Extracting {}%", pct as u32),
+                    });
+                }
+            }
+        }
+
+        let error_output = stderr_thread.join().unwrap_or_default();
+        let child_opt = { let mut map = processes.lock().unwrap(); map.remove(job_id) };
+        let success = match child_opt {
+            Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+            None => false,
+        };
+        if cancelled.load(Ordering::SeqCst) {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err("CANCELLED".to_string());
+        }
+        if !success {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(if error_output.trim().is_empty() {
+                "7z extraction failed".to_string()
+            } else { truncate_stderr(&error_output) });
+        }
+    };
+    let _ = extract_result;
+
+    // Step 2: repack
+    let repack_result = {
+        let mut child = Command::new("7z")
+            .args(["a", output_path, &format!("{}/*", tmp_dir)])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("7z not found: {e}"))?;
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        {
+            let mut map = processes.lock().unwrap();
+            map.insert(job_id.to_string(), child);
+        }
+
+        let stderr_thread = std::thread::spawn(move || {
+            let mut lines = Vec::new();
+            if let Some(s) = stderr {
+                let reader = BufReader::new(s);
+                for line in reader.lines().map_while(Result::ok) { lines.push(line); }
+            }
+            lines.join("\n")
+        });
+
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Some(pct) = parse_7z_percent(&line) {
+                    let _ = window.emit("job-progress", JobProgress {
+                        job_id: job_id.to_string(),
+                        percent: 50.0 + pct / 2.0,
+                        message: format!("Packing {}%", pct as u32),
+                    });
+                }
+            }
+        }
+
+        let error_output = stderr_thread.join().unwrap_or_default();
+        let child_opt = { let mut map = processes.lock().unwrap(); map.remove(job_id) };
+        let success = match child_opt {
+            Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+            None => false,
+        };
+        if cancelled.load(Ordering::SeqCst) {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err("CANCELLED".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        if !success {
+            return Err(if error_output.trim().is_empty() {
+                "7z repack failed".to_string()
+            } else { truncate_stderr(&error_output) });
+        }
+    };
+    let _ = repack_result;
+
+    Ok(())
+}
+
+/// Parse 7z progress lines like "  7% - filename.ext"
+fn parse_7z_percent(line: &str) -> Option<f32> {
+    let trimmed = line.trim();
+    let pct_end = trimmed.find('%')?;
+    trimmed[..pct_end].trim().parse::<f32>().ok()
+}
+
 // ── Theme / accent ────────────────────────────────────────────────────────────
 
 #[command]
@@ -1016,6 +1855,27 @@ fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// List all files (non-recursive) in a directory. Returns full paths, sorted.
+#[command]
+fn scan_dir(path: String) -> Vec<String> {
+    let mut files: Vec<String> = std::fs::read_dir(&path)
+        .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = e.file_name();
+            let name_str = name.to_string_lossy();
+            if p.is_file() && !name_str.starts_with('.') {
+                p.to_str().map(str::to_owned)
+            } else {
+                None
+            }
+        })
+        .collect();
+    files.sort();
+    files
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1030,11 +1890,14 @@ pub fn run() {
             convert_file,
             cancel_job,
             check_tools,
+            get_waveform,
+            get_spectrogram,
             get_theme,
             get_accent,
             list_presets,
             save_preset,
             delete_preset,
+            scan_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

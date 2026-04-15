@@ -42,18 +42,13 @@
     return `${m}:${s.padStart(4, '0')}`;
   }
 
-  let trimStartRaw = $state(options.trim_start != null ? formatTime(options.trim_start) : '');
-  let trimEndRaw   = $state(options.trim_end   != null ? formatTime(options.trim_end)   : '');
+  // Derived from options so timeline drags update the inputs automatically
+  let trimStartRaw = $derived(options.trim_start != null ? formatTime(options.trim_start) : '');
+  let trimEndRaw   = $derived(options.trim_end   != null ? formatTime(options.trim_end)   : '');
 
-  function onTrimStartChange() {
-    options.trim_start = parseTime(trimStartRaw);
-  }
-  function onTrimEndChange() {
-    options.trim_end = parseTime(trimEndRaw);
-  }
+  function onTrimStartInput(e) { options.trim_start = parseTime(e.target.value); }
+  function onTrimEndInput(e)   { options.trim_end   = parseTime(e.target.value); }
   function clearTrim() {
-    trimStartRaw = '';
-    trimEndRaw = '';
     options.trim_start = null;
     options.trim_end = null;
   }
@@ -202,8 +197,8 @@
       <div class="flex-1">
         <label class="text-[11px] text-[var(--text-secondary)]" for="vid-trim-start">Start</label>
         <input id="vid-trim-start" type="text" placeholder="0:00"
-          bind:value={trimStartRaw}
-          onchange={onTrimStartChange}
+          value={trimStartRaw}
+          oninput={onTrimStartInput}
           class="w-full mt-1 px-3 py-1.5 rounded-md border border-[var(--border)]
                  bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
                  focus:outline-none focus:border-[var(--accent)]"
@@ -212,8 +207,8 @@
       <div class="flex-1">
         <label class="text-[11px] text-[var(--text-secondary)]" for="vid-trim-end">End</label>
         <input id="vid-trim-end" type="text" placeholder="end"
-          bind:value={trimEndRaw}
-          onchange={onTrimEndChange}
+          value={trimEndRaw}
+          oninput={onTrimEndInput}
           class="w-full mt-1 px-3 py-1.5 rounded-md text-[13px]
                  focus:outline-none focus:border-[var(--accent)]
                  bg-[var(--surface)] text-[var(--text-primary)]
