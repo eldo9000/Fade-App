@@ -1,5 +1,5 @@
 <script>
-  let { queue, selectedId, onselect, onremove, oncancel, oninfo } = $props();
+  let { queue, selectedId, onselect, onremove, oncancel, oninfo, compatibleTypes = [] } = $props();
 
   function statusColor(status) {
     switch (status) {
@@ -72,7 +72,8 @@
         role="listitem"
         onclick={() => onselect?.(item.id)}
         class="flex items-start gap-2 px-3 py-2 border-b border-[var(--border)] group cursor-pointer transition-colors
-               {selectedId === item.id ? '' : 'hover:bg-[var(--surface)]'}"
+               {selectedId === item.id ? '' : 'hover:bg-[var(--surface)]'}
+               {compatibleTypes.length > 0 && !compatibleTypes.includes(item.mediaType) ? 'opacity-40' : ''}"
         style={selectedId === item.id
           ? 'background:color-mix(in srgb,var(--accent) 12%,transparent); border-left:2px solid var(--accent); padding-left:10px'
           : ''}

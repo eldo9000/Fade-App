@@ -638,12 +638,26 @@
     if (Object.keys(errors).length > 0) { validationErrors = errors; return; }
     validationErrors = {};
 
-    const pending = queue.filter(q => q.status === 'pending' || q.status === 'error');
-    if (pending.length === 0) return;
+    if (!globalOutputFormat) {
+      statusMessage = 'Select an output format first';
+      return;
+    }
+
+    const allPending = queue.filter(q => q.status === 'pending' || q.status === 'error');
+    const compat = compatibleTypes;
+    const pending = allPending.filter(q => compat.includes(q.mediaType));
+    const skipped = allPending.length - pending.length;
+    if (pending.length === 0) {
+      statusMessage = skipped > 0
+        ? `No compatible files — ${skipped} skipped (incompatible)`
+        : 'No files to convert';
+      return;
+    }
 
     converting = true;
     paused = false;
     statusMessage = 'Converting…';
+    if (skipped > 0) statusMessage = `Converting… — ${skipped} skipped (incompatible)`;
 
     for (const item of pending) {
       if (paused) break;
@@ -690,9 +704,21 @@
       imageOptions.output_format, imageOptions.quality,
       videoOptions.output_format, videoOptions.codec, videoOptions.bitrate, videoOptions.sample_rate,
       audioOptions.output_format, audioOptions.bitrate, audioOptions.sample_rate,
-      activeMediaType,
+      activeOutputCategory,
     ];
     if (!_hpSuppressReset) headerPresetId = '';
+  });
+
+  // Sync globalOutputFormat into the relevant options object
+  $effect(() => {
+    if (!globalOutputFormat) return;
+    const cat = categoryFor(globalOutputFormat);
+    if (cat === 'audio')         audioOptions.output_format    = globalOutputFormat;
+    else if (cat === 'video')    videoOptions.output_format    = globalOutputFormat;
+    else if (cat === 'image')    imageOptions.output_format    = globalOutputFormat;
+    else if (cat === 'data')     dataOptions.output_format     = globalOutputFormat;
+    else if (cat === 'document') documentOptions.output_format = globalOutputFormat;
+    else if (cat === 'archive')  archiveOptions.output_format  = globalOutputFormat;
   });
 
   async function loadPresets() {
@@ -721,8 +747,8 @@
 
   async function saveHeaderPreset() {
     const name = headerPresetName.trim();
-    if (!name || !activeMediaType) return;
-    const tab = activeMediaType;
+    if (!name || !activeOutputCategory) return;
+    const tab = activeOutputCategory;
     const src = tab === 'image' ? imageOptions : tab === 'video' ? videoOptions : audioOptions;
     try {
       const saved = await invoke('save_preset', {
@@ -757,8 +783,38 @@
     tooltipText = el?.dataset.tooltip ?? '';
   }
 
-  // Current media type for preset filtering etc.
-  let activeMediaType = $derived(selectedItem?.mediaType ?? null);
+  // ── Output format state ────────────────────────────────────────────────────
+  let globalOutputFormat = $state(null); // null = nothing selected
+
+  function categoryFor(fmt) {
+    if (!fmt) return null;
+    const audio = ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'];
+    const video = ['mp4','mov','webm','mkv','avi','gif'];
+    const image = ['jpeg','png','webp','tiff','bmp','avif'];
+    const data  = ['json','csv','tsv','xml','yaml'];
+    const doc   = ['html','pdf','txt','md'];
+    const arc   = ['zip','tar','gz','7z'];
+    if (audio.includes(fmt)) return 'audio';
+    if (video.includes(fmt)) return 'video';
+    if (image.includes(fmt)) return 'image';
+    if (data.includes(fmt))  return 'data';
+    if (doc.includes(fmt))   return 'document';
+    if (arc.includes(fmt))   return 'archive';
+    return null;
+  }
+
+  let activeOutputCategory = $derived(categoryFor(globalOutputFormat));
+
+  let compatibleTypes = $derived(
+    !activeOutputCategory ? [] :
+    activeOutputCategory === 'audio' ? ['audio', 'video'] :
+    activeOutputCategory === 'video' ? ['video'] :
+    activeOutputCategory === 'image' ? ['image'] :
+    activeOutputCategory === 'data'  ? ['data'] :
+    activeOutputCategory === 'document' ? ['document'] :
+    activeOutputCategory === 'archive'  ? ['archive'] :
+    []
+  );
 
   // ── Selection handler ──────────────────────────────────────────────────────
   // All mutations happen synchronously in the same call so Svelte batches them
@@ -877,6 +933,7 @@
         onremove={(id) => removeItem(id)}
         oncancel={(id) => cancelJob(id)}
         oninfo={(item) => showFileInfo(item)}
+        compatibleTypes={compatibleTypes}
       />
 
       <!-- ── Sidebar bottom: output controls + convert ─────────────────────── -->
@@ -1210,21 +1267,51 @@
            onblur={() => tooltipText = ''}>
 
       <!-- Panel header -->
-      <div class="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
-        <span class="text-[11px] font-medium text-[var(--text-secondary)] uppercase tracking-wide">
-          {#if activeMediaType === 'image'}Image
-          {:else if activeMediaType === 'video'}Video
-          {:else if activeMediaType === 'audio'}Audio
-          {:else if activeMediaType === 'data'}Data
-          {:else if activeMediaType === 'document'}Document
-          {:else if activeMediaType === 'archive'}Archive
-          {:else}Options
-          {/if}
-        </span>
-        <!-- Presets selector — styled same as ImageOptions "More…" dropdown -->
-        {#if activeMediaType && ['image','video','audio'].includes(activeMediaType)}
+      <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0">
+        <!-- Output format grouped dropdown -->
+        <select
+          bind:value={globalOutputFormat}
+          class="px-2 py-1 rounded text-[12px] border border-[var(--border)]
+                 bg-[var(--surface)] outline-none transition-colors cursor-pointer
+                 {globalOutputFormat ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
+        >
+          <option value="" disabled selected={globalOutputFormat === null}>Output</option>
+          <optgroup label="Audio">
+            {#each ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'] as fmt}
+              <option value={fmt}>{fmt}</option>
+            {/each}
+          </optgroup>
+          <optgroup label="Video">
+            {#each ['mp4','mov','webm','mkv','avi','gif'] as fmt}
+              <option value={fmt}>{fmt}</option>
+            {/each}
+          </optgroup>
+          <optgroup label="Image">
+            {#each ['jpeg','png','webp','tiff','bmp','avif'] as fmt}
+              <option value={fmt}>{fmt}</option>
+            {/each}
+          </optgroup>
+          <optgroup label="Data">
+            {#each ['json','csv','tsv','xml','yaml'] as fmt}
+              <option value={fmt}>{fmt}</option>
+            {/each}
+          </optgroup>
+          <optgroup label="Document">
+            {#each ['html','pdf','txt','md'] as fmt}
+              <option value={fmt}>{fmt}</option>
+            {/each}
+          </optgroup>
+          <optgroup label="Archive">
+            {#each ['zip','tar','gz','7z'] as fmt}
+              <option value={fmt}>{fmt}</option>
+            {/each}
+          </optgroup>
+        </select>
+
+        <!-- Presets selector -->
+        {#if activeOutputCategory && ['image','video','audio'].includes(activeOutputCategory)}
           {#if headerAdding}
-            <div class="flex gap-1">
+            <div class="flex gap-1 ml-auto">
               <!-- svelte-ignore a11y_autofocus -->
               <input
                 type="text"
@@ -1248,7 +1335,7 @@
               </button>
             </div>
           {:else}
-            <div class="flex gap-1">
+            <div class="flex gap-1 ml-auto">
               <select
                 bind:value={headerPresetId}
                 onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
@@ -1257,7 +1344,7 @@
                        {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
               >
                 <option value="">Presets</option>
-                {#each presets.filter(p => p.media_type === activeMediaType) as p (p.id)}
+                {#each presets.filter(p => p.media_type === activeOutputCategory) as p (p.id)}
                   <option value={p.id}>{p.name}</option>
                 {/each}
               </select>
@@ -1283,13 +1370,13 @@
 
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
-        {#if !selectedItem}
+        {#if !activeOutputCategory}
           <div class="flex flex-col items-center justify-center h-full text-center gap-2">
             <p class="text-[12px] text-[var(--text-secondary)]">
-              Select a file to see conversion options
+              Select an output format to begin
             </p>
           </div>
-        {:else if selectedItem.mediaType === 'image'}
+        {:else if activeOutputCategory === 'image'}
           <ImageOptions bind:options={imageOptions}
             onqualitystart={onQualityStart}
             onqualityinput={onQualityInput}
@@ -1298,22 +1385,16 @@
             cropActive={cropActive}
             cropAspect={cropAspect}
           />
-        {:else if selectedItem.mediaType === 'video'}
+        {:else if activeOutputCategory === 'video'}
           <VideoOptions bind:options={videoOptions} errors={validationErrors} />
-        {:else if selectedItem.mediaType === 'audio'}
+        {:else if activeOutputCategory === 'audio'}
           <AudioOptions bind:options={audioOptions} errors={validationErrors} />
-        {:else if selectedItem.mediaType === 'data'}
+        {:else if activeOutputCategory === 'data'}
           <DataOptions bind:options={dataOptions} />
-        {:else if selectedItem.mediaType === 'document'}
+        {:else if activeOutputCategory === 'document'}
           <DocumentOptions bind:options={documentOptions} />
-        {:else if selectedItem.mediaType === 'archive'}
+        {:else if activeOutputCategory === 'archive'}
           <ArchiveOptions bind:options={archiveOptions} toolWarnings={toolWarnings} />
-        {:else}
-          <div class="flex flex-col items-center justify-center h-full text-center gap-2">
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              Unsupported file type
-            </p>
-          </div>
         {/if}
       </div>
 
