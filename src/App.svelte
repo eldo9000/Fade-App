@@ -2,6 +2,7 @@
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { initTheme } from '@libre/ui/src/theme.js';
   import { ProgressBar, Dialog } from '@libre/ui';
   import Queue from './lib/Queue.svelte';
@@ -668,12 +669,12 @@
       item.status = 'converting';
       item.percent = 0;
 
-      const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix }
-             : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix }
-             : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: outputSuffix }
-             : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix }
-             : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix }
-             :                                 { ...archiveOptions,   output_suffix: outputSuffix };
+      const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix, output_dir: outputDir }
+             : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix, output_dir: outputDir }
+             : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: outputSuffix, output_dir: outputDir }
+             : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix, output_dir: outputDir }
+             : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix, output_dir: outputDir }
+             :                                 { ...archiveOptions,   output_suffix: outputSuffix, output_dir: outputDir };
 
       invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
         .catch(err => { item.status = 'error'; item.error = String(err); checkAllDone(); });
@@ -684,7 +685,21 @@
 
   let outputSuffix = $state('converted');
   let outputPickerOpen = $state(false);
+  let outputDestMode = $state('source'); // 'source' | 'custom'
+  let customOutputDir = $state(null);
+  let folderInput = $state(null);
+  let outputDir = $derived(outputDestMode === 'source' ? null : (customOutputDir ?? null));
   let dragOver = $state(false);
+
+  function onFolderInputChange(e) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length > 0) {
+      const p = files[0].path ?? files[0].webkitRelativePath ?? '';
+      const dir = p.includes('/') ? p.substring(0, p.lastIndexOf('/')) : null;
+      if (dir) { customOutputDir = dir; outputDestMode = 'custom'; }
+    }
+    e.target.value = '';
+  }
 
   function onWindowDragover(e) { e.preventDefault(); dragOver = true; }
   function onWindowDragleave(e) { if (!e.relatedTarget) dragOver = false; }
@@ -968,17 +983,6 @@
                    transition-colors shrink-0"
           >Clear</button>
         {/if}
-        <button
-          class="ml-auto p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                 hover:bg-[var(--border)] transition-colors shrink-0"
-          title="Settings"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
       </div>
 
       <!-- Tool warnings -->
@@ -1010,18 +1014,158 @@
         compatibleTypes={compatibleTypes}
       />
 
+      <!-- Hidden folder picker input -->
+      <input
+        type="file"
+        bind:this={folderInput}
+        onchange={onFolderInputChange}
+        class="hidden"
+        aria-hidden="true"
+        webkitdirectory
+      />
+
+      <!-- ── Bottom panel: output + convert + settings ──────────────────────── -->
+      <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
+           style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+
+        <!-- Output destination -->
+        <div class="flex flex-col gap-1">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="flex gap-1.5">
+            <button
+              onclick={() => outputDestMode = 'source'}
+              class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
+                     {outputDestMode === 'source'
+                       ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
+                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+            >
+              <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
+                           {outputDestMode === 'source' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
+                {#if outputDestMode === 'source'}<span class="w-1 h-1 rounded-full bg-[var(--accent)]"></span>{/if}
+              </span>
+              Source folder
+            </button>
+            <button
+              onclick={() => { outputDestMode = 'custom'; if (!customOutputDir) folderInput?.click(); }}
+              class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
+                     {outputDestMode === 'custom'
+                       ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
+                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+            >
+              <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
+                           {outputDestMode === 'custom' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
+                {#if outputDestMode === 'custom'}<span class="w-1 h-1 rounded-full bg-[var(--accent)]"></span>{/if}
+              </span>
+              Custom…
+            </button>
+          </div>
+          {#if outputDestMode === 'custom'}
+            <div class="flex gap-1">
+              <span class="flex-1 min-w-0 px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--border)]
+                           bg-[var(--surface)] text-[var(--text-secondary)] truncate">
+                {customOutputDir ?? '—'}
+              </span>
+              <button
+                onclick={() => folderInput?.click()}
+                class="px-2 py-0.5 rounded text-[11px] border border-[var(--border)]
+                       text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)] transition-colors shrink-0"
+              >Browse</button>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Suffix -->
+        <div class="flex items-center gap-2">
+          <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap shrink-0">Suffix</label>
+          <input
+            id="output-suffix"
+            type="text"
+            bind:value={outputSuffix}
+            disabled={converting}
+            placeholder="converted"
+            class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
+                   bg-[var(--surface)] text-[var(--text-primary)] outline-none
+                   focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
+          />
+        </div>
+
+        <!-- Progress -->
+        {#if statusMessage}
+          <p class="text-[11px] text-[var(--text-secondary)] truncate" aria-live="polite">{statusMessage}</p>
+        {/if}
+        {#if converting || overallPercent > 0}
+          <ProgressBar value={overallPercent} />
+        {/if}
+
+        <!-- Convert / Pause / Cancel -->
+        {#if converting}
+          <div class="flex gap-1.5">
+            <button onclick={togglePause}
+                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-[var(--border)]
+                           text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                           hover:border-[var(--accent)] transition-colors">
+              {paused ? 'Resume' : 'Pause'}
+            </button>
+            <button onclick={cancelAll}
+                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-red-800
+                           text-red-400 hover:border-red-500 hover:bg-red-900/20 transition-colors">
+              Cancel
+            </button>
+          </div>
+        {:else}
+          <div class="flex gap-1.5">
+            <button
+              onclick={() => startConvert('selected')}
+              disabled={!selectedItem || queue.length === 0}
+              class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
+                     {!selectedItem || queue.length === 0
+                       ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
+                       : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+            >Convert Selected</button>
+            <button
+              onclick={() => startConvert('all')}
+              disabled={queue.length === 0}
+              class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
+                     {queue.length === 0
+                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed'
+                       : 'bg-[var(--accent)] text-white hover:opacity-90'}"
+            >Convert All</button>
+          </div>
+        {/if}
+
+        <!-- Settings button -->
+        <button
+          class="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] border border-[var(--border)]
+                 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
+                 transition-colors w-full"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Settings
+        </button>
+      </div>
+
     </aside>
 
     <!-- ── CENTER: Preview + timeline ─────────────────────────────────────── -->
     <div class="flex flex-col flex-1 min-w-0">
 
-      <!-- Tooltip bar -->
-      <div class="shrink-0 border-b border-[var(--border)] px-3 flex items-center"
-           style="height:24px; background:var(--surface-raised)">
-        <span class="text-[11px] truncate"
-              style="color:rgba(255,255,255,0.4); opacity:{tooltipText ? 1 : 0}; transition: opacity 5ms ease">
-          {tooltipText}
-        </span>
+      <!-- Tooltip bar — crossfade: 50ms in, 150ms out, overlapping spans -->
+      <div class="shrink-0 border-b border-[var(--border)] relative overflow-hidden"
+           style="height:24px; background:color-mix(in srgb, var(--surface) 40%, #000 60%)">
+        {#key tooltipText}
+          {#if tooltipText}
+            <span class="absolute inset-0 flex items-center px-3 text-[11px] truncate"
+                  style="color:rgba(255,255,255,0.5)"
+                  in:fade={{ duration: 50 }}
+                  out:fade={{ duration: 150 }}>
+              {tooltipText}
+            </span>
+          {/if}
+        {/key}
       </div>
 
       <!-- Preview area -->
@@ -1295,71 +1439,6 @@
            onfocus={onPanelMouseOver}
            onmouseleave={() => { tooltipText = ''; }}
            onblur={() => tooltipText = ''}>
-
-      <!-- ── Convert section (very top) ──────────────────────────────────────── -->
-      <div class="shrink-0 border-b border-[var(--border)] flex flex-col gap-2 px-3 py-2.5">
-
-        <!-- Suffix row -->
-        <div class="flex items-center gap-2">
-          <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap shrink-0">
-            Suffix
-          </label>
-          <input
-            id="output-suffix"
-            type="text"
-            bind:value={outputSuffix}
-            disabled={converting}
-            placeholder="converted"
-            class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
-                   bg-[var(--surface)] text-[var(--text-primary)] outline-none
-                   focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
-          />
-        </div>
-
-        <!-- Progress -->
-        {#if statusMessage}
-          <p class="text-[11px] text-[var(--text-secondary)] truncate" aria-live="polite">{statusMessage}</p>
-        {/if}
-        {#if converting || overallPercent > 0}
-          <ProgressBar value={overallPercent} />
-        {/if}
-
-        <!-- Convert / Pause / Cancel buttons -->
-        {#if converting}
-          <div class="flex gap-1.5">
-            <button onclick={togglePause}
-                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-[var(--border)]
-                           text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                           hover:border-[var(--accent)] transition-colors">
-              {paused ? 'Resume' : 'Pause'}
-            </button>
-            <button onclick={cancelAll}
-                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-red-800
-                           text-red-400 hover:border-red-500 hover:bg-red-900/20 transition-colors">
-              Cancel
-            </button>
-          </div>
-        {:else}
-          <div class="flex gap-1.5">
-            <button
-              onclick={() => startConvert('selected')}
-              disabled={!selectedItem || queue.length === 0}
-              class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
-                     {!selectedItem || queue.length === 0
-                       ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                       : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-            >Convert Selected</button>
-            <button
-              onclick={() => startConvert('all')}
-              disabled={queue.length === 0}
-              class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
-                     {queue.length === 0
-                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed'
-                       : 'bg-[var(--accent)] text-white hover:opacity-90'}"
-            >Convert All</button>
-          </div>
-        {/if}
-      </div>
 
       <!-- ── Panel header: Output picker + Presets ────────────────────────────── -->
       <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0 relative">
