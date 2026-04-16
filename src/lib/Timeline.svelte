@@ -29,7 +29,7 @@
       el = external;
       _ownedInternal = false;
     } else {
-      try { el = new Audio(convertFileSrc(it.path)); }
+      try { el = new Audio(convertFileSrc(it.path)); el.preload = 'auto'; }
       catch { return; }
       _ownedInternal = true;
     }
@@ -48,6 +48,7 @@
     if (!Number.isNaN(el.currentTime)) currentTime = el.currentTime;
 
     audioEl = el; _prevAudio = el;
+    _initCtx(); // Phase 1: pre-warm context + nodes (no audio element touch)
 
     return () => {
       el.removeEventListener('timeupdate', onTime);
@@ -61,59 +62,67 @@
   });
 
   // ── Web Audio graph ───────────────────────────────────────────────────────
-  let _audioCtx  = null;
-  let _analyserL = null; // left channel → Lissajous X + spectrum L
-  let _analyserR = null; // right channel → Lissajous Y + spectrum R
+  // Architecture: audio plays on the NATIVE media path (audioEl → speakers),
+  // NOT through the Web Audio context. We use captureStream() to tap a copy
+  // of the output signal into analysers for visualisation only.
+  // This eliminates the Web Audio hardware-buffer latency (~25-100ms) from
+  // play/pause/stop — changes are heard immediately.
+  //
+  // Fallback: if captureStream() is unavailable (e.g. WKWebView/Tauri on macOS),
+  // analysers show silence but play/pause stays instant. createMediaElementSource()
+  // is intentionally NOT used as a fallback — it routes audio through the hardware
+  // buffer, adding 25–100 ms of latency on every play/pause.
+  let _audioCtx     = null;
+  let _analyserL    = null;
+  let _analyserR    = null;
+  let _splitter     = null;
+  let _srcConnected = false;
 
   function _teardownGraph() {
     if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
     if (_audioCtx) { _audioCtx.close().catch(() => {}); _audioCtx = null; }
-    _analyserL = _analyserR = null;
+    _analyserL = _analyserR = _splitter = null;
+    _srcConnected = false;
   }
 
-  function _buildGraph() {
-    if (!audioEl || _audioCtx) return;
+  // Phase 1 — create analyser context + nodes, no audio element touch.
+  function _initCtx() {
+    if (_audioCtx) return;
     try {
-      const ctx = new AudioContext();
-      const src = ctx.createMediaElementSource(audioEl);
-
+      const ctx = new AudioContext({ latencyHint: 'interactive' });
       const splitter = ctx.createChannelSplitter(2);
       const aL = ctx.createAnalyser();
       const aR = ctx.createAnalyser();
       aL.fftSize = aR.fftSize = 2048;
       aL.smoothingTimeConstant = aR.smoothingTimeConstant = 0.75;
-
-      src.connect(ctx.destination);
-      src.connect(splitter);
       splitter.connect(aL, 0);
       splitter.connect(aR, 1);
+      _audioCtx = ctx; _splitter = splitter; _analyserL = aL; _analyserR = aR;
+      ctx.resume().catch(() => {});
+    } catch (e) { console.error('AudioContext init failed:', e); }
+  }
 
-      _audioCtx = ctx; _analyserL = aL; _analyserR = aR;
-    } catch (e) { console.error('AudioContext setup failed:', e); }
+  // Phase 2 — wire audio element into the visualiser graph.
+  // captureStream(): audio plays natively, stream copy feeds analysers only.
+  // No createMediaElementSource fallback — it routes audio through the Web Audio
+  // hardware buffer (25–100 ms latency). Without captureStream the analysers
+  // show silence, but play/pause is instant.
+  function _connectSource(_restoreTime) {
+    if (_srcConnected || !audioEl || !_audioCtx || !_splitter) return;
+    try {
+      if (typeof audioEl.captureStream === 'function') {
+        const src = _audioCtx.createMediaStreamSource(audioEl.captureStream());
+        src.connect(_splitter);
+      }
+      _srcConnected = true;
+    } catch (e) { console.error('connectSource failed:', e); }
   }
 
   // ── Playback controls ─────────────────────────────────────────────────────
-  // First-time _buildGraph() calls createMediaElementSource, which on WebKit
-  // implicitly resets the element (snapping currentTime to 0). We cache & restore.
-  function _ensureGraphAt(secs) {
-    if (_audioCtx || !audioEl) { _buildGraph(); return; }
-    _buildGraph();
-    if (Math.abs(audioEl.currentTime - secs) > 0.05) audioEl.currentTime = secs;
-  }
 
   function togglePlay() {
     if (!audioEl) return;
-    if (isPlaying) {
-      audioEl.pause();
-    } else {
-      const resumeAt = audioEl.currentTime > 0
-        ? audioEl.currentTime
-        : (options?.trim_start ?? 0);
-      _ensureGraphAt(resumeAt);
-      _audioCtx?.resume();
-      audioEl.currentTime = resumeAt;
-      audioEl.play().catch(() => {});
-    }
+    if (isPlaying) pause(); else play();
   }
 
   function seekTo(secs) {
@@ -128,18 +137,24 @@
   function play() {
     if (!audioEl || isPlaying) return;
     const resumeAt = audioEl.currentTime > 0 ? audioEl.currentTime : (options?.trim_start ?? 0);
-    _ensureGraphAt(resumeAt);
-    _audioCtx?.resume();
-    audioEl.currentTime = resumeAt;
-    audioEl.play().catch(() => {});
+    if (!_audioCtx) _initCtx();
+    _connectSource(resumeAt);
+    _audioCtx?.resume(); // visualiser context only — not in audio output path
+    isPlaying = true;
+    audioEl.volume = 1;
+    audioEl.play().catch(() => { isPlaying = false; });
   }
 
   function pause() {
-    audioEl?.pause();
+    if (!audioEl) return;
+    isPlaying = false;
+    audioEl.pause();
   }
 
   function stop() {
-    audioEl?.pause();
+    if (!audioEl) return;
+    isPlaying = false;
+    audioEl.pause();
     seekTo(options?.trim_start ?? 0);
   }
 
@@ -474,7 +489,8 @@
     if (!audioEl) return;
     _wasPlayingBeforeDrag = isPlaying;
     if (!isPlaying) {
-      _ensureGraphAt(audioEl.currentTime);
+      if (!_audioCtx) _initCtx();
+      _connectSource(audioEl.currentTime);
       _audioCtx?.resume();
       audioEl.play().catch(() => {});
     }
@@ -522,17 +538,22 @@
   const showTrim   = $derived(options != null && duration != null);
 </script>
 
-<svelte:window onmousemove={onWindowMouseMove} onmouseup={onWindowMouseUp} />
+<svelte:window onmousemove={onWindowMouseMove} onmouseup={onWindowMouseUp}
+  onkeydown={(e) => {
+    if (e.key === ' ' && !['INPUT','TEXTAREA','SELECT'].includes(e.target?.tagName ?? '')) {
+      e.preventDefault();
+      _audioCtx?.resume(); // wake context ahead of togglePlay
+      togglePlay();
+    }
+  }}
+/>
 
 <div class="shrink-0 border-t border-[var(--border)] flex flex-col select-none"
      style="background:#0a0a0a">
 
-  <!-- ── Advanced Audio — collapsible header ──────────────────────────────── -->
+  <!-- ── Visualiser — collapsible header ──────────────────────────────────── -->
   <div class="w-full relative flex items-center shrink-0 select-none"
        style="height:30px; border-bottom:1px solid rgba(255,255,255,0.07)">
-    <span class="px-4" style="font:10px/1 monospace; color:rgba(255,255,255,0.4); letter-spacing:0.1em; text-transform:uppercase">
-      Advanced Audio
-    </span>
     <!-- Chevron centred over the play button — points up when closed (inviting click), down when open -->
     <button
       onclick={() => vizExpanded = !vizExpanded}
@@ -706,34 +727,31 @@
     <div class="absolute left-3 top-0 bottom-0 flex items-center gap-1">
       <!-- Start -->
       <button onclick={() => seekTo(options?.trim_start ?? 0)}
-              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
               title="Go to start">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
         </svg>
       </button>
-      <!-- Play -->
-      <button onclick={play}
-              class="flex items-center justify-center rounded transition-colors hover:brightness-110"
-              style="width:30px; height:26px; color:{isPlaying ? 'rgba(255,255,255,0.3)' : 'white'}; background:{isPlaying ? 'rgba(255,255,255,0.04)' : '#2563eb'}; border:1px solid {isPlaying ? 'rgba(255,255,255,0.07)' : '#3b82f6'}"
-              title="Play">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M8 5v14l11-7z"/>
-        </svg>
-      </button>
-      <!-- Pause -->
-      <button onclick={pause}
-              class="flex items-center justify-center rounded transition-colors hover:brightness-110"
-              style="width:30px; height:26px; color:{!isPlaying ? 'rgba(255,255,255,0.3)' : 'white'}; background:{!isPlaying ? 'rgba(255,255,255,0.04)' : '#2563eb'}; border:1px solid {!isPlaying ? 'rgba(255,255,255,0.07)' : '#3b82f6'}"
-              title="Pause">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-        </svg>
+      <!-- Play / Pause toggle -->
+      <button onpointerdown={() => _audioCtx?.resume()} onclick={togglePlay}
+              class="flex items-center justify-center rounded hover:brightness-110"
+              style="width:30px; height:26px; color:white; background:{isPlaying ? '#2563eb' : 'transparent'}; border:1px solid {isPlaying ? '#3b82f6' : '#3b82f6'}"
+              title="{isPlaying ? 'Pause' : 'Play'} (Space)">
+        {#if isPlaying}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+          </svg>
+        {:else}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        {/if}
       </button>
       <!-- Stop -->
       <button onclick={stop}
-              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
               title="Stop">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -742,7 +760,7 @@
       </button>
       <!-- End -->
       <button onclick={() => seekTo(options?.trim_end ?? duration ?? 0)}
-              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
               title="Go to end">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -751,7 +769,7 @@
       </button>
       <!-- Loop -->
       <button onclick={() => loopEnabled = !loopEnabled}
-              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:{loopEnabled ? 'white' : 'rgba(255,255,255,0.6)'}; background:{loopEnabled ? '#2563eb' : 'rgba(255,255,255,0.07)'}; border:1px solid {loopEnabled ? '#3b82f6' : 'rgba(255,255,255,0.1)'}"
               title="Loop">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

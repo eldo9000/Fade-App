@@ -633,7 +633,7 @@
 
   // ── Convert ────────────────────────────────────────────────────────────────
 
-  async function startConvert() {
+  async function startConvert(mode = 'all') {
     const errors = validateOptions(videoOptions, audioOptions);
     if (Object.keys(errors).length > 0) { validationErrors = errors; return; }
     validationErrors = {};
@@ -643,7 +643,11 @@
       return;
     }
 
-    const allPending = queue.filter(q => q.status === 'pending' || q.status === 'error');
+    const candidates = mode === 'selected'
+      ? (selectedItem ? [selectedItem] : [])
+      : queue;
+
+    const allPending = candidates.filter(q => q.status === 'pending' || q.status === 'error');
     const compat = compatibleTypes;
     const pending = allPending.filter(q => compat.includes(q.mediaType));
     const skipped = allPending.length - pending.length;
@@ -679,6 +683,7 @@
   // ── Drag over window ───────────────────────────────────────────────────────
 
   let outputSuffix = $state('converted');
+  let outputPickerOpen = $state(false);
   let dragOver = $state(false);
 
   function onWindowDragover(e) { e.preventDefault(); dragOver = true; }
@@ -936,64 +941,19 @@
         compatibleTypes={compatibleTypes}
       />
 
-      <!-- ── Sidebar bottom: output controls + convert ─────────────────────── -->
-      <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 p-3">
-
-        <!-- Output suffix -->
-        <div class="flex items-center gap-2">
-          <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap w-12 shrink-0">
-            Suffix
-          </label>
-          <input
-            id="output-suffix"
-            type="text"
-            bind:value={outputSuffix}
-            disabled={converting}
-            placeholder="converted"
-            class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
-                   bg-[var(--surface)] text-[var(--text-primary)] outline-none
-                   focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
-          />
-        </div>
-
-        <!-- Progress -->
-        {#if statusMessage}
-          <p class="text-[11px] text-[var(--text-secondary)] truncate" aria-live="polite">{statusMessage}</p>
-        {/if}
-        {#if converting || overallPercent > 0}
-          <ProgressBar value={overallPercent} />
-        {/if}
-
-        <!-- Convert / Pause / Cancel -->
-        <div class="flex gap-1.5">
-          {#if converting}
-            <button onclick={togglePause}
-                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-[var(--border)]
-                           text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                           hover:border-[var(--accent)] transition-colors">
-              {paused ? 'Resume' : 'Pause'}
-            </button>
-            <button onclick={cancelAll}
-                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-red-800
-                           text-red-400 hover:border-red-500 hover:bg-red-900/20 transition-colors">
-              Cancel
-            </button>
-          {:else}
-            <button
-              onclick={startConvert}
-              disabled={converting || queue.length === 0}
-              class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
-                     {queue.length === 0
-                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed'
-                       : 'bg-[var(--accent)] text-white hover:opacity-90'}"
-            >Convert</button>
-          {/if}
-        </div>
-      </div>
     </aside>
 
     <!-- ── CENTER: Preview + timeline ─────────────────────────────────────── -->
     <div class="flex flex-col flex-1 min-w-0">
+
+      <!-- Tooltip bar -->
+      <div class="shrink-0 border-b border-[var(--border)] px-3 flex items-center"
+           style="height:24px; background:var(--surface-raised)">
+        <span class="text-[11px] truncate transition-opacity duration-150"
+              style="color:rgba(255,255,255,0.4); opacity:{tooltipText ? 1 : 0}">
+          {tooltipText}
+        </span>
+      </div>
 
       <!-- Preview area -->
       <div class="flex-1 min-h-0 bg-[#1a1a1a] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
@@ -1258,55 +1218,137 @@
       {/if}
     </div>
 
-    <!-- ── RIGHT: Options panel (333px, adapts to selected file type) ──────── -->
-    <aside class="w-[333px] shrink-0 border-l border-[var(--border)] flex flex-col bg-[var(--surface-raised)]"
+    <!-- ── RIGHT: Options panel (333px) ─────────────────────────────────────── -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <aside class="w-[333px] shrink-0 border-l border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative"
            role="region" aria-label="Conversion options"
            onmouseover={onPanelMouseOver}
            onfocus={onPanelMouseOver}
-           onmouseleave={() => tooltipText = ''}
+           onmouseleave={() => { tooltipText = ''; }}
            onblur={() => tooltipText = ''}>
 
-      <!-- Panel header -->
-      <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0">
-        <!-- Output format grouped dropdown -->
-        <select
-          bind:value={globalOutputFormat}
-          class="px-2 py-1 rounded text-[12px] border border-[var(--border)]
-                 bg-[var(--surface)] outline-none transition-colors cursor-pointer
-                 {globalOutputFormat ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
-        >
-          <option value="" disabled selected={globalOutputFormat === null}>Output</option>
-          <optgroup label="Audio">
-            {#each ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'] as fmt}
-              <option value={fmt}>{fmt}</option>
-            {/each}
-          </optgroup>
-          <optgroup label="Video">
-            {#each ['mp4','mov','webm','mkv','avi','gif'] as fmt}
-              <option value={fmt}>{fmt}</option>
-            {/each}
-          </optgroup>
-          <optgroup label="Image">
-            {#each ['jpeg','png','webp','tiff','bmp','avif'] as fmt}
-              <option value={fmt}>{fmt}</option>
-            {/each}
-          </optgroup>
-          <optgroup label="Data">
-            {#each ['json','csv','tsv','xml','yaml'] as fmt}
-              <option value={fmt}>{fmt}</option>
-            {/each}
-          </optgroup>
-          <optgroup label="Document">
-            {#each ['html','pdf','txt','md'] as fmt}
-              <option value={fmt}>{fmt}</option>
-            {/each}
-          </optgroup>
-          <optgroup label="Archive">
-            {#each ['zip','tar','gz','7z'] as fmt}
-              <option value={fmt}>{fmt}</option>
-            {/each}
-          </optgroup>
-        </select>
+      <!-- ── Convert section (very top) ──────────────────────────────────────── -->
+      <div class="shrink-0 border-b border-[var(--border)] flex flex-col gap-2 px-3 py-2.5">
+
+        <!-- Suffix row -->
+        <div class="flex items-center gap-2">
+          <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap shrink-0">
+            Suffix
+          </label>
+          <input
+            id="output-suffix"
+            type="text"
+            bind:value={outputSuffix}
+            disabled={converting}
+            placeholder="converted"
+            class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
+                   bg-[var(--surface)] text-[var(--text-primary)] outline-none
+                   focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
+          />
+        </div>
+
+        <!-- Progress -->
+        {#if statusMessage}
+          <p class="text-[11px] text-[var(--text-secondary)] truncate" aria-live="polite">{statusMessage}</p>
+        {/if}
+        {#if converting || overallPercent > 0}
+          <ProgressBar value={overallPercent} />
+        {/if}
+
+        <!-- Convert / Pause / Cancel buttons -->
+        {#if converting}
+          <div class="flex gap-1.5">
+            <button onclick={togglePause}
+                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-[var(--border)]
+                           text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                           hover:border-[var(--accent)] transition-colors">
+              {paused ? 'Resume' : 'Pause'}
+            </button>
+            <button onclick={cancelAll}
+                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-red-800
+                           text-red-400 hover:border-red-500 hover:bg-red-900/20 transition-colors">
+              Cancel
+            </button>
+          </div>
+        {:else}
+          <div class="flex gap-1.5">
+            <button
+              onclick={() => startConvert('selected')}
+              disabled={!selectedItem || queue.length === 0}
+              class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
+                     {!selectedItem || queue.length === 0
+                       ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
+                       : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+            >Convert Selected</button>
+            <button
+              onclick={() => startConvert('all')}
+              disabled={queue.length === 0}
+              class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
+                     {queue.length === 0
+                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed'
+                       : 'bg-[var(--accent)] text-white hover:opacity-90'}"
+            >Convert All</button>
+          </div>
+        {/if}
+      </div>
+
+      <!-- ── Panel header: Output picker + Presets ────────────────────────────── -->
+      <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0 relative">
+
+        <!-- Output format button — opens columnar picker -->
+        <div class="relative">
+          <button
+            onclick={() => outputPickerOpen = !outputPickerOpen}
+            class="px-2 py-1 rounded text-[12px] border transition-colors flex items-center gap-1.5
+                   {globalOutputFormat
+                     ? 'border-[var(--accent)] text-[var(--accent)]'
+                     : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+          >
+            {globalOutputFormat ? globalOutputFormat.toUpperCase() : 'Output'}
+            <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                 class="shrink-0 transition-transform {outputPickerOpen ? 'rotate-180' : ''}">
+              <path d="M1 1l3 3 3-3"/>
+            </svg>
+          </button>
+
+          <!-- Columnar format picker panel -->
+          {#if outputPickerOpen}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="absolute top-full left-0 z-50 mt-1 p-3 rounded-md border border-[var(--border)]
+                     bg-[var(--surface-raised)] shadow-xl"
+              style="width:307px"
+              onmouseleave={() => {}}
+            >
+              <div class="grid gap-x-3" style="grid-template-columns: repeat(6, 1fr)">
+                {#each [
+                  { label: 'Audio',    fmts: ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'] },
+                  { label: 'Video',    fmts: ['mp4','mov','webm','mkv','avi','gif'] },
+                  { label: 'Image',    fmts: ['jpeg','png','webp','tiff','bmp','avif'] },
+                  { label: 'Data',     fmts: ['json','csv','tsv','xml','yaml'] },
+                  { label: 'Document', fmts: ['html','pdf','txt','md'] },
+                  { label: 'Archive',  fmts: ['zip','tar','gz','7z'] },
+                ] as group}
+                  <div class="flex flex-col gap-0.5">
+                    <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)] mb-1 truncate">
+                      {group.label}
+                    </span>
+                    {#each group.fmts as fmt}
+                      <button
+                        onclick={() => { globalOutputFormat = fmt; outputPickerOpen = false; }}
+                        class="px-1 py-0.5 rounded text-left text-[11px] font-mono transition-colors truncate
+                               {globalOutputFormat === fmt
+                                 ? 'bg-[var(--accent)] text-white'
+                                 : 'text-[var(--text-primary)] hover:bg-[var(--border)]'}"
+                      >{fmt}</button>
+                    {/each}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
 
         <!-- Presets selector -->
         {#if activeOutputCategory && ['image','video','audio'].includes(activeOutputCategory)}
@@ -1396,15 +1438,6 @@
         {:else if activeOutputCategory === 'archive'}
           <ArchiveOptions bind:options={archiveOptions} toolWarnings={toolWarnings} />
         {/if}
-      </div>
-
-      <!-- ── Tooltip bar ─────────────────────────────────────────────────── -->
-      <div class="shrink-0 border-t border-[var(--border)] px-3 flex items-center"
-           style="height:26px; background:var(--surface)">
-        <span class="text-[11px] truncate transition-opacity duration-100"
-              style="color:rgba(255,255,255,0.35); opacity:{tooltipText ? 1 : 0}">
-          {tooltipText}
-        </span>
       </div>
 
     </aside>
