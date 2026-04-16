@@ -77,7 +77,7 @@ pub struct ConvertOptions {
     // DSP
     pub dsp_highpass_freq:  Option<f64>, // Hz — Butterworth 2-pole highpass, None = off
     pub dsp_lowpass_freq:   Option<f64>, // Hz — Butterworth 2-pole lowpass,  None = off
-    pub dsp_stereo_width:   Option<f64>, // 0.0=mono  1.0=original  2.0=wide, None = off
+    pub dsp_stereo_width:   Option<f64>, // −100=mono  0=no change  +100=wide, None = off
     pub dsp_limiter_db:     Option<f64>, // dBFS ceiling (e.g. -1.0),          None = off
     // Data
     pub pretty_print: Option<bool>,
@@ -410,9 +410,12 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
             filters.push(format!("lowpass=f={freq:.1}:p=2"));
         }
     }
-    if let Some(width) = opts.dsp_stereo_width {
-        if (width - 1.0).abs() > 0.01 {
-            filters.push(format!("extrastereo=m={width:.3}"));
+    if let Some(width_pct) = opts.dsp_stereo_width {
+        // width_pct: −100 (mono) … 0 (no change) … +100 (wide)
+        // extrastereo expects a multiplier: m = 1 + pct/100
+        let m = 1.0 + width_pct / 100.0;
+        if m.abs() > 0.01 {
+            filters.push(format!("extrastereo=m={m:.3}"));
         }
     }
     if opts.normalize_loudness == Some(true) {

@@ -1,7 +1,7 @@
 <script>
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
-  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false) } = $props();
+  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false } = $props();
 
   // ── Media element ─────────────────────────────────────────────────────────
   // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives
@@ -15,13 +15,14 @@
   $effect(() => {
     const it = item;
     const external = mediaEl;
+    const mediaReady_ = mediaReady;
 
     // Teardown previous
     if (_prevAudio && _ownedInternal) { _prevAudio.pause(); _prevAudio.src = ''; }
     _prevAudio = null; _ownedInternal = false;
     _teardownGraph();
     isPlaying = false; currentTime = 0; audioEl = null;
-    if (!it) return;
+    if (!it || !mediaReady_) return;  // gate: don't create Audio until parent says ready
 
     let el;
     if (external) {
@@ -119,6 +120,32 @@
     currentTime = Math.max(0, Math.min(duration ?? 0, secs));
     if (audioEl) audioEl.currentTime = currentTime;
   }
+
+  let loopEnabled    = $state(false);
+  let startHovered   = $state(false);
+  let endHovered     = $state(false);
+
+  function play() {
+    if (!audioEl || isPlaying) return;
+    const resumeAt = audioEl.currentTime > 0 ? audioEl.currentTime : (options?.trim_start ?? 0);
+    _ensureGraphAt(resumeAt);
+    _audioCtx?.resume();
+    audioEl.currentTime = resumeAt;
+    audioEl.play().catch(() => {});
+  }
+
+  function pause() {
+    audioEl?.pause();
+  }
+
+  function stop() {
+    audioEl?.pause();
+    seekTo(options?.trim_start ?? 0);
+  }
+
+  $effect(() => {
+    if (audioEl) audioEl.loop = loopEnabled;
+  });
 
   // ── Canvas refs ───────────────────────────────────────────────────────────
   let lissajousCanvas    = $state(null);
@@ -400,12 +427,21 @@
 
   $effect(() => {
     const it = item;
-    waveformData = null; spectrogramData = null;
-    if (!it) return;
+    const go = waveformReady;
+    waveformData = null;
+    if (!it || !go) return;
     const id = it.id; _capturedId = id; mediaLoading = true;
     invoke('get_waveform', { path: it.path })
-      .then(d   => { if (_capturedId === id) { waveformData = /** @type {any} */ (d); mediaLoading = false; } })
-      .catch(e  => { console.error('get_waveform failed:', e); if (_capturedId === id) mediaLoading = false; });
+      .then(d => { if (_capturedId === id) { waveformData = /** @type {any} */ (d); mediaLoading = false; } })
+      .catch(e => { console.error('get_waveform failed:', e); if (_capturedId === id) mediaLoading = false; });
+  });
+
+  $effect(() => {
+    const it = item;
+    const go = spectrogramReady;
+    spectrogramData = null;
+    if (!it || !go) return;
+    const id = it.id;
     invoke('get_spectrogram', { path: it.path })
       .then(b64 => { if (_capturedId === id) spectrogramData = b64; })
       .catch(() => {});
@@ -475,6 +511,14 @@
     return `${m}:${s.padStart(4, '0')}`;
   }
 
+  function fmtTC(secs) {
+    if (secs == null || secs < 0) return '00:00:00';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
   const showTrim   = $derived(options != null && duration != null);
 </script>
 
@@ -484,25 +528,33 @@
      style="background:#0a0a0a">
 
   <!-- ── Advanced Audio — collapsible header ──────────────────────────────── -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <button class="w-full flex items-center justify-between px-4 shrink-0 select-none"
-          style="height:30px; border-bottom:1px solid rgba(255,255,255,0.07); cursor:pointer"
-          onclick={() => vizExpanded = !vizExpanded}>
-    <span style="font:10px/1 monospace; color:rgba(255,255,255,0.4); letter-spacing:0.1em; text-transform:uppercase">
+  <div class="w-full relative flex items-center shrink-0 select-none"
+       style="height:30px; border-bottom:1px solid rgba(255,255,255,0.07)">
+    <span class="px-4" style="font:10px/1 monospace; color:rgba(255,255,255,0.4); letter-spacing:0.1em; text-transform:uppercase">
       Advanced Audio
     </span>
-    <svg width="20" height="14" viewBox="0 0 20 14" fill="none"
-         stroke="rgba(255,255,255,0.4)" stroke-width="2"
-         stroke-linecap="round" stroke-linejoin="round">
-      {#if vizExpanded}
-        <path d="M1 13 L10 7 L19 13"/>
-        <path d="M1 7  L10 1 L19 7"/>
-      {:else}
-        <path d="M1 1 L10 7 L19 1"/>
-        <path d="M1 7 L10 13 L19 7"/>
-      {/if}
-    </svg>
-  </button>
+    <!-- Chevron centred over the play button — points up when closed (inviting click), down when open -->
+    <button
+      onclick={() => vizExpanded = !vizExpanded}
+      class="absolute left-1/2 -translate-x-1/2 p-1.5 rounded
+             hover:bg-white/10 transition-colors"
+      aria-label={vizExpanded ? 'Collapse visualisers' : 'Expand visualisers'}
+    >
+      <svg width="20" height="14" viewBox="0 0 20 14" fill="none"
+           stroke="rgba(255,255,255,0.4)" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        {#if vizExpanded}
+          <!-- open → chevrons point down (click to collapse) -->
+          <path d="M1 1 L10 7 L19 1"/>
+          <path d="M1 7 L10 13 L19 7"/>
+        {:else}
+          <!-- closed → chevrons point up (click to expand) -->
+          <path d="M1 13 L10 7 L19 13"/>
+          <path d="M1 7  L10 1 L19 7"/>
+        {/if}
+      </svg>
+    </button>
+  </div>
 
   <!-- ── Advanced Audio — expandable content ──────────────────────────────── -->
   {#if vizExpanded}
@@ -581,9 +633,9 @@
                   fill={`hsl(${waveformData.hues[i]},100%,55%)`} opacity="0.85" />
           {/each}
         </svg>
-      {:else if mediaLoading}
+      {:else if item}
         <div class="absolute inset-0 flex items-center justify-center">
-          <span style="font-size:10px; color:#333">Loading…</span>
+          <span style="font-size:13px; font-weight:500; color:rgba(255,255,255,0.25)">Loading</span>
         </div>
       {/if}
     </div>
@@ -604,18 +656,32 @@
       <!-- Left handle -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="absolute inset-y-0 z-20 flex items-center justify-center cursor-ew-resize"
-           style="left:calc({startFrac * 100}% - 6px); width:12px"
+           style="left:calc({startFrac * 100}% - 7px); width:14px"
+           onmouseenter={() => startHovered = true}
+           onmouseleave={() => startHovered = false}
            onmousedown={(e) => { e.stopPropagation(); dragging = 'start'; }}>
-        <div class="w-[3px] h-full rounded-full transition-colors"
-             style="background:{dragging === 'start' ? '#ddd' : '#666'}"></div>
+        <div class="absolute inset-y-0 w-[2px] rounded-full"
+             style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)'}; transition:background 0.12s"></div>
+        <div class="relative z-10 flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+             style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.06)'}; border:1px solid {(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.12)'}; transition:background 0.12s, border-color 0.12s">
+          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
+          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
+        </div>
       </div>
       <!-- Right handle -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="absolute inset-y-0 z-20 flex items-center justify-center cursor-ew-resize"
-           style="left:calc({endFrac * 100}% - 6px); width:12px"
+           style="left:calc({endFrac * 100}% - 7px); width:14px"
+           onmouseenter={() => endHovered = true}
+           onmouseleave={() => endHovered = false}
            onmousedown={(e) => { e.stopPropagation(); dragging = 'end'; }}>
-        <div class="w-[3px] h-full rounded-full transition-colors"
-             style="background:{dragging === 'end' ? '#ddd' : '#666'}"></div>
+        <div class="absolute inset-y-0 w-[2px] rounded-full"
+             style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)'}; transition:background 0.12s"></div>
+        <div class="relative z-10 flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+             style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.06)'}; border:1px solid {(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.12)'}; transition:background 0.12s, border-color 0.12s">
+          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
+          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
+        </div>
       </div>
     {/if}
 
@@ -626,62 +692,91 @@
            style="left:{playFrac * 100}%; transform:translateX(-50%)"
            onmousedown={(e) => { e.stopPropagation(); dragging = 'playhead'; _beginScrub(); }}>
         <div class="absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full"
-             style="top:-5px; background:rgba(255,255,255,0.9); box-shadow:0 0 5px rgba(255,255,255,0.5)"></div>
+             style="top:-5px; background:#60a5fa; box-shadow:0 0 7px #60a5fa"></div>
         <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px"
-             style="background:rgba(255,255,255,0.8)"></div>
+             style="background:#60a5fa"></div>
       </div>
     {/if}
       </div><!-- /track -->
 
       <!-- Controls row -->
-      <div class="relative flex items-center px-3 shrink-0" style="height:64px">
+      <div class="relative shrink-0" style="height:44px">
 
-    <!-- Trim range — left -->
-    {#if showTrim}
-      <div class="absolute left-3 flex items-center gap-1 font-mono tabular-nums" style="font-size:12px; color:white">
-        <span style="opacity:{startFrac > 0 ? 1 : 0.4}">{fmt(options.trim_start ?? 0)}</span>
-        <span style="opacity:0.3">–</span>
-        <span style="opacity:{endFrac < 1 ? 1 : 0.4}">{fmt(options.trim_end ?? duration)}</span>
-      </div>
-    {/if}
-
-    <!-- Playback buttons — centred -->
-    <div class="absolute left-1/2 -translate-x-1/2 flex items-center gap-4">
+    <!-- Playback buttons — left -->
+    <div class="absolute left-3 top-0 bottom-0 flex items-center gap-1">
+      <!-- Start -->
       <button onclick={() => seekTo(options?.trim_start ?? 0)}
-              class="w-12 h-12 flex items-center justify-center rounded opacity-40 hover:opacity-100 transition-opacity"
-              style="color:white" title="Go to start">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
+              title="Go to start">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
         </svg>
       </button>
-
-      <button onclick={togglePlay}
-              class="w-14 h-14 flex items-center justify-center rounded-full"
-              style="background:var(--accent)" title={isPlaying ? 'Pause' : 'Play'}>
-        {#if isPlaying}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-            <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-          </svg>
-        {:else}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-        {/if}
+      <!-- Play -->
+      <button onclick={play}
+              class="flex items-center justify-center rounded transition-colors hover:brightness-110"
+              style="width:30px; height:26px; color:{isPlaying ? 'rgba(255,255,255,0.3)' : 'white'}; background:{isPlaying ? 'rgba(255,255,255,0.04)' : '#2563eb'}; border:1px solid {isPlaying ? 'rgba(255,255,255,0.07)' : '#3b82f6'}"
+              title="Play">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
       </button>
-
+      <!-- Pause -->
+      <button onclick={pause}
+              class="flex items-center justify-center rounded transition-colors hover:brightness-110"
+              style="width:30px; height:26px; color:{!isPlaying ? 'rgba(255,255,255,0.3)' : 'white'}; background:{!isPlaying ? 'rgba(255,255,255,0.04)' : '#2563eb'}; border:1px solid {!isPlaying ? 'rgba(255,255,255,0.07)' : '#3b82f6'}"
+              title="Pause">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+        </svg>
+      </button>
+      <!-- Stop -->
+      <button onclick={stop}
+              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
+              title="Stop">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12"/>
+        </svg>
+      </button>
+      <!-- End -->
       <button onclick={() => seekTo(options?.trim_end ?? duration ?? 0)}
-              class="w-12 h-12 flex items-center justify-center rounded opacity-40 hover:opacity-100 transition-opacity"
-              style="color:white" title="Go to end">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
+              title="Go to end">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 18l8.5-6L6 6v12z"/><rect x="16" y="6" width="2" height="12"/>
+        </svg>
+      </button>
+      <!-- Loop -->
+      <button onclick={() => loopEnabled = !loopEnabled}
+              class="flex items-center justify-center rounded transition-colors hover:brightness-125"
+              style="width:30px; height:26px; color:{loopEnabled ? 'white' : 'rgba(255,255,255,0.6)'}; background:{loopEnabled ? '#2563eb' : 'rgba(255,255,255,0.07)'}; border:1px solid {loopEnabled ? '#3b82f6' : 'rgba(255,255,255,0.1)'}"
+              title="Loop">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+          <path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
         </svg>
       </button>
     </div>
 
-      <!-- Timecode — right -->
-      <span class="absolute right-3 font-mono tabular-nums" style="font-size:12px; color:white; opacity:0.7">
-        {fmt(currentTime)}{#if duration} / {fmt(duration)}{/if}
+    <!-- Timecodes — right, vertically centred -->
+    <div class="absolute right-3 inset-y-0 flex items-center gap-4 font-mono tabular-nums" style="font-size:11px">
+      <span>
+        <span style="color:rgba(255,255,255,0.5)">FROM START:</span>
+        <span style="color:white"> {fmtTC(currentTime)}</span>
       </span>
+      <span>
+        <span style="color:rgba(255,255,255,0.5)">TO END:</span>
+        <span style="color:white"> {fmtTC(Math.max(0, (duration ?? 0) - currentTime))}</span>
+      </span>
+      <span>
+        <span style="color:rgba(255,255,255,0.5)">TOTAL TIME:</span>
+        <span style="color:white"> {fmtTC(duration ?? 0)}</span>
+      </span>
+    </div>
+
       </div><!-- /controls row -->
 
     </div><!-- /left column -->

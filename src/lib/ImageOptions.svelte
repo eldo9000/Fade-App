@@ -39,6 +39,26 @@
     const val = e.currentTarget.value;
     if (val) options.output_format = val;
   }
+
+  function seg(active, i, total) {
+    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
+    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
+    const ml    = i > 0 ? '-ml-px' : '';
+    const color = active
+      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
+      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
+    return [base, round, ml, color].filter(Boolean).join(' ');
+  }
+
+  function segV(active, i, total) {
+    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
+    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
+    const mt    = i > 0 ? '-mt-px' : '';
+    const color = active
+      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
+      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
+    return [base, round, mt, color].filter(Boolean).join(' ');
+  }
 </script>
 
 <div class="space-y-5" role="form" aria-label="Image conversion options">
@@ -48,20 +68,19 @@
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Output Format
     </legend>
-    <div class="flex flex-wrap gap-2 items-center">
-      {#each primaryFormats as fmt}
-        <button
-          onclick={() => selectPrimary(fmt)}
-          class="px-3 py-1 rounded text-[12px] font-medium border transition-colors
-            {options.output_format === fmt
-              ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-              : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
-        >{fmt.toUpperCase()}</button>
-      {/each}
+    <div class="flex gap-2 items-center">
+      <div class="flex-1 grid" style="grid-template-columns: repeat(3, 1fr)">
+        {#each primaryFormats as fmt, i}
+          <button
+            onclick={() => selectPrimary(fmt)}
+            class={seg(options.output_format === fmt, i, primaryFormats.length)}
+          >{fmt.toUpperCase()}</button>
+        {/each}
+      </div>
       <select
         value={dropdownActive ? options.output_format : ''}
         onchange={onDropdownChange}
-        class="px-2 py-1 rounded text-[12px] border transition-colors outline-none
+        class="px-2 py-1.5 rounded-md text-[12px] border transition-colors outline-none
                bg-[var(--surface)] cursor-pointer
                {dropdownActive
                  ? 'border-[var(--accent)] text-[var(--accent)]'
@@ -82,7 +101,7 @@
         Quality — {options.quality}%
       </legend>
       <input
-        type="range" min="1" max="100"
+        type="range" min="5" max="100" step="5"
         bind:value={options.quality}
         class="w-full accent-[var(--accent)]"
         aria-label="Quality {options.quality}%"
@@ -100,15 +119,12 @@
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Crop
     </legend>
-    <div class="flex gap-2 flex-wrap">
-      {#each cropPresets as p}
+    <div class="grid" style="grid-template-columns: repeat({cropPresets.length}, 1fr)">
+      {#each cropPresets as p, i}
         {@const isActive = cropActive && (p.ratio === null ? cropAspect === null : cropAspect === p.ratio)}
         <button
           onclick={() => oncropstart?.(p.ratio)}
-          class="px-3 py-1 rounded text-[12px] border transition-colors
-            {isActive
-              ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-              : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+          class={seg(isActive, i, cropPresets.length)}
         >{p.label}</button>
       {/each}
     </div>
@@ -131,16 +147,11 @@
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Resize
     </legend>
-    <select
-      bind:value={options.resize_mode}
-      class="w-full px-3 py-1.5 rounded-md border border-[var(--border)]
-             bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
-             focus:outline-none focus:border-[var(--accent)]"
-    >
-      {#each resizeModes as m}
-        <option value={m.value}>{m.label}</option>
+    <div class="flex flex-col">
+      {#each resizeModes as m, i}
+        <button onclick={() => options.resize_mode = m.value} class={segV(options.resize_mode === m.value, i, resizeModes.length)}>{m.label}</button>
       {/each}
-    </select>
+    </div>
   </fieldset>
 
   {#if options.resize_mode === 'percent'}
@@ -195,32 +206,23 @@
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Rotation & Orientation
     </legend>
-    <div class="flex flex-wrap gap-2 mb-2">
-      {#each [0, 90, 180, 270] as deg}
+    <div class="grid mb-2" style="grid-template-columns: repeat(4, 1fr)">
+      {#each [0, 90, 180, 270] as deg, i}
         <button
           onclick={() => options.rotation = deg}
-          class="px-3 py-1 rounded text-[12px] border transition-colors
-            {options.rotation === deg
-              ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-              : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
-        >{deg === 0 ? 'No rotate' : deg + '°'}</button>
+          class={seg(options.rotation === deg, i, 4)}
+        >{deg === 0 ? 'None' : deg + '°'}</button>
       {/each}
     </div>
-    <div class="flex flex-wrap gap-2">
+    <div class="grid grid-cols-2 mb-2">
       <button
         onclick={() => options.flip_h = !options.flip_h}
-        class="px-3 py-1 rounded text-[12px] border transition-colors
-          {options.flip_h
-            ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-            : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
-      >Mirror horizontal</button>
+        class={seg(options.flip_h, 0, 2)}
+      >Flip H</button>
       <button
         onclick={() => options.flip_v = !options.flip_v}
-        class="px-3 py-1 rounded text-[12px] border transition-colors
-          {options.flip_v
-            ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-            : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
-      >Mirror vertical</button>
+        class={seg(options.flip_v, 1, 2)}
+      >Flip V</button>
     </div>
     <label class="flex items-center gap-2 mt-2 cursor-pointer">
       <input type="checkbox" bind:checked={options.auto_rotate} class="accent-[var(--accent)]" />

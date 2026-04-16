@@ -27,18 +27,86 @@
   let validationErrors = $state({});
   let toolWarnings = $state({});
 
-  // Auto-load duration when a video/audio item is selected
-  let selectedDuration = $state(null);
-  $effect(() => {
-    const item = selectedItem;
-    if (!item || (item.mediaType !== 'video' && item.mediaType !== 'audio')) {
-      selectedDuration = null;
-      return;
+  // ── Sequential load pipeline ────────────────────────────────────────────────
+  //
+  //  Click → handleSelect (synchronous, one Svelte batch):
+  //    liveSrc = null, all gates false, selectedId = newId
+  //    → browser paints: black preview + "Loading" + queue highlight
+  //
+  //  Then runLoadPipeline (async, each step awaits the previous):
+  //    Step 1  (50ms yield)   — let browser paint the cleared state
+  //    Step 2  get_file_info  — fast ffprobe metadata → selectedDuration
+  //    Step 3  liveSrc        — set video/image src → browser starts decode
+  //    Step 4  mediaReady     — Timeline creates Audio / connects to <video>
+  //    Step 5  waveformReady  — get_waveform (ffmpeg, medium)
+  //    Step 6  spectrogramReady — get_spectrogram (ffmpeg, heaviest)
+  //
+  //  Each step checks _generation to bail if a newer click has started.
+
+  let selectedDuration    = $state(null);
+  let previewLoading      = $state(false);
+  let liveSrc             = $state(null);
+  let tlMediaReady        = $state(false);
+  let tlWaveformReady     = $state(false);
+  let tlSpectrogramReady  = $state(false);
+  let _generation         = 0;
+
+  function onPreviewLoaded() { previewLoading = false; }
+
+  /** Yield to browser for one frame — returns a Promise that resolves after paint */
+  function frameYield(ms = 50) { return new Promise(r => setTimeout(r, ms)); }
+
+  async function runLoadPipeline(gen, newItem) {
+    const isMedia = newItem && ['video', 'audio', 'image'].includes(newItem.mediaType);
+    if (!newItem || !isMedia) return;
+
+    const stale = () => _generation !== gen;
+    const mt = newItem.mediaType;
+
+    // ── Step 1: yield so the browser paints the cleared state ──
+    await frameYield(50);
+    if (stale()) return;
+
+    // ── Step 2: get_file_info (ffprobe, fast) ──
+    if (mt === 'video' || mt === 'audio') {
+      try {
+        const info = await invoke('get_file_info', { path: newItem.path });
+        if (stale()) return;
+        selectedDuration = info.duration_secs ?? null;
+      } catch {
+        if (stale()) return;
+        selectedDuration = null;
+      }
     }
-    invoke('get_file_info', { path: item.path })
-      .then(info => { selectedDuration = info.duration_secs ?? null; })
-      .catch(() => { selectedDuration = null; });
-  });
+    if (stale()) return;
+
+    // ── Step 3: set liveSrc (video / image decode starts) ──
+    if (mt === 'video' || mt === 'image') {
+      liveSrc = convertFileSrc(newItem.path);
+    } else {
+      // Audio — no visual preview, clear loading
+      previewLoading = false;
+    }
+    if (stale()) return;
+
+    // ── Step 4: unlock Timeline media element ──
+    await frameYield(0);  // one more yield so liveSrc paints before Audio setup
+    if (stale()) return;
+    tlMediaReady = true;
+    if (stale()) return;
+
+    // ── Step 5: unlock waveform (ffmpeg, medium cost) ──
+    await frameYield(0);
+    if (stale()) return;
+    tlWaveformReady = true;
+    if (stale()) return;
+
+    // ── Step 6: unlock spectrogram (ffmpeg, heaviest) ──
+    // Wait a small beat so waveform invoke dispatches before spectrogram starts
+    await frameYield(100);
+    if (stale()) return;
+    tlSpectrogramReady = true;
+  }
 
   // File info dialog
   let fileInfoOpen = $state(false);
@@ -479,12 +547,12 @@
       if (!firstNewId) firstNewId = id;
       queue.push({ id, path, name, ext, mediaType: mt, status: 'pending', percent: 0 });
     }
-    if (!selectedId && firstNewId) selectedId = firstNewId;
+    if (!selectedId && firstNewId) handleSelect(firstNewId);
   }
 
   function removeItem(id) {
     queue = queue.filter(q => q.id !== id);
-    if (selectedId === id) selectedId = queue.length > 0 ? queue[0].id : null;
+    if (selectedId === id) handleSelect(queue.length > 0 ? queue[0].id : null);
     updateOverall();
   }
 
@@ -610,32 +678,67 @@
 
   // ── Presets ────────────────────────────────────────────────────────────────
 
-  let presets = $state([]);
-  let presetsOpen = $state(false);
-  let presetSaving = $state(false);
-  let presetNameInput = $state('');
+  let presets          = $state([]);
+  let headerPresetId   = $state('');
+  let headerAdding     = $state(false);
+  let headerPresetName = $state('');
+  let _hpSuppressReset = false; // plain bool, prevents auto-reset during apply
+
+  // Auto-reset to "Presets" placeholder when the active settings change
+  $effect(() => {
+    void [
+      imageOptions.output_format, imageOptions.quality,
+      videoOptions.output_format, videoOptions.codec, videoOptions.bitrate, videoOptions.sample_rate,
+      audioOptions.output_format, audioOptions.bitrate, audioOptions.sample_rate,
+      activeMediaType,
+    ];
+    if (!_hpSuppressReset) headerPresetId = '';
+  });
 
   async function loadPresets() {
     try { presets = await invoke('list_presets'); } catch { /* no-op */ }
   }
 
-  async function savePreset() {
-    const name = presetNameInput.trim();
-    if (!name) return;
-    const tab = selectedItem?.mediaType ?? 'image';
+  function applyPreset(id) {
+    const p = presets.find(p => p.id === id);
+    if (!p) return;
+    _hpSuppressReset = true;
+    if (p.media_type === 'image') {
+      imageOptions.output_format = p.output_format;
+      if (p.quality != null) imageOptions.quality = p.quality;
+    } else if (p.media_type === 'video') {
+      videoOptions.output_format = p.output_format;
+      if (p.codec != null) videoOptions.codec = p.codec;
+      if (p.bitrate != null) videoOptions.bitrate = p.bitrate;
+      if (p.sample_rate != null) videoOptions.sample_rate = p.sample_rate;
+    } else {
+      audioOptions.output_format = p.output_format;
+      if (p.bitrate != null) audioOptions.bitrate = p.bitrate;
+      if (p.sample_rate != null) audioOptions.sample_rate = p.sample_rate;
+    }
+    queueMicrotask(() => { _hpSuppressReset = false; });
+  }
+
+  async function saveHeaderPreset() {
+    const name = headerPresetName.trim();
+    if (!name || !activeMediaType) return;
+    const tab = activeMediaType;
     const src = tab === 'image' ? imageOptions : tab === 'video' ? videoOptions : audioOptions;
     try {
       const saved = await invoke('save_preset', {
         name, mediaType: tab,
         outputFormat: src.output_format,
-        quality: tab === 'image' ? src.quality : null,
-        codec: tab === 'video' ? src.codec : null,
-        bitrate: (tab === 'video' || tab === 'audio') ? src.bitrate : null,
-        sampleRate: (tab === 'video' || tab === 'audio') ? src.sample_rate : null,
+        quality: tab === 'image' ? (src.quality ?? null) : null,
+        codec: tab === 'video' ? (src.codec ?? null) : null,
+        bitrate: (tab === 'video' || tab === 'audio') ? (src.bitrate ?? null) : null,
+        sampleRate: (tab === 'video' || tab === 'audio') ? (src.sample_rate ?? null) : null,
       });
       presets = [...presets, saved];
-      presetNameInput = '';
-      presetSaving = false;
+      headerPresetName = '';
+      headerAdding = false;
+      _hpSuppressReset = true;
+      headerPresetId = saved.id;
+      queueMicrotask(() => { _hpSuppressReset = false; });
     } catch (e) { console.error('Save preset failed:', e); }
   }
 
@@ -643,35 +746,43 @@
     try {
       await invoke('delete_preset', { id });
       presets = presets.filter(p => p.id !== id);
+      if (headerPresetId === id) headerPresetId = '';
     } catch (e) { console.error('Delete preset failed:', e); }
   }
 
-  function loadPresetIntoOptions(preset) {
-    if (preset.media_type === 'image') {
-      imageOptions.output_format = preset.output_format;
-      if (preset.quality != null) imageOptions.quality = preset.quality;
-    } else if (preset.media_type === 'video') {
-      videoOptions.output_format = preset.output_format;
-      if (preset.codec != null) videoOptions.codec = preset.codec;
-      if (preset.bitrate != null) videoOptions.bitrate = preset.bitrate;
-      if (preset.sample_rate != null) videoOptions.sample_rate = preset.sample_rate;
-    } else {
-      audioOptions.output_format = preset.output_format;
-      if (preset.bitrate != null) audioOptions.bitrate = preset.bitrate;
-      if (preset.sample_rate != null) audioOptions.sample_rate = preset.sample_rate;
-    }
-    presetsOpen = false;
+  // ── Tooltip bar ────────────────────────────────────────────────────────────
+  let tooltipText = $state('');
+  function onPanelMouseOver(e) {
+    const el = e.target.closest('[data-tooltip]');
+    tooltipText = el?.dataset.tooltip ?? '';
   }
 
   // Current media type for preset filtering etc.
   let activeMediaType = $derived(selectedItem?.mediaType ?? null);
 
-  // Asset URL for the preview pane (video / image only)
-  let previewSrc = $derived(
-    selectedItem && (selectedItem.mediaType === 'video' || selectedItem.mediaType === 'image')
-      ? convertFileSrc(selectedItem.path)
-      : null
-  );
+  // ── Selection handler ──────────────────────────────────────────────────────
+  // All mutations happen synchronously in the same call so Svelte batches them
+  // into ONE DOM flush — guaranteed clear before any file I/O begins.
+  // Then the async pipeline runs each loading stage in sequence.
+  function handleSelect(id) {
+    const gen = ++_generation;  // cancel any in-flight pipeline
+    const newItem = id ? queue.find(q => q.id === id) : null;
+    const isMedia = !!(newItem && ['video', 'audio', 'image'].includes(newItem.mediaType));
+
+    // ── Synchronous batch: clears everything in one Svelte flush ──
+    liveSrc            = null;
+    selectedDuration   = null;
+    tlMediaReady       = false;
+    tlWaveformReady    = false;
+    tlSpectrogramReady = false;
+    previewLoading     = isMedia;
+    videoEl?.load();   // flash existing video to black immediately
+    selectedId         = id ?? null;
+
+    // ── Async pipeline: stages run sequentially after browser paints ──
+    runLoadPipeline(gen, newItem);
+  }
+
 </script>
 
 <svelte:window
@@ -727,6 +838,17 @@
                    transition-colors shrink-0"
           >Clear</button>
         {/if}
+        <button
+          class="ml-auto p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                 hover:bg-[var(--border)] transition-colors shrink-0"
+          title="Settings"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
       </div>
 
       <!-- Tool warnings -->
@@ -751,7 +873,7 @@
       <Queue
         {queue}
         {selectedId}
-        onselect={(id) => selectedId = id}
+        onselect={handleSelect}
         onremove={(id) => removeItem(id)}
         oncancel={(id) => cancelJob(id)}
         oninfo={(item) => showFileInfo(item)}
@@ -775,14 +897,6 @@
                    bg-[var(--surface)] text-[var(--text-primary)] outline-none
                    focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
           />
-          <button
-            onclick={() => { presetsOpen = !presetsOpen; presetSaving = false; }}
-            disabled={!activeMediaType}
-            class="px-2 py-1 rounded text-[11px] border border-[var(--border)]
-                   text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
-                   transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0
-                   {presetsOpen ? 'text-[var(--accent)] border-[var(--accent)]' : ''}"
-          >Presets</button>
         </div>
 
         <!-- Progress -->
@@ -825,18 +939,18 @@
     <div class="flex flex-col flex-1 min-w-0">
 
       <!-- Preview area -->
-      <div class="flex-1 min-h-0 bg-[#0d0d0d] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
-        {#key selectedId}
-          {#if selectedItem?.mediaType === 'video' && previewSrc}
-            <!-- Main video — always mounted so Timeline stays wired in;
-                 hidden when a diff clip is showing. -->
-            <!-- svelte-ignore a11y_media_has_caption -->
-            <video
-              bind:this={videoEl}
-              src={previewSrc}
-              preload="metadata"
-              class="max-w-full max-h-full object-contain {diffClipPath ? 'hidden' : ''}"
-            ></video>
+      <div class="flex-1 min-h-0 bg-[#1a1a1a] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
+        <!-- ── VIDEO: lives outside {#key} so videoEl is NEVER null while a
+               video is selected — prevents Timeline falling back to new Audio() ── -->
+        {#if selectedItem?.mediaType === 'video'}
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            bind:this={videoEl}
+            src={liveSrc ?? undefined}
+            preload="metadata"
+            onloadedmetadata={onPreviewLoaded}
+            class="max-w-full max-h-full object-contain {(!liveSrc || diffClipPath) ? 'hidden' : ''}"
+          ></video>
             {#if diffClipPath}
               <!-- svelte-ignore a11y_media_has_caption -->
               <video
@@ -938,16 +1052,22 @@
                 {diffError}
               </div>
             {/if}
-          {:else if selectedItem?.mediaType === 'image' && previewSrc}
+        {/if}
+
+        <!-- ── NON-VIDEO content: key block remounts on each selection ── -->
+        {#key selectedId}
+          {#if selectedItem?.mediaType === 'image' && liveSrc}
             {#if imgDiffMode && imgDiffPath && !cropActive}
               <img src={convertFileSrc(imgDiffPath)} alt="Quality diff"
                    class="max-w-full max-h-full object-contain" />
             {:else if !imgDiffMode && imgCompressedPath && !cropActive}
               <img bind:this={imgEl} src={convertFileSrc(imgCompressedPath)} alt="Compressed preview"
-                   class="max-w-full max-h-full object-contain" onload={onImgLoad} />
+                   class="max-w-full max-h-full object-contain"
+                   onload={(e) => { onImgLoad(e); onPreviewLoaded(); }} />
             {:else}
-              <img bind:this={imgEl} src={previewSrc} alt={selectedItem.name}
-                   class="max-w-full max-h-full object-contain" onload={onImgLoad} />
+              <img bind:this={imgEl} src={liveSrc} alt={selectedItem.name}
+                   class="max-w-full max-h-full object-contain"
+                   onload={(e) => { onImgLoad(e); onPreviewLoaded(); }} />
             {/if}
 
             <!-- Quality mode badge -->
@@ -1030,7 +1150,8 @@
                 </div>
               {/if}
             {/if}
-          {:else if selectedItem}
+          {:else if selectedItem && !['video','audio','image'].includes(selectedItem.mediaType)}
+            <!-- Non-media types: show file info -->
             <div class="text-center select-none">
               <p class="text-white/20 text-[11px] font-mono uppercase tracking-widest mb-2">
                 {selectedItem.ext}
@@ -1039,7 +1160,7 @@
                 {selectedItem.name}
               </p>
             </div>
-          {:else}
+          {:else if !selectedItem}
             <div class="text-center select-none">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                    stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
@@ -1051,14 +1172,27 @@
               <p class="text-white/20 text-[12px]">No file selected</p>
             </div>
           {/if}
+          <!-- Loading text — shown while preview is clearing/loading -->
+          {#if previewLoading}
+            <p class="absolute select-none text-[40px] font-medium"
+               style="color:rgba(255,255,255,0.25)">Loading</p>
+          {/if}
         {/key}
+      </div>
+
+      <!-- Loading bar — sits between preview and timeline -->
+      <div class="shrink-0 h-[2px] relative overflow-hidden" style="background:var(--border)">
+        {#if previewLoading}
+          <div class="preview-loading-bar absolute inset-y-0 w-1/3 rounded-full"
+               style="background:var(--accent)"></div>
+        {/if}
       </div>
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} />
       {:else if selectedItem?.mediaType === 'audio'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} />
       {:else}
         <div class="h-28 shrink-0 border-t border-[var(--border)] flex items-center justify-center"
              style="background:#0a0a0a">
@@ -1069,7 +1203,11 @@
 
     <!-- ── RIGHT: Options panel (333px, adapts to selected file type) ──────── -->
     <aside class="w-[333px] shrink-0 border-l border-[var(--border)] flex flex-col bg-[var(--surface-raised)]"
-           role="region" aria-label="Conversion options">
+           role="region" aria-label="Conversion options"
+           onmouseover={onPanelMouseOver}
+           onfocus={onPanelMouseOver}
+           onmouseleave={() => tooltipText = ''}
+           onblur={() => tooltipText = ''}>
 
       <!-- Panel header -->
       <div class="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
@@ -1083,15 +1221,64 @@
           {:else}Options
           {/if}
         </span>
-        <!-- Presets button -->
-        <button
-          onclick={() => { presetsOpen = !presetsOpen; presetSaving = false; }}
-          disabled={!activeMediaType}
-          class="text-[11px] px-2 py-0.5 rounded border border-[var(--border)]
-                 text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
-                 transition-colors disabled:opacity-40 disabled:cursor-not-allowed
-                 {presetsOpen ? 'text-[var(--accent)] border-[var(--accent)]' : ''}"
-        >Presets</button>
+        <!-- Presets selector — styled same as ImageOptions "More…" dropdown -->
+        {#if activeMediaType && ['image','video','audio'].includes(activeMediaType)}
+          {#if headerAdding}
+            <div class="flex gap-1">
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                bind:value={headerPresetName}
+                placeholder="Name…"
+                autofocus
+                onkeydown={(e) => { if (e.key === 'Enter') saveHeaderPreset(); if (e.key === 'Escape') { headerAdding = false; headerPresetName = ''; } }}
+                class="w-24 px-2 py-1 rounded-l text-[12px] border border-[var(--border)]
+                       bg-[var(--surface)] text-[var(--text-primary)] outline-none
+                       focus:border-[var(--accent)] transition-colors"
+              />
+              <button onclick={saveHeaderPreset}
+                      class="px-2 py-1 text-[12px] border -ml-px border-[var(--accent)]
+                             bg-[var(--accent)] text-white rounded-r hover:opacity-90 transition-opacity">
+                Save
+              </button>
+              <button onclick={() => { headerAdding = false; headerPresetName = ''; }}
+                      class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
+                             text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+                ✕
+              </button>
+            </div>
+          {:else}
+            <div class="flex gap-1">
+              <select
+                bind:value={headerPresetId}
+                onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
+                class="px-2 py-1 rounded text-[12px] border border-[var(--border)]
+                       bg-[var(--surface)] outline-none transition-colors cursor-pointer
+                       {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
+              >
+                <option value="">Presets</option>
+                {#each presets.filter(p => p.media_type === activeMediaType) as p (p.id)}
+                  <option value={p.id}>{p.name}</option>
+                {/each}
+              </select>
+              <button
+                onclick={() => { headerAdding = true; headerPresetName = ''; }}
+                title="Save current settings as preset"
+                class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
+                       text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
+                       transition-colors leading-none"
+              >+</button>
+              <button
+                onclick={() => deletePreset(headerPresetId)}
+                disabled={!headerPresetId}
+                title="Delete this preset"
+                class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
+                       text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
+                       transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
+              >−</button>
+            </div>
+          {/if}
+        {/if}
       </div>
 
       <!-- Options content -->
@@ -1130,58 +1317,15 @@
         {/if}
       </div>
 
-      <!-- Presets popover -->
-      {#if presetsOpen && activeMediaType}
-        <div class="fixed inset-0 z-30" aria-hidden="true"
-             onclick={() => { presetsOpen = false; presetSaving = false; }}></div>
-        <div class="absolute bottom-[52px] right-4 z-40 w-56
-                    bg-[var(--surface-raised)] border border-[var(--border)]
-                    rounded-lg shadow-lg overflow-hidden">
-          {#each presets.filter(p => p.media_type === activeMediaType) as p (p.id)}
-            <div class="flex items-center gap-1 px-3 py-1.5 hover:bg-[var(--surface)] group">
-              <button
-                onclick={() => loadPresetIntoOptions(p)}
-                class="flex-1 text-left text-[12px] text-[var(--text-primary)] truncate"
-              >{p.name}</button>
-              <button
-                onclick={() => deletePreset(p.id)}
-                class="shrink-0 w-5 h-5 flex items-center justify-center rounded
-                       text-[var(--text-secondary)] opacity-0 group-hover:opacity-100
-                       hover:text-red-500 transition-all text-[13px]"
-                aria-label="Delete preset"
-              >×</button>
-            </div>
-          {:else}
-            <p class="px-3 py-2 text-[12px] text-[var(--text-secondary)]">No presets yet</p>
-          {/each}
-          <div class="border-t border-[var(--border)]">
-            {#if presetSaving}
-              <div class="flex items-center gap-1.5 px-3 py-2">
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  type="text"
-                  bind:value={presetNameInput}
-                  placeholder="Preset name"
-                  autofocus
-                  onkeydown={(e) => { if (e.key === 'Enter') savePreset(); if (e.key === 'Escape') { presetSaving = false; presetNameInput = ''; } }}
-                  class="flex-1 px-2 py-1 text-[12px] rounded border border-[var(--border)]
-                         bg-[var(--surface)] text-[var(--text-primary)] outline-none
-                         focus:border-[var(--accent)] transition-colors"
-                />
-                <button onclick={savePreset}
-                        class="px-2 py-1 text-[12px] rounded bg-[var(--accent)] text-white
-                               hover:opacity-90 shrink-0">Save</button>
-              </div>
-            {:else}
-              <button
-                onclick={() => { presetSaving = true; presetNameInput = ''; }}
-                class="w-full text-left px-3 py-2 text-[12px] text-[var(--accent)]
-                       hover:bg-[var(--surface)] transition-colors"
-              >+ Save current as preset…</button>
-            {/if}
-          </div>
-        </div>
-      {/if}
+      <!-- ── Tooltip bar ─────────────────────────────────────────────────── -->
+      <div class="shrink-0 border-t border-[var(--border)] px-3 flex items-center"
+           style="height:26px; background:var(--surface)">
+        <span class="text-[11px] truncate transition-opacity duration-100"
+              style="color:rgba(255,255,255,0.35); opacity:{tooltipText ? 1 : 0}">
+          {tooltipText}
+        </span>
+      </div>
+
     </aside>
 
   <!-- Full-window drag overlay -->
@@ -1247,3 +1391,14 @@
   </Dialog>
 
 </div>
+
+<style>
+  @keyframes preview-slide {
+    0%   { left: -33%; }
+    50%  { left: 50%; }
+    100% { left: 133%; }
+  }
+  .preview-loading-bar {
+    animation: preview-slide 1.2s ease-in-out infinite;
+  }
+</style>
