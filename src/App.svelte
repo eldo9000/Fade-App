@@ -791,20 +791,89 @@
   // ── Output format state ────────────────────────────────────────────────────
   let globalOutputFormat = $state(null); // null = nothing selected
 
+  const FORMAT_GROUPS = [
+    { label: 'Audio', cat: 'audio', fmts: [
+      { id: 'mp3' }, { id: 'wav' }, { id: 'flac' }, { id: 'ogg' },
+      { id: 'aac' }, { id: 'opus' }, { id: 'm4a' }, { id: 'wma' },
+      { id: 'aiff' }, { id: 'alac' }, { id: 'ac3' }, { id: 'dts' },
+      { id: 'vorbis', label: 'Vorbis', todo: true },
+      { id: 'ddp', label: 'Dolby Digital+', todo: true },
+      { id: 'truehd', label: 'Dolby TrueHD', todo: true },
+    ]},
+    { label: 'Video', cat: 'video', fmts: [
+      { id: 'mp4' }, { id: 'mov' }, { id: 'webm' }, { id: 'mkv' }, { id: 'avi' }, { id: 'gif' },
+      { id: 'prores', label: 'Apple ProRes', todo: true },
+      { id: 'dnxhd', label: 'DNxHD', todo: true },
+      { id: 'dnxhr', label: 'DNxHR', todo: true },
+      { id: 'cineform', label: 'CineForm', todo: true },
+      { id: 'qt-anim', label: 'QT Animation', todo: true },
+      { id: 'uncompressed', label: 'Uncompressed', todo: true },
+      { id: 'ffv1', label: 'FFV1', todo: true },
+      { id: 'xdcam-422', label: 'XDCAM HD422', todo: true },
+      { id: 'xdcam-35', label: 'XDCAM HD35', todo: true },
+      { id: 'avc-intra', label: 'AVC-Intra', todo: true },
+      { id: 'xavc', label: 'XAVC', todo: true },
+      { id: 'xavc-lgop', label: 'XAVC Long GOP', todo: true },
+      { id: 'hap', label: 'HAP', todo: true },
+      { id: 'theora', label: 'Theora', todo: true },
+      { id: 'mpeg2', label: 'MPEG-2', todo: true },
+      { id: 'mjpeg', label: 'MJPEG', todo: true },
+      { id: 'xvid', label: 'Xvid', todo: true },
+      { id: 'dv', label: 'DV', todo: true },
+      { id: 'wmv', label: 'WMV', todo: true },
+      { id: 'mpeg1', label: 'MPEG-1', todo: true },
+    ]},
+    { label: 'Image', cat: 'image', fmts: [
+      { id: 'jpeg' }, { id: 'png' }, { id: 'webp' }, { id: 'tiff' }, { id: 'bmp' }, { id: 'avif' },
+      { id: 'jpegxl', label: 'JPEG XL', todo: true },
+    ]},
+    { label: 'Data', cat: 'data', fmts: [
+      { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
+    ]},
+    { label: 'Document', cat: 'document', fmts: [
+      { id: 'html' }, { id: 'pdf' }, { id: 'txt' }, { id: 'md' },
+    ]},
+    { label: 'Archive', cat: 'archive', fmts: [
+      { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
+    ]},
+    { label: 'Operations', cat: 'ops', fmts: [
+      { id: 'cut-noenc', label: 'Cut (no re-encode)', todo: true },
+      { id: 'replace-audio', label: 'Replace Audio', todo: true },
+      { id: 'rewrap', label: 'Rewrap', todo: true },
+      { id: 'conform', label: 'Conform', todo: true },
+      { id: 'merge', label: 'Merge', todo: true },
+      { id: 'extract', label: 'Extract', todo: true },
+      { id: 'subtitling', label: 'Subtitling', todo: true },
+      { id: 'video-inserts', label: 'Video Inserts', todo: true },
+    ]},
+    { label: 'AI Tools', cat: 'ai', fmts: [
+      { id: 'ai-sep', label: 'Audio Separation', todo: true },
+      { id: 'ai-transcribe', label: 'Transcription', todo: true },
+      { id: 'ai-translate', label: 'Translate', todo: true },
+      { id: 'ai-colorize', label: 'Colorize', todo: true },
+      { id: 'ai-bgremove', label: 'BG Remover', todo: true },
+    ]},
+    { label: 'Analysis', cat: 'analysis', fmts: [
+      { id: 'loudness', label: 'Loudness & TP', todo: true },
+      { id: 'audio-norm', label: 'Audio Norm', todo: true },
+      { id: 'cut-detect', label: 'Cut Detection', todo: true },
+      { id: 'black-detect', label: 'Black Detection', todo: true },
+      { id: 'vmaf', label: 'VMAF', todo: true },
+      { id: 'framemd5', label: 'FrameMD5', todo: true },
+    ]},
+    { label: 'Burn & Rip', cat: 'burn', fmts: [
+      { id: 'dvd', label: 'DVD', todo: true },
+      { id: 'bluray', label: 'Blu-ray', todo: true },
+      { id: 'dvd-rip', label: 'DVD Rip', todo: true },
+      { id: 'web-video', label: 'Web Video', todo: true },
+    ]},
+  ];
+
   function categoryFor(fmt) {
     if (!fmt) return null;
-    const audio = ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'];
-    const video = ['mp4','mov','webm','mkv','avi','gif'];
-    const image = ['jpeg','png','webp','tiff','bmp','avif'];
-    const data  = ['json','csv','tsv','xml','yaml'];
-    const doc   = ['html','pdf','txt','md'];
-    const arc   = ['zip','tar','gz','7z'];
-    if (audio.includes(fmt)) return 'audio';
-    if (video.includes(fmt)) return 'video';
-    if (image.includes(fmt)) return 'image';
-    if (data.includes(fmt))  return 'data';
-    if (doc.includes(fmt))   return 'document';
-    if (arc.includes(fmt))   return 'archive';
+    for (const g of FORMAT_GROUPS) {
+      if (g.fmts.some(f => f.id === fmt)) return g.cat;
+    }
     return null;
   }
 
@@ -949,8 +1018,8 @@
       <!-- Tooltip bar -->
       <div class="shrink-0 border-b border-[var(--border)] px-3 flex items-center"
            style="height:24px; background:var(--surface-raised)">
-        <span class="text-[11px] truncate transition-opacity duration-150"
-              style="color:rgba(255,255,255,0.4); opacity:{tooltipText ? 1 : 0}">
+        <span class="text-[11px] truncate"
+              style="color:rgba(255,255,255,0.4); opacity:{tooltipText ? 1 : 0}; transition: opacity 5ms ease">
           {tooltipText}
         </span>
       </div>
@@ -1295,60 +1364,23 @@
       <!-- ── Panel header: Output picker + Presets ────────────────────────────── -->
       <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0 relative">
 
-        <!-- Output format button — opens columnar picker -->
-        <div class="relative">
-          <button
-            onclick={() => outputPickerOpen = !outputPickerOpen}
-            class="px-2 py-1 rounded text-[12px] border transition-colors flex items-center gap-1.5
-                   {globalOutputFormat
-                     ? 'border-[var(--accent)] text-[var(--accent)]'
-                     : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-          >
-            {globalOutputFormat ? globalOutputFormat.toUpperCase() : 'Output'}
-            <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
-                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-                 class="shrink-0 transition-transform {outputPickerOpen ? 'rotate-180' : ''}">
-              <path d="M1 1l3 3 3-3"/>
-            </svg>
-          </button>
-
-          <!-- Columnar format picker panel -->
-          {#if outputPickerOpen}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="absolute top-full left-0 z-50 mt-1 p-3 rounded-md border border-[var(--border)]
-                     bg-[var(--surface-raised)] shadow-xl"
-              style="width:307px"
-              onmouseleave={() => {}}
-            >
-              <div class="grid gap-x-3" style="grid-template-columns: repeat(6, 1fr)">
-                {#each [
-                  { label: 'Audio',    fmts: ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'] },
-                  { label: 'Video',    fmts: ['mp4','mov','webm','mkv','avi','gif'] },
-                  { label: 'Image',    fmts: ['jpeg','png','webp','tiff','bmp','avif'] },
-                  { label: 'Data',     fmts: ['json','csv','tsv','xml','yaml'] },
-                  { label: 'Document', fmts: ['html','pdf','txt','md'] },
-                  { label: 'Archive',  fmts: ['zip','tar','gz','7z'] },
-                ] as group}
-                  <div class="flex flex-col gap-0.5">
-                    <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)] mb-1 truncate">
-                      {group.label}
-                    </span>
-                    {#each group.fmts as fmt}
-                      <button
-                        onclick={() => { globalOutputFormat = fmt; outputPickerOpen = false; }}
-                        class="px-1 py-0.5 rounded text-left text-[11px] font-mono transition-colors truncate
-                               {globalOutputFormat === fmt
-                                 ? 'bg-[var(--accent)] text-white'
-                                 : 'text-[var(--text-primary)] hover:bg-[var(--border)]'}"
-                      >{fmt}</button>
-                    {/each}
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <!-- Output format button — toggles picker in body -->
+        <button
+          onclick={() => { outputPickerOpen = !outputPickerOpen; }}
+          class="px-2 py-1 rounded text-[12px] border transition-colors flex items-center gap-1.5
+                 {globalOutputFormat && !outputPickerOpen
+                   ? 'border-[var(--accent)] text-[var(--accent)]'
+                   : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+        >
+          {globalOutputFormat && !outputPickerOpen
+            ? FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)?.label?.toUpperCase() ?? globalOutputFormat.toUpperCase()
+            : 'Output'}
+          <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+               class="shrink-0 transition-transform {outputPickerOpen || !globalOutputFormat ? 'rotate-180' : ''}">
+            <path d="M1 1l3 3 3-3"/>
+          </svg>
+        </button>
 
         <!-- Presets selector -->
         {#if activeOutputCategory && ['image','video','audio'].includes(activeOutputCategory)}
@@ -1412,11 +1444,32 @@
 
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
-        {#if !activeOutputCategory}
-          <div class="flex flex-col items-center justify-center h-full text-center gap-2">
-            <p class="text-[12px] text-[var(--text-secondary)]">
-              Select an output format to begin
-            </p>
+        {#if !globalOutputFormat || outputPickerOpen}
+          <!-- ── Format picker: sectioned list with columns ─────────────────── -->
+          <div class="space-y-4">
+            {#each FORMAT_GROUPS as group}
+              <div>
+                <div class="flex items-center gap-2 mb-1.5">
+                  <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                    {group.label}
+                  </span>
+                  <div class="flex-1 h-px bg-[var(--border)]"></div>
+                </div>
+                <div class="flex flex-wrap gap-1">
+                  {#each group.fmts as f}
+                    <button
+                      onclick={() => { globalOutputFormat = f.id; outputPickerOpen = false; }}
+                      class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
+                             {globalOutputFormat === f.id
+                               ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                               : f.todo
+                                 ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                 : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                    >{f.label ?? f.id}</button>
+                  {/each}
+                </div>
+              </div>
+            {/each}
           </div>
         {:else if activeOutputCategory === 'image'}
           <ImageOptions bind:options={imageOptions}
@@ -1437,6 +1490,10 @@
           <DocumentOptions bind:options={documentOptions} />
         {:else if activeOutputCategory === 'archive'}
           <ArchiveOptions bind:options={archiveOptions} toolWarnings={toolWarnings} />
+        {:else}
+          <div class="flex flex-col items-center justify-center h-full text-center gap-2">
+            <p class="text-[11px] text-green-500">Coming soon</p>
+          </div>
         {/if}
       </div>
 
