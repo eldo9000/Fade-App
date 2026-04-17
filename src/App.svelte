@@ -123,6 +123,7 @@
 
   // Advanced audio panel — persists across file switches
   let vizExpanded = $state(false);
+  let queueCompact = $state(false);
 
   // Compression diff preview
   let diffClipPath   = $state(null);
@@ -539,16 +540,21 @@
   }
 
   function addFiles(paths) {
-    let firstNewId = null;
     for (const path of paths) {
       const name = path.split('/').pop() ?? path;
       const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
       const mt = mediaTypeFor(ext);
       const id = crypto.randomUUID();
-      if (!firstNewId) firstNewId = id;
-      queue.push({ id, path, name, ext, mediaType: mt, status: 'pending', percent: 0 });
+      const item = { id, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
+      queue.push(item);
+      // Fetch file stats in the background for display in the queue
+      if (['video', 'audio', 'image'].includes(mt)) {
+        invoke('get_file_info', { path }).then(info => {
+          const q = queue.find(q => q.id === id);
+          if (q) q.info = info;
+        }).catch(() => {});
+      }
     }
-    if (!selectedId && firstNewId) handleSelect(firstNewId);
   }
 
   function removeItem(id) {
@@ -817,6 +823,9 @@
     ]},
     { label: 'Video', cat: 'video', fmts: [
       { id: 'mp4' }, { id: 'mov' }, { id: 'webm' }, { id: 'mkv' }, { id: 'avi' }, { id: 'gif' },
+      { id: 'm4v',   todo: true }, { id: 'flv',   todo: true }, { id: 'mpg',  todo: true },
+      { id: 'ogv',   todo: true }, { id: 'ts',    todo: true }, { id: '3gp',  todo: true },
+      { id: 'divx',  todo: true }, { id: 'rmvb',  todo: true }, { id: 'asf',  todo: true },
       { id: 'prores', label: 'Apple ProRes', todo: true },
       { id: 'dnxhd', label: 'DNxHD', todo: true },
       { id: 'dnxhr', label: 'DNxHR', todo: true },
@@ -840,7 +849,14 @@
     ]},
     { label: 'Image', cat: 'image', fmts: [
       { id: 'jpeg' }, { id: 'png' }, { id: 'webp' }, { id: 'tiff' }, { id: 'bmp' }, { id: 'avif' },
+      { id: 'gif',   todo: true }, { id: 'svg',  todo: true }, { id: 'ico',  todo: true },
       { id: 'jpegxl', label: 'JPEG XL', todo: true },
+      { id: 'heic',  todo: true }, { id: 'heif', todo: true }, { id: 'psd',  todo: true },
+      { id: 'exr',   todo: true }, { id: 'hdr',  todo: true }, { id: 'dds',  todo: true },
+      { id: 'xcf',   todo: true },
+      { id: 'raw',   todo: true }, { id: 'cr2',  todo: true }, { id: 'cr3',  todo: true },
+      { id: 'nef',   todo: true }, { id: 'arw',  todo: true }, { id: 'dng',  todo: true },
+      { id: 'orf',   todo: true }, { id: 'rw2',  todo: true },
     ]},
     { label: 'Data', cat: 'data', fmts: [
       { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
@@ -850,6 +866,11 @@
     ]},
     { label: 'Archive', cat: 'archive', fmts: [
       { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
+    ]},
+    { label: '3D Model', cat: '3d', fmts: [
+      { id: 'obj',  todo: true }, { id: 'gltf', todo: true }, { id: 'glb',  todo: true },
+      { id: 'stl',  todo: true }, { id: 'fbx',  todo: true }, { id: 'ply',  todo: true },
+      { id: '3ds',  todo: true },
     ]},
     { label: 'Operations', cat: 'ops', fmts: [
       { id: 'cut-noenc', label: 'Cut (no re-encode)', todo: true },
@@ -891,6 +912,20 @@
     }
     return null;
   }
+
+  // Which output categories are reachable from the selected input's media type.
+  // null = no file selected = no filter.
+  const OUTPUT_CATS_FOR = {
+    video:    ['video', 'audio'],
+    audio:    ['audio'],
+    image:    ['image'],
+    data:     ['data'],
+    document: ['document'],
+    archive:  ['archive'],
+  };
+  let compatibleOutputCats = $derived(
+    selectedItem ? (OUTPUT_CATS_FOR[selectedItem.mediaType] ?? null) : null
+  );
 
   let activeOutputCategory = $derived(categoryFor(globalOutputFormat));
 
@@ -960,16 +995,6 @@
       <!-- Queue header — pl-20 clears macOS traffic lights -->
       <div class="flex items-center gap-1.5 pl-20 pr-3 py-2.5 border-b border-[var(--border)] shrink-0"
            data-tauri-drag-region>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-             class="text-[var(--accent)] shrink-0">
-          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="9" y1="15" x2="15" y2="15"/>
-          <line x1="12" y1="12" x2="12" y2="18"/>
-        </svg>
-        <span class="text-[12px] font-semibold text-[var(--text-primary)] shrink-0">Fade</span>
-        <div class="w-px h-3 bg-[var(--border)] mx-0.5 shrink-0"></div>
         <button
           onclick={onBrowse}
           class="px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--accent)] text-white
@@ -983,6 +1008,33 @@
                    transition-colors shrink-0"
           >Clear</button>
         {/if}
+        <!-- List view toggle -->
+        <div class="flex items-center gap-0.5 ml-auto">
+          <button
+            onclick={() => queueCompact = false}
+            title="Expanded list"
+            class="w-6 h-6 flex items-center justify-center rounded transition-colors
+                   {!queueCompact ? 'text-[var(--text-primary)] bg-white/10' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+          >
+            <svg width="12" height="13" viewBox="0 0 12 13" fill="currentColor">
+              <rect y="0"    width="12" height="2"   rx="0.5"/>
+              <rect y="3.5"  width="12" height="2"   rx="0.5"/>
+              <rect y="7"    width="12" height="2"   rx="0.5"/>
+              <rect y="10.5" width="12" height="2"   rx="0.5"/>
+            </svg>
+          </button>
+          <button
+            onclick={() => queueCompact = true}
+            title="Compact list"
+            class="w-6 h-6 flex items-center justify-center rounded transition-colors
+                   {queueCompact ? 'text-[var(--text-primary)] bg-white/10' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+          >
+            <svg width="12" height="9" viewBox="0 0 12 9" fill="currentColor">
+              <rect y="0" width="12" height="3" rx="0.5"/>
+              <rect y="6" width="12" height="3" rx="0.5"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- Tool warnings -->
@@ -1012,6 +1064,7 @@
         oncancel={(id) => cancelJob(id)}
         oninfo={(item) => showFileInfo(item)}
         compatibleTypes={compatibleTypes}
+        compact={queueCompact}
       />
 
       <!-- Hidden folder picker input -->
@@ -1027,6 +1080,9 @@
       <!-- ── Bottom panel: output + convert + settings ──────────────────────── -->
       <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
            style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+
+        <!-- Overall progress -->
+        <ProgressBar value={overallPercent} />
 
         <!-- Output destination -->
         <div class="flex flex-col gap-1">
@@ -1089,12 +1145,9 @@
           />
         </div>
 
-        <!-- Progress -->
+        <!-- Status message -->
         {#if statusMessage}
           <p class="text-[11px] text-[var(--text-secondary)] truncate" aria-live="polite">{statusMessage}</p>
-        {/if}
-        {#if converting || overallPercent > 0}
-          <ProgressBar value={overallPercent} />
         {/if}
 
         <!-- Convert / Pause / Cancel -->
@@ -1116,18 +1169,18 @@
           <div class="flex gap-1.5">
             <button
               onclick={() => startConvert('selected')}
-              disabled={!selectedItem || queue.length === 0}
+              disabled={!selectedItem || queue.length === 0 || !globalOutputFormat}
               class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
-                     {!selectedItem || queue.length === 0
+                     {!selectedItem || queue.length === 0 || !globalOutputFormat
                        ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
                        : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
             >Convert Selected</button>
             <button
               onclick={() => startConvert('all')}
-              disabled={queue.length === 0}
+              disabled={queue.length === 0 || !globalOutputFormat}
               class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
-                     {queue.length === 0
-                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed'
+                     {queue.length === 0 || !globalOutputFormat
+                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
                        : 'bg-[var(--accent)] text-white hover:opacity-90'}"
             >Convert All</button>
           </div>
@@ -1152,21 +1205,6 @@
 
     <!-- ── CENTER: Preview + timeline ─────────────────────────────────────── -->
     <div class="flex flex-col flex-1 min-w-0">
-
-      <!-- Tooltip bar — crossfade: 50ms in, 150ms out, overlapping spans -->
-      <div class="shrink-0 border-b border-[var(--border)] relative overflow-hidden"
-           style="height:24px; background:color-mix(in srgb, var(--surface) 40%, #000 60%)">
-        {#key tooltipText}
-          {#if tooltipText}
-            <span class="absolute inset-0 flex items-center px-3 text-[11px] truncate"
-                  style="color:rgba(255,255,255,0.5)"
-                  in:fade={{ duration: 50 }}
-                  out:fade={{ duration: 150 }}>
-              {tooltipText}
-            </span>
-          {/if}
-        {/key}
-      </div>
 
       <!-- Preview area -->
       <div class="flex-1 min-h-0 bg-[#1a1a1a] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
@@ -1429,6 +1467,21 @@
           <span class="text-[11px]" style="color:#333">—</span>
         </div>
       {/if}
+
+      <!-- Tooltip bar — crossfade: 50ms in, 150ms out, overlapping spans -->
+      <div class="shrink-0 border-t border-[var(--border)] relative overflow-hidden"
+           style="height:24px; background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+        {#key tooltipText}
+          {#if tooltipText}
+            <span class="absolute inset-0 flex items-center px-3 text-[11px] truncate"
+                  style="color:rgba(255,255,255,0.5)"
+                  in:fade={{ duration: 50 }}
+                  out:fade={{ duration: 150 }}>
+              {tooltipText}
+            </span>
+          {/if}
+        {/key}
+      </div>
     </div>
 
     <!-- ── RIGHT: Options panel (333px) ─────────────────────────────────────── -->
@@ -1535,10 +1588,12 @@
                   <div class="flex-1 h-px bg-[var(--border)]"></div>
                 </div>
                 <div class="flex flex-wrap gap-1">
-                  {#each group.fmts as f}
+                  {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
+                    {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
                     <button
-                      onclick={() => { globalOutputFormat = f.id; outputPickerOpen = false; }}
+                      onclick={() => { if (!incompatible) { globalOutputFormat = f.id; outputPickerOpen = false; } }}
                       class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
+                             {incompatible ? 'opacity-25 cursor-default' : ''}
                              {globalOutputFormat === f.id
                                ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
                                : f.todo
