@@ -77,7 +77,7 @@
   }
 
   // 2-D grid (N columns) — corners get their own rounding
-  function segGrid(i, cols, total) {
+  function segGrid(i, cols, total, active = false) {
     const row     = Math.floor(i / cols);
     const col     = i % cols;
     const rows    = Math.ceil(total / cols);
@@ -90,10 +90,12 @@
     if (lastRow       && lastCol)      round = 'rounded-br-md';
     const ml = col > 0 ? '-ml-px' : '';
     const mt = row > 0 ? '-mt-px' : '';
+    const color = active
+      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
+      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
     return [
       'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative',
-      round, ml, mt,
-      'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]',
+      round, ml, mt, color,
     ].filter(Boolean).join(' ');
   }
 </script>
@@ -248,13 +250,54 @@
         {/if}
       </div>
 
-      <!-- Normalize (simple toggle, no sub-controls) -->
-      <button onclick={() => options.normalize_loudness = !options.normalize_loudness}
-              class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
-                     {options.normalize_loudness ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
-        <span class="flex-1">Normalize</span>
-        {#if options.normalize_loudness}<span class="font-mono text-[11px]">EBU R128</span>{/if}
-      </button>
+      <!-- Normalize -->
+      <div>
+        <button onclick={() => { options.normalize_loudness = !options.normalize_loudness; if (options.normalize_loudness) { options.normalize_lufs ??= -16; options.normalize_true_peak ??= -1; } }}
+                class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {options.normalize_loudness ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
+          <span class="flex-1">Normalize</span>
+          {#if options.normalize_loudness}
+            <span class="font-mono text-[11px]">{options.normalize_lufs ?? -16} LUFS / {options.normalize_true_peak ?? -1} dBTP</span>
+          {/if}
+          <svg class="shrink-0 transition-transform duration-200 {options.normalize_loudness ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
+        </button>
+        {#if options.normalize_loudness}
+          <div class="mt-1 px-1 space-y-2">
+            <!-- LUFS target presets -->
+            <div class="space-y-1">
+              <div class="text-[10px] text-[var(--text-secondary)] px-1">Target LUFS</div>
+              <div class="flex">
+                {#each [[-23,'Broadcast'],[-16,'Streaming'],[-14,'Streaming+'],[-9,'Podcast']] as [val, label], i}
+                  <button onclick={() => options.normalize_lufs = val}
+                          class={segGrid(i, 4, 4, options.normalize_lufs === val)}>
+                    <div class="font-mono text-[10px] leading-tight">{val}</div>
+                    <div class="text-[9px] leading-tight opacity-70">{label}</div>
+                  </button>
+                {/each}
+              </div>
+              <div class="flex items-center gap-2 pt-0.5">
+                <input type="number" value={options.normalize_lufs ?? -16}
+                       oninput={(e) => options.normalize_lufs = Math.max(-70, Math.min(-1, parseFloat(e.target.value) || -16))}
+                       min="-70" max="-1" step="0.5"
+                       class="w-24 px-2 py-1 text-[12px] font-mono rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
+                <span class="text-[11px] text-[var(--text-secondary)]">LUFS</span>
+              </div>
+            </div>
+            <!-- True peak ceiling -->
+            <div class="space-y-1">
+              <div class="text-[10px] text-[var(--text-secondary)] px-1">True Peak Ceiling</div>
+              <input type="range" min="-6" max="-0.1" step="0.1"
+                     value={options.normalize_true_peak ?? -1}
+                     oninput={(e) => options.normalize_true_peak = parseFloat(e.target.value)}
+                     class="w-full accent-[var(--accent)]" />
+              <div class="flex justify-between items-center">
+                <div class="flex justify-between text-[10px] text-[var(--text-secondary)] flex-1"><span>−6 dBTP</span><span>−0.1 dBTP</span></div>
+                <span class="font-mono text-[11px] text-[var(--text-primary)] ml-2">{(options.normalize_true_peak ?? -1).toFixed(1)}</span>
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
 
       <!-- Highpass -->
       <div>

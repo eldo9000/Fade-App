@@ -3,11 +3,13 @@
 
   const formats = ['mp4','mkv','webm','avi','mov'];
   const codecs  = [
-    { value: 'copy',  label: 'Stream copy (fast, lossless)' },
-    { value: 'h264',  label: 'H.264 — max compatibility' },
-    { value: 'h265',  label: 'H.265 — smaller files' },
-    { value: 'vp9',   label: 'VP9 — open source' },
-    { value: 'av1',   label: 'AV1 — best compression (slow)' },
+    { value: 'copy',  label: 'Copy' },
+    { value: 'h264',  label: 'H.264' },
+    { value: 'h265',  label: 'H.265' },
+    { value: 'h266',  label: 'H.266', todo: true },
+    { value: 'vp8',   label: 'VP8',   todo: true },
+    { value: 'vp9',   label: 'VP9' },
+    { value: 'av1',   label: 'AV1' },
   ];
   const resolutions = [
     { value: 'original',  label: 'Original' },
@@ -17,9 +19,9 @@
   ];
   const audioBitrates = [64, 128, 192, 256, 320];
   const sampleRates   = [
-    { value: 44100, label: '44.1 kHz (CD)' },
-    { value: 48000, label: '48 kHz (video standard)' },
-    { value: 96000, label: '96 kHz (Hi-Fi)' },
+    { value: 44100, label: '44.1 kHz — CD' },
+    { value: 48000, label: '48 kHz — Video standard' },
+    { value: 96000, label: '96 kHz — Hi-Fi' },
   ];
   const audioFormats = ['mp3','wav','flac','aac','opus'];
 
@@ -88,22 +90,24 @@
     </div>
   </fieldset>
 
-  <!-- ── Codec (dropdown) ───────────────────────────────────────────────── -->
+  <!-- ── Codec (button group) ─────────────────────────────────────────── -->
   <fieldset data-tooltip="Video encoding codec — H.264 for compatibility, H.265/AV1 for smaller files">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Video Codec
     </legend>
-    <select
-      bind:value={options.codec}
-      data-tooltip="Stream copy skips re-encoding (lossless, instant)"
-      class="w-full px-3 py-1.5 rounded-md border border-[var(--border)]
-             bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
-             focus:outline-none focus:border-[var(--accent)]"
-    >
-      {#each codecs as c}
-        <option value={c.value}>{c.label}</option>
+    <div class="flex flex-wrap gap-1">
+      {#each codecs.filter(c => !c.todo || import.meta.env.DEV) as c}
+        <button
+          onclick={() => { if (!c.todo) options.codec = c.value; }}
+          class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
+                 {options.codec === c.value
+                   ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                   : c.todo
+                     ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+        >{c.label}</button>
       {/each}
-    </select>
+    </div>
   </fieldset>
 
   <!-- ── Resolution (segmented) ────────────────────────────────────────── -->
@@ -154,14 +158,14 @@
   </fieldset>
 
   <!-- ── Trim ───────────────────────────────────────────────────────────── -->
-  <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds. Leave blank to keep full duration.">
+  <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds.">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
-      Trim (MM:SS or seconds)
+      Trim
     </legend>
     <div class="flex gap-3 items-end">
       <div class="flex-1">
         <label class="text-[11px] text-[var(--text-secondary)]" for="vid-trim-start">Start</label>
-        <input id="vid-trim-start" type="text" placeholder="0:00"
+        <input id="vid-trim-start" type="text" placeholder=""
           value={trimStartRaw} oninput={onTrimStartInput}
           class="w-full mt-1 px-3 py-1.5 rounded-md border border-[var(--border)]
                  bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
@@ -170,7 +174,7 @@
       </div>
       <div class="flex-1">
         <label class="text-[11px] text-[var(--text-secondary)]" for="vid-trim-end">End</label>
-        <input id="vid-trim-end" type="text" placeholder="end"
+        <input id="vid-trim-end" type="text" placeholder=""
           value={trimEndRaw} oninput={onTrimEndInput}
           class="w-full mt-1 px-3 py-1.5 rounded-md text-[13px]
                  focus:outline-none focus:border-[var(--accent)]
@@ -188,8 +192,6 @@
     </div>
     {#if errors.video_trim}
       <p class="text-[11px] text-red-500 mt-1">{errors.video_trim}</p>
-    {:else}
-      <p class="text-[11px] text-[var(--text-secondary)] mt-1.5">Leave blank to keep full duration.</p>
     {/if}
   </fieldset>
 
@@ -213,16 +215,14 @@
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
         Sample Rate
       </legend>
-      <select
-        bind:value={options.sample_rate}
-        class="w-full px-3 py-1.5 rounded-md border border-[var(--border)]
-               bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
-               focus:outline-none focus:border-[var(--accent)]"
-      >
-        {#each sampleRates as sr}
-          <option value={sr.value}>{sr.label}</option>
+      <div class="flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value}
+                  class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>
+            {sr.label}
+          </button>
         {/each}
-      </select>
+      </div>
     </fieldset>
   {/if}
 

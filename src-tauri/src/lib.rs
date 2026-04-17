@@ -74,6 +74,8 @@ pub struct ConvertOptions {
     pub bitrate: Option<u32>,
     pub sample_rate: Option<u32>,
     pub normalize_loudness: Option<bool>,
+    pub normalize_lufs:     Option<f64>, // LUFS target (e.g. -16.0), None = default -16.0
+    pub normalize_true_peak: Option<f64>, // dBTP ceiling (e.g. -1.0), None = default -1.0
     // DSP
     pub dsp_highpass_freq:  Option<f64>, // Hz — Butterworth 2-pole highpass, None = off
     pub dsp_lowpass_freq:   Option<f64>, // Hz — Butterworth 2-pole lowpass,  None = off
@@ -116,6 +118,8 @@ impl Default for ConvertOptions {
             bitrate: None,
             sample_rate: None,
             normalize_loudness: None,
+            normalize_lufs: None,
+            normalize_true_peak: None,
             dsp_highpass_freq: None,
             dsp_lowpass_freq: None,
             dsp_stereo_width: None,
@@ -419,7 +423,9 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         }
     }
     if opts.normalize_loudness == Some(true) {
-        filters.push("loudnorm".to_string());
+        let lufs = opts.normalize_lufs.unwrap_or(-16.0);
+        let tp   = opts.normalize_true_peak.unwrap_or(-1.0);
+        filters.push(format!("loudnorm=I={lufs:.1}:TP={tp:.1}:LRA=11"));
     }
     if let Some(db) = opts.dsp_limiter_db {
         let linear = 10.0_f64.powf(db / 20.0);
@@ -2417,7 +2423,7 @@ mod tests {
         };
         let args = build_ffmpeg_audio_args("in.wav", "out.mp3", &opts);
         assert!(args.contains(&"-af".to_string()));
-        assert!(args.contains(&"loudnorm".to_string()));
+        assert!(args.iter().any(|a| a.starts_with("loudnorm=")));
     }
 
     #[test]
