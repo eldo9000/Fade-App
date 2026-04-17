@@ -4,7 +4,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
   import { initTheme } from '@libre/ui/src/theme.js';
-  import { ProgressBar, Dialog } from '@libre/ui';
+  import { ProgressBar } from '@libre/ui';
   import Queue from './lib/Queue.svelte';
   import Timeline from './lib/Timeline.svelte';
   import ImageOptions from './lib/ImageOptions.svelte';
@@ -13,7 +13,7 @@
   import DataOptions from './lib/DataOptions.svelte';
   import DocumentOptions from './lib/DocumentOptions.svelte';
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
-  import { mediaTypeFor, validateOptions, formatBytes, formatDuration } from './lib/utils.js';
+  import { mediaTypeFor, validateOptions } from './lib/utils.js';
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -117,10 +117,6 @@
   }
 
   // File info dialog
-  let fileInfoOpen = $state(false);
-  let fileInfoData = $state(null);
-  let fileInfoItem = $state(null);
-  let fileInfoLoading = $state(false);
 
   // Browse file input
   let fileInput = $state(null);
@@ -615,35 +611,7 @@
     else { paused = true; statusMessage = 'Paused — click Resume to continue'; }
   }
 
-  // ── File info dialog ───────────────────────────────────────────────────────
 
-  async function showFileInfo(item) {
-    fileInfoItem = item;
-    fileInfoOpen = true;
-    fileInfoData = null;
-    fileInfoLoading = true;
-    try {
-      fileInfoData = await invoke('get_file_info', { path: item.path });
-    } catch (e) {
-      fileInfoData = { error: String(e) };
-    } finally {
-      fileInfoLoading = false;
-    }
-  }
-
-  function estimatedOutputSize(info) {
-    if (!info || info.error) return null;
-    if (info.media_type === 'image') {
-      return Math.round(info.file_size * ((imageOptions.quality ?? 85) / 100));
-    }
-    if (info.media_type === 'video' && info.duration_secs) {
-      return Math.round(info.duration_secs * (videoOptions.bitrate ?? 192) * 1000 / 8);
-    }
-    if (info.media_type === 'audio' && info.duration_secs) {
-      return Math.round(info.duration_secs * (audioOptions.bitrate ?? 192) * 1000 / 8);
-    }
-    return null;
-  }
 
   // ── Convert ────────────────────────────────────────────────────────────────
 
@@ -1017,29 +985,35 @@
           >Clear</button>
         {/if}
         <!-- List view toggle -->
-        <div class="flex items-center gap-0.5 ml-auto">
+        <div class="flex items-center gap-1 ml-auto">
+          <!-- Expanded view -->
           <button
             onclick={() => queueCompact = false}
             title="Expanded list"
-            class="w-6 h-6 flex items-center justify-center rounded transition-colors
-                   {!queueCompact ? 'text-[var(--text-primary)] bg-white/10' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+            class="w-7 h-7 flex items-center justify-center rounded transition-all
+                   {!queueCompact
+                     ? 'text-[var(--accent)] bg-[var(--accent)]/10 ring-1 ring-[var(--accent)]/60'
+                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
           >
-            <svg width="12" height="13" viewBox="0 0 12 13" fill="currentColor">
-              <rect y="0"    width="12" height="2"   rx="0.5"/>
-              <rect y="3.5"  width="12" height="2"   rx="0.5"/>
-              <rect y="7"    width="12" height="2"   rx="0.5"/>
-              <rect y="10.5" width="12" height="2"   rx="0.5"/>
+            <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
+              <rect y="0"   width="13" height="3" rx="0.75"/>
+              <rect y="8"   width="13" height="3" rx="0.75"/>
             </svg>
           </button>
+          <!-- Compact view -->
           <button
             onclick={() => queueCompact = true}
             title="Compact list"
-            class="w-6 h-6 flex items-center justify-center rounded transition-colors
-                   {queueCompact ? 'text-[var(--text-primary)] bg-white/10' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+            class="w-7 h-7 flex items-center justify-center rounded transition-all
+                   {queueCompact
+                     ? 'text-[var(--accent)] bg-[var(--accent)]/10 ring-1 ring-[var(--accent)]/60'
+                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
           >
-            <svg width="12" height="9" viewBox="0 0 12 9" fill="currentColor">
-              <rect y="0" width="12" height="3" rx="0.5"/>
-              <rect y="6" width="12" height="3" rx="0.5"/>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
+              <rect y="0"    width="13" height="2" rx="0.5"/>
+              <rect y="3.67" width="13" height="2" rx="0.5"/>
+              <rect y="7.33" width="13" height="2" rx="0.5"/>
+              <rect y="11"   width="13" height="2" rx="0.5"/>
             </svg>
           </button>
         </div>
@@ -1070,7 +1044,6 @@
         onselect={handleSelect}
         onremove={(id) => removeItem(id)}
         oncancel={(id) => cancelJob(id)}
-        oninfo={(item) => showFileInfo(item)}
         compatibleTypes={compatibleTypes}
         compact={queueCompact}
       />
@@ -1650,58 +1623,6 @@
     </div>
   {/if}
 
-  <!-- File info dialog -->
-  <Dialog
-    bind:open={fileInfoOpen}
-    title={fileInfoItem ? fileInfoItem.name : 'File Info'}
-    size="sm"
-    onclose={() => { fileInfoOpen = false; fileInfoData = null; fileInfoItem = null; }}
-  >
-    {#if fileInfoLoading}
-      <p class="text-[var(--text-secondary)] text-[13px]">Loading…</p>
-    {:else if fileInfoData?.error}
-      <p class="text-red-500 text-[12px]">{fileInfoData.error}</p>
-    {:else if fileInfoData}
-      {@const estSize = estimatedOutputSize(fileInfoData)}
-      <dl class="space-y-2 text-[13px]">
-        <div class="flex justify-between">
-          <dt class="text-[var(--text-secondary)]">Format</dt>
-          <dd class="text-[var(--text-primary)] font-mono uppercase">{fileInfoData.format ?? fileInfoData.media_type}</dd>
-        </div>
-        {#if fileInfoData.codec}
-          <div class="flex justify-between">
-            <dt class="text-[var(--text-secondary)]">Codec</dt>
-            <dd class="text-[var(--text-primary)] font-mono">{fileInfoData.codec}</dd>
-          </div>
-        {/if}
-        {#if fileInfoData.width && fileInfoData.height}
-          <div class="flex justify-between">
-            <dt class="text-[var(--text-secondary)]">Resolution</dt>
-            <dd class="text-[var(--text-primary)] font-mono">{fileInfoData.width}×{fileInfoData.height}</dd>
-          </div>
-        {/if}
-        {#if fileInfoData.duration_secs}
-          <div class="flex justify-between">
-            <dt class="text-[var(--text-secondary)]">Duration</dt>
-            <dd class="text-[var(--text-primary)] font-mono">{formatDuration(fileInfoData.duration_secs)}</dd>
-          </div>
-        {/if}
-        <div class="flex justify-between">
-          <dt class="text-[var(--text-secondary)]">File size</dt>
-          <dd class="text-[var(--text-primary)] font-mono">{formatBytes(fileInfoData.file_size)}</dd>
-        </div>
-        {#if estSize}
-          <div class="flex justify-between border-t border-[var(--border)] pt-2 mt-2">
-            <dt class="text-[var(--text-secondary)]">Est. output size</dt>
-            <dd class="text-[var(--text-primary)] font-mono">
-              {formatBytes(estSize)}
-              <span class="text-[11px] text-[var(--text-secondary)]">(approx)</span>
-            </dd>
-          </div>
-        {/if}
-      </dl>
-    {/if}
-  </Dialog>
 
 </div>
 

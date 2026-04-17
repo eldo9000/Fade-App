@@ -1,5 +1,5 @@
 <script>
-  let { queue, selectedId, onselect, onremove, oncancel, oninfo, compatibleTypes = [], compact = false } = $props();
+  let { queue, selectedId, onselect, onremove, oncancel, compatibleTypes = [], compact = false } = $props();
 
   function statusColor(status) {
     switch (status) {
@@ -42,7 +42,6 @@
     if (mt === 'audio') {
       const codec = info.codec ? info.codec.toUpperCase() : null;
       const fmt   = info.format ? info.format.toUpperCase() : null;
-      // Show codec; if it differs from the container format, show both
       if (codec && fmt && codec !== fmt) return `${codec} / ${fmt}`;
       return codec ?? fmt ?? null;
     }
@@ -50,6 +49,52 @@
       return info.width && info.height ? `${info.width}×${info.height}` : null;
     }
     return null;
+  }
+
+  // ── Info hover popover ─────────────────────────────────────────────────────
+  let hoveredItem  = $state(null);
+  let popoverLeft  = $state(0);
+  let popoverTop   = $state(0);
+  let copiedField  = $state(null);
+  let _hideTimer   = null;
+
+  function _scheduleHide() {
+    clearTimeout(_hideTimer);
+    _hideTimer = setTimeout(() => { hoveredItem = null; }, 120);
+  }
+  function _cancelHide() { clearTimeout(_hideTimer); }
+
+  function onItemEnter(e, item) {
+    _cancelHide();
+    hoveredItem = item;
+    const r = e.currentTarget.getBoundingClientRect();
+    popoverTop  = r.top + r.height / 2;
+    popoverLeft = r.right + 10;
+  }
+  function onItemLeave()    { _scheduleHide(); }
+  function onPopoverEnter() { _cancelHide(); }
+  function onPopoverLeave() { _scheduleHide(); }
+
+  function copyValue(field, value) {
+    navigator.clipboard.writeText(String(value)).catch(() => {});
+    copiedField = field;
+    clearTimeout(_hideTimer);
+    setTimeout(() => { copiedField = null; }, 1500);
+  }
+
+  function fmtSize(b) {
+    if (!b) return null;
+    if (b < 1024)       return `${b} B`;
+    if (b < 1048576)    return `${(b / 1024).toFixed(1)} KB`;
+    if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
+    return `${(b / 1073741824).toFixed(2)} GB`;
+  }
+  function fmtDur(s) {
+    if (!s) return null;
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+    return h > 0
+      ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+      : `${m}:${String(sec).padStart(2,'0')}`;
   }
 </script>
 
@@ -90,9 +135,12 @@
     {#each queue as item (item.id)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
         role="listitem"
         onclick={() => onselect?.(item.id)}
+        onmouseenter={(e) => onItemEnter(e, item)}
+        onmouseleave={onItemLeave}
         class="relative overflow-hidden flex {compact ? 'items-center' : 'items-start'} gap-2 px-3 {compact ? 'py-1' : 'py-2'} border-b border-[var(--border)] group cursor-pointer transition-colors
                {selectedId === item.id ? '' : 'hover:bg-[var(--surface)]'}
                {compatibleTypes.length > 0 && !compatibleTypes.includes(item.mediaType) ? 'opacity-40' : ''}"
@@ -162,13 +210,6 @@
           </div>
 
           <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onclick={(e) => { e.stopPropagation(); oninfo?.(item); }}
-              class="w-5 h-5 flex items-center justify-center rounded
-                     text-[var(--text-secondary)] hover:text-[var(--accent)]
-                     hover:bg-[var(--surface)] transition-all text-[12px]"
-              aria-label="File info"
-            >ⓘ</button>
             {#if item.status === 'converting'}
               <button
                 onclick={(e) => { e.stopPropagation(); oncancel?.(item.id); }}
@@ -193,3 +234,74 @@
     {/each}
   {/if}
 </div>
+
+<!-- Info hover popover — fixed so it escapes the sidebar's overflow -->
+{#if hoveredItem}
+  {@const info = hoveredItem.info}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    onmouseenter={onPopoverEnter}
+    onmouseleave={onPopoverLeave}
+    style="position:fixed; left:{popoverLeft}px; top:{popoverTop}px; transform:translateY(-50%); z-index:1000;
+           padding-left:14px"
+  >
+    <!-- Arrow pointing left — sits in the left padding so it bridges the gap -->
+    <div style="position:absolute; left:2px; top:50%; transform:translateY(-50%);
+                width:0; height:0;
+                border:6px solid transparent;
+                border-right:6px solid #1e1e22;
+                border-left-width:0"></div>
+    <!-- Box -->
+    <div style="background:#1e1e22; border:1px solid rgba(255,255,255,0.1); border-radius:7px;
+                padding:10px 13px; min-width:180px; max-width:248px;
+                box-shadow:0 8px 24px rgba(0,0,0,0.5)">
+      <!-- Filename -->
+      <p style="font-size:11px; font-weight:600; color:rgba(255,255,255,0.92);
+                margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                max-width:222px"
+         title={hoveredItem.path}>{hoveredItem.name}</p>
+      <!-- Info rows -->
+      <div style="display:flex; flex-direction:column; gap:4px">
+        {#if info}
+          {#each [
+            (info.format || info.media_type) ? { key:'type',       label:'Type',       val: (info.format ?? info.media_type).toUpperCase() } : null,
+            info.codec                       ? { key:'codec',      label:'Codec',      val: info.codec }                                      : null,
+            (info.width && info.height)      ? { key:'res',        label:'Resolution', val: `${info.width}×${info.height}` }                  : null,
+            info.duration_secs               ? { key:'dur',        label:'Duration',   val: fmtDur(info.duration_secs) }                      : null,
+            info.file_size                   ? { key:'size',       label:'Size',       val: fmtSize(info.file_size) }                         : null,
+          ].filter(Boolean) as row}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; border-radius:3px; padding:1px 2px"
+                 class="group/row">
+              <!-- Copy button -->
+              <button
+                onclick={() => copyValue(row.key, row.val)}
+                style="flex-shrink:0; width:14px; height:14px; display:flex; align-items:center; justify-content:center;
+                       background:none; border:none; padding:0; cursor:pointer;
+                       color:{copiedField === row.key ? 'rgba(96,165,250,1)' : 'rgba(255,255,255,0.25)'}; transition:color 0.12s"
+                title="Copy"
+              >
+                {#if copiedField === row.key}
+                  <!-- Check -->
+                  <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="2,6 5,9 10,3"/>
+                  </svg>
+                {:else}
+                  <!-- Clipboard -->
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                {/if}
+              </button>
+              <span style="font-size:10px; color:rgba(255,255,255,0.38); flex-shrink:0">{row.label}</span>
+              <span style="font-size:10px; color:rgba(255,255,255,0.78); font-family:monospace; margin-left:auto">{row.val}</span>
+            </div>
+          {/each}
+        {:else}
+          <span style="font-size:10px; color:rgba(255,255,255,0.3)">Loading…</span>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
