@@ -128,6 +128,18 @@
   let vizExpanded = $state(false);
   let queueCompact = $state(false);
 
+  // ── Settings ───────────────────────────────────────────────────────────────
+  const SETTINGS_KEY = 'fade-settings';
+  function _loadSettings() {
+    try { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false,
+                   ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') }; }
+    catch { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false }; }
+  }
+  let settings     = $state(_loadSettings());
+  let settingsOpen = $state(false);
+
+  $effect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); });
+
   // Compression diff preview
   let diffClipPath   = $state(null);
   let diffLoading    = $state(false);
@@ -935,6 +947,14 @@
     videoEl?.load();   // flash existing video to black immediately
     selectedId         = id ?? null;
 
+    // Apply viz default for this media type
+    const vd = settings.vizDefault;
+    vizExpanded = newItem?.mediaType === 'video'
+      ? vd === 'av'
+      : newItem?.mediaType === 'audio'
+        ? vd === 'audio' || vd === 'av'
+        : false;
+
     // ── Async pipeline: stages run sequentially after browser paints ──
     runLoadPipeline(gen, newItem);
   }
@@ -965,7 +985,7 @@
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (312px) ───────────────────────────────────────── -->
-    <aside class="w-[312px] shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)]"
+    <aside class="w-[312px] shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights -->
@@ -1019,6 +1039,80 @@
         </div>
       </div>
 
+      <!-- Settings panel — takes over sidebar body -->
+      {#if settingsOpen}
+        <div class="flex-1 min-h-0 overflow-y-auto flex flex-col" style="background:var(--surface-raised)">
+
+          <!-- Section: Updates -->
+          <div class="px-4 pt-4 pb-3 border-b border-[var(--border)]">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] mb-3">Updates</p>
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex flex-col gap-2 flex-1">
+                <!-- Notify + Auto on one row -->
+                <div class="flex items-center gap-3">
+                  <label class="flex items-center gap-2 cursor-pointer flex-1">
+                    <input type="checkbox" bind:checked={settings.notifyUpdates}
+                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                    <span class="text-[12px] text-[var(--text-primary)]">Notify of updates</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer flex-1">
+                    <input type="checkbox" bind:checked={settings.autoUpdate}
+                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                    <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
+                  </label>
+                  <button class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                                 text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                                 hover:border-[var(--accent)] transition-colors shrink-0">
+                    Update Now
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section: UI -->
+          <div class="px-4 pt-4 pb-3 border-b border-[var(--border)] flex flex-col gap-3">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">UI</p>
+
+            <!-- Visualizer default -->
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[12px] text-[var(--text-primary)]">Visualizer expanded</span>
+              <div class="flex rounded overflow-hidden border border-[var(--border)]">
+                {#each [['no','Off'],['audio','Audio'],['av','A+V']] as [val, label]}
+                  <button
+                    onclick={() => settings.vizDefault = val}
+                    class="px-2.5 py-1 text-[11px] transition-colors
+                           {settings.vizDefault === val
+                             ? 'bg-[var(--accent)] text-white'
+                             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+                  >{label}</button>
+                {/each}
+              </div>
+            </div>
+
+            <!-- Limiter auto -->
+            <label class="flex items-center justify-between gap-2 cursor-pointer">
+              <span class="text-[12px] text-[var(--text-primary)]">Auto-enable limiter with DSP</span>
+              <input type="checkbox" bind:checked={settings.limiterAuto}
+                     class="w-3.5 h-3.5 accent-[var(--accent)]" />
+            </label>
+          </div>
+
+          <!-- Section: Data -->
+          <div class="px-4 pt-4 pb-3 flex flex-col gap-3">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Data</p>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[12px] text-[var(--text-secondary)]">Waveform / thumbnail cache</span>
+              <button class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                             text-[var(--text-secondary)] opacity-40 cursor-not-allowed"
+                      disabled title="No cache yet">Clear Cache</button>
+            </div>
+          </div>
+
+        </div>
+      {/if}
+
+      {#if !settingsOpen}
       <!-- Tool warnings -->
       {#if toolWarnings.ffmpeg && !dismissedWarnings.has('ffmpeg')}
         <div class="flex items-center justify-between gap-2 px-3 py-1.5
@@ -1057,6 +1151,8 @@
         aria-hidden="true"
         webkitdirectory
       />
+
+      {/if}<!-- /settingsOpen guard -->
 
       <!-- ── Bottom panel: output + convert + settings ──────────────────────── -->
       <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
@@ -1169,9 +1265,10 @@
 
         <!-- Settings button -->
         <button
+          onclick={() => settingsOpen = true}
           class="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] border border-[var(--border)]
                  text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
-                 transition-colors w-full"
+                 transition-colors w-full {settingsOpen ? 'border-[var(--accent)] text-[var(--text-primary)]' : ''}"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
@@ -1183,6 +1280,12 @@
       </div>
 
     </aside>
+
+  <!-- Backdrop — click anywhere outside the sidebar to close settings -->
+  {#if settingsOpen}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-40" onpointerdown={() => settingsOpen = false}></div>
+  {/if}
 
     <!-- ── CENTER: Preview + timeline ─────────────────────────────────────── -->
     <div class="flex flex-col flex-1 min-w-0">
