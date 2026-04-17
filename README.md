@@ -2,23 +2,36 @@
 
 # Fade
 
-**Convert, trim, and process audio, video, and images — on your Mac.**
-
-Drag in a file, pick a format, convert. No cloud, no subscription, no account.
+**The multimedia utility knife. For when you need to do that one thing to that one file — without stopping what you're actually doing.**
 
 ![Fade screenshot](Screenshot.2.jpg)
 
 ---
 
-## What it does
+You're in the middle of something. A client needs the file in a different format. The clip needs trimming before you send it. The audio needs converting before it'll import.
 
-- **Convert anything** — audio, video, images, 3D models, documents, archives
-- **Trim clips** — set in/out points with a visual waveform scrubber
-- **Batch queue** — drop multiple files, convert all at once
-- **100+ formats** — MP3, FLAC, AIFF, AAC, Opus, Vorbis, WAV, MP4, MOV, MKV, ProRes, HEVC, WebM, JPEG, PNG, TIFF, AVIF, WebP, DNG, and more
-- **Output control** — choose destination folder, add a suffix, or overwrite in place
+You don't need to open a full editor. You don't need to look something up. You just need it done.
 
-Runs locally. Nothing leaves your machine.
+Fade handles it. Drop the file, pick the format, move on.
+
+---
+
+## What it converts
+
+**Audio** — MP3, WAV, FLAC, AAC, AIFF, Opus, Vorbis, Dolby, and more  
+**Video** — MP4, MOV, MKV, WebM, ProRes, HEVC, AVI, and more  
+**Image** — JPEG, PNG, TIFF, WebP, AVIF, DNG, HEIF, and more  
+**3D** — OBJ, GLTF, GLB, STL, FBX, PLY  
+**Plus** — archives, documents, data formats, subtitle injection, audio replacement, merging, and conforming
+
+---
+
+## What else it does
+
+- Trim clips with a visual waveform scrubber — set in/out, done
+- Batch queue — drop a folder, convert everything at once
+- Output control — pick a destination, add a suffix, or convert in place
+- Runs entirely local. Nothing leaves your machine.
 
 ---
 
@@ -42,7 +55,3 @@ Requires [Rust](https://rustup.rs) and [Node.js](https://nodejs.org).
 ```
 npm run tauri dev   # development
 ```
-
----
-
-Part of the [Libre Apps](https://github.com/eldo9000/Libre-Apps) family.
