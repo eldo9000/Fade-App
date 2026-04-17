@@ -69,7 +69,7 @@
     hoveredItem = item;
     const r = e.currentTarget.getBoundingClientRect();
     popoverTop  = r.top + r.height / 2;
-    popoverLeft = r.right + 10;
+    popoverLeft = r.right + 1;
   }
   function onItemLeave()    { _scheduleHide(); }
   function onPopoverEnter() { _cancelHide(); }
@@ -242,15 +242,8 @@
   <div
     onmouseenter={onPopoverEnter}
     onmouseleave={onPopoverLeave}
-    style="position:fixed; left:{popoverLeft}px; top:{popoverTop}px; transform:translateY(-50%); z-index:1000;
-           padding-left:14px"
+    style="position:fixed; left:{popoverLeft}px; top:{popoverTop}px; transform:translateY(-50%); z-index:1000"
   >
-    <!-- Arrow pointing left — sits in the left padding so it bridges the gap -->
-    <div style="position:absolute; left:2px; top:50%; transform:translateY(-50%);
-                width:0; height:0;
-                border:6px solid transparent;
-                border-right:6px solid #1e1e22;
-                border-left-width:0"></div>
     <!-- Box -->
     <div style="background:#1e1e22; border:1px solid rgba(255,255,255,0.1); border-radius:7px;
                 padding:10px 13px; min-width:180px; max-width:248px;
