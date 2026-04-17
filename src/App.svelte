@@ -50,6 +50,7 @@
   let tlMediaReady        = $state(false);
   let tlWaveformReady     = $state(false);
   let tlSpectrogramReady  = $state(false);
+  let tlFilmstripReady    = $state(false);
   let _generation         = 0;
 
   function onPreviewLoaded() { previewLoading = false; }
@@ -107,6 +108,12 @@
     await frameYield(100);
     if (stale()) return;
     tlSpectrogramReady = true;
+
+    // ── Step 7: unlock filmstrip (ffmpeg, background, lowest priority) ──
+    // Yield long enough that waveform has finished and the user can interact.
+    await frameYield(800);
+    if (stale()) return;
+    tlFilmstripReady = true;
   }
 
   // File info dialog
@@ -955,6 +962,7 @@
     tlMediaReady       = false;
     tlWaveformReady    = false;
     tlSpectrogramReady = false;
+    tlFilmstripReady   = false;
     previewLoading     = isMedia;
     videoEl?.load();   // flash existing video to black immediately
     selectedId         = id ?? null;
@@ -1458,7 +1466,7 @@
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} />
       {:else if selectedItem?.mediaType === 'audio'}
         <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} />
       {:else}

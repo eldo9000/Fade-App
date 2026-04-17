@@ -921,11 +921,14 @@ fn get_filmstrip(path: String, count: usize, duration: f64) -> Result<Vec<String
     // fps=COUNT/DURATION selects exactly COUNT frames spread over the file.
     let vf = format!("fps={count}/{dur},scale=160:-2", dur = duration as u32 + 1);
 
-    let output = Command::new("ffmpeg")
+    let output = Command::new("nice")
         .args([
+            "-n", "10",
+            "ffmpeg",
             "-i", &path,
             "-vf", &vf,
             "-frames:v", &count.to_string(),
+            "-threads", "2",
             "-f", "image2pipe",
             "-vcodec", "mjpeg",
             "-q:v", "5",

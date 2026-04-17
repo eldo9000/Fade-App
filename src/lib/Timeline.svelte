@@ -1,7 +1,7 @@
 <script>
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
-  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false } = $props();
+  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false } = $props();
 
   // ── Media element ─────────────────────────────────────────────────────────
   // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives
@@ -587,7 +587,7 @@
   $effect(() => {
     const it = item;
     const dur = duration;
-    const go = waveformReady;
+    const go = filmstripReady;
     filmstripFrames = [];
     if (!it || !go || !dur || it.mediaType !== 'video') return;
     const id = it.id;
