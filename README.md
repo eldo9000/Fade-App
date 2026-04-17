@@ -1,23 +1,48 @@
+<img src="fade icon 1.png" width="80" alt="Fade">
+
 # Fade
 
-Convert and process images, video, and audio.
+**Convert, trim, and process audio, video, and images — on your Mac.**
 
-Part of the Libre app family — see https://github.com/eldo9000/Libre-Apps for shared tooling and standards.
+Drag in a file, pick a format, convert. No cloud, no subscription, no account.
 
-## Development
+![Fade screenshot](Screenshot.2.jpg)
+
+---
+
+## What it does
+
+- **Convert anything** — audio, video, images, 3D models, documents, archives
+- **Trim clips** — set in/out points with a visual waveform scrubber
+- **Batch queue** — drop multiple files, convert all at once
+- **100+ formats** — MP3, FLAC, AIFF, AAC, Opus, Vorbis, WAV, MP4, MOV, MKV, ProRes, HEVC, WebM, JPEG, PNG, TIFF, AVIF, WebP, DNG, and more
+- **Output control** — choose destination folder, add a suffix, or overwrite in place
+
+Runs locally. Nothing leaves your machine.
+
+---
+
+## Download
+
+> macOS 13+ · Apple Silicon & Intel
+
+Releases coming soon.
+
+---
+
+## Build from source
 
 ```
 npm install
-npm run tauri dev
-```
-
-## Build
-
-```
 npm run tauri build
 ```
 
-## Shared code
+Requires [Rust](https://rustup.rs) and [Node.js](https://nodejs.org).
 
-- `common-js/` is a **vendored snapshot** of `Libre-Apps/common-js` (the `@libre/ui` package). It is wired in via `"@libre/ui": "file:./common-js"` in `package.json`. When the upstream package changes, sync it manually from the Libre-Apps monorepo.
-- Rust shared code comes from `librewin-common`, referenced as a Cargo git dependency pinned to a specific SHA in the Libre-Apps repo (`src-tauri/Cargo.toml`).
+```
+npm run tauri dev   # development
+```
+
+---
+
+Part of the [Libre Apps](https://github.com/eldo9000/Libre-Apps) family.
