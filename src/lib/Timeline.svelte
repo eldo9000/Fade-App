@@ -1,5 +1,6 @@
 <script>
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
 
   let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false } = $props();
 
@@ -590,10 +591,25 @@
     const go = filmstripReady;
     filmstripFrames = [];
     if (!it || !go || !dur || it.mediaType !== 'video') return;
-    const id = it.id;
-    invoke('get_filmstrip', { path: it.path, count: 20, duration: dur })
-      .then(frames => { if (_capturedId === id) filmstripFrames = /** @type {string[]} */ (frames); })
+
+    const myId = it.id;
+    const COUNT = 20;
+    // Pre-allocate slots so the strip renders a skeleton immediately
+    filmstripFrames = new Array(COUNT).fill(null);
+
+    // Subscribe before invoking so no frames are missed
+    let unlistenFn = null;
+    listen('filmstrip-frame', (ev) => {
+      const { id, index, data } = ev.payload;
+      if (id !== myId) return; // stale item
+      filmstripFrames[index] = data;
+    }).then(fn => { unlistenFn = fn; });
+
+    // Fire-and-forget — Rust thread emits events as each frame finishes
+    invoke('get_filmstrip', { path: it.path, id: myId, count: COUNT, duration: dur })
       .catch(() => {});
+
+    return () => { unlistenFn?.(); };
   });
 
   // Apply envelope whenever currentTime changes (covers scrubbing while paused).
@@ -808,11 +824,15 @@
           <!-- Frame strip -->
           <div class="absolute inset-0 flex gap-px">
             {#each filmstripFrames as frame}
-              <!-- svelte-ignore a11y_missing_attribute -->
-              <img src="data:image/jpeg;base64,{frame}"
-                   class="h-full object-cover min-w-0"
-                   style="flex:1 1 0%"
-                   draggable="false" />
+              {#if frame}
+                <!-- svelte-ignore a11y_missing_attribute -->
+                <img src="data:image/jpeg;base64,{frame}"
+                     class="h-full object-cover min-w-0"
+                     style="flex:1 1 0%"
+                     draggable="false" />
+              {:else}
+                <div class="h-full min-w-0" style="flex:1 1 0%; background:#1c1c1c"></div>
+              {/if}
             {/each}
           </div>
           <!-- Playhead -->

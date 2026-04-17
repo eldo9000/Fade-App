@@ -910,70 +910,65 @@ fn get_spectrogram(path: String) -> Result<String, String> {
 
 // ── Filmstrip extraction ──────────────────────────────────────────────────────
 
-/// Extract `count` evenly-spaced JPEG thumbnail frames from a video and return
-/// them as a Vec of base64-encoded JPEG strings.
+#[derive(Serialize, Clone)]
+struct FilmstripFrameEvent {
+    id:    String,
+    index: usize,
+    total: usize,
+    data:  String, // base64 JPEG
+}
+
+/// Extract `count` evenly-spaced thumbnail frames from a video.
+/// Returns immediately — each frame is emitted as a "filmstrip-frame" event
+/// as it finishes, so the UI fills in incrementally without blocking.
+/// Each frame is a separate fast-seek ffmpeg call at nice -n 19 / 1 thread.
 #[command]
-fn get_filmstrip(path: String, count: usize, duration: f64) -> Result<Vec<String>, String> {
+fn get_filmstrip(window: Window, path: String, id: String, count: usize, duration: f64) -> Result<(), String> {
     if count == 0 || duration <= 0.0 {
-        return Ok(vec![]);
+        return Ok(());
     }
 
-    // fps=COUNT/DURATION selects exactly COUNT frames spread over the file.
-    // scale uses fast_bilinear — quality doesn't matter for thumbnails.
-    let vf = format!(
-        "fps={count}/{dur},scale=160:-2:flags=fast_bilinear",
-        dur = duration as u32 + 1
-    );
+    std::thread::spawn(move || {
+        use base64::Engine as _;
 
-    let output = Command::new("nice")
-        .args([
-            "-n", "10",
-            "ffmpeg",
-            // Only decode I-frames (keyframes). B/P frames are skipped entirely,
-            // cutting decode work by 50-250x for H.264/HEVC. We're sampling one
-            // frame every few seconds so we always land near a keyframe anyway.
-            "-skip_frame", "noref",
-            "-i", &path,
-            "-vf", &vf,
-            "-frames:v", &count.to_string(),
-            "-threads", "2",
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-q:v", "7",   // lower quality fine for tiny thumbnails
-            "-",
-        ])
-        .output()
-        .map_err(|e| format!("ffmpeg not found: {e}"))?;
+        for i in 0..count {
+            // Centre each sample inside its slot
+            let ts = format!("{:.3}", (i as f64 + 0.5) * duration / count as f64);
 
-    if output.stdout.is_empty() {
-        return Ok(vec![]);
-    }
+            // One tiny ffmpeg call per frame: -ss before -i = fast keyframe seek,
+            // -threads 1 + nice -n 19 = truly background, no beach-ball.
+            let output = Command::new("nice")
+                .args([
+                    "-n", "19",
+                    "ffmpeg",
+                    "-ss", &ts,
+                    "-i", &path,
+                    "-frames:v", "1",
+                    "-vf", "scale=160:-2:flags=fast_bilinear",
+                    "-threads", "1",
+                    "-f", "image2pipe",
+                    "-vcodec", "mjpeg",
+                    "-q:v", "7",
+                    "-",
+                ])
+                .output();
 
-    // Split concatenated JPEG stream: each frame is FF D8 … FF D9
-    let data = &output.stdout;
-    let mut frames: Vec<String> = Vec::new();
-    let mut i = 0usize;
+            let data = match output {
+                Ok(o) if !o.stdout.is_empty() =>
+                    base64::engine::general_purpose::STANDARD.encode(&o.stdout),
+                _ => continue,
+            };
 
-    use base64::Engine as _;
-    while i + 1 < data.len() {
-        if data[i] == 0xFF && data[i + 1] == 0xD8 {
-            let start = i;
-            let mut j = i + 2;
-            while j + 1 < data.len() {
-                if data[j] == 0xFF && data[j + 1] == 0xD9 {
-                    j += 2;
-                    break;
-                }
-                j += 1;
-            }
-            frames.push(base64::engine::general_purpose::STANDARD.encode(&data[start..j]));
-            i = j;
-        } else {
-            i += 1;
+            let _ = window.emit("filmstrip-frame", FilmstripFrameEvent {
+                id: id.clone(),
+                index: i,
+                total: count,
+                data,
+            });
         }
-    }
+    });
 
-    Ok(frames)
+    Ok(())
 }
 
 // ── Compression diff preview ──────────────────────────────────────────────────
