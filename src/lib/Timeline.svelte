@@ -553,10 +553,12 @@
     return () => { if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; } };
   });
 
-  // ── Static waveform / spectrogram (loaded via ffmpeg) ─────────────────────
+  // ── Static waveform / spectrogram / filmstrip (loaded via ffmpeg) ─────────
   /** @type {{ amplitudes: number[], hues: number[] } | null} */
   let waveformData    = $state(null);
   let spectrogramData = $state(null);
+  /** @type {string[]} */
+  let filmstripFrames = $state([]);
   let mediaLoading    = $state(false);
   let _capturedId     = null;
 
@@ -579,6 +581,18 @@
     const id = it.id;
     invoke('get_spectrogram', { path: it.path })
       .then(b64 => { if (_capturedId === id) spectrogramData = b64; })
+      .catch(() => {});
+  });
+
+  $effect(() => {
+    const it = item;
+    const dur = duration;
+    const go = waveformReady;
+    filmstripFrames = [];
+    if (!it || !go || !dur || it.mediaType !== 'video') return;
+    const id = it.id;
+    invoke('get_filmstrip', { path: it.path, count: 20, duration: dur })
+      .then(frames => { if (_capturedId === id) filmstripFrames = /** @type {string[]} */ (frames); })
       .catch(() => {});
   });
 
@@ -607,13 +621,16 @@
       ((options?.trim_end ?? duration ?? 0) - (options?.fade_out ?? 0)) / duration)) : endFrac);
 
   // ── Drag ──────────────────────────────────────────────────────────────────
-  let trackEl  = $state(null);
-  let dragging = $state(null); // 'start' | 'end' | 'playhead'
+  let trackEl       = $state(null);
+  let filmstripEl   = $state(null);
+  let dragging      = $state(null); // 'start' | 'end' | 'playhead'
+  let _dragEl       = null; // element the current drag started on
   let _wasPlayingBeforeDrag = false;
 
   function getFrac(e) {
-    if (!trackEl) return 0;
-    const r = trackEl.getBoundingClientRect();
+    const el = _dragEl ?? trackEl;
+    if (!el) return 0;
+    const r = el.getBoundingClientRect();
     return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
   }
   function fracToSecs(f) { return f * (duration ?? 0); }
@@ -641,6 +658,15 @@
 
   function onTrackDown(e) {
     if (!duration) return;
+    _dragEl = trackEl;
+    onscrubstart?.();
+    dragging = 'playhead';
+    _beginScrub();
+    seekWithDeclick(fracToSecs(getFrac(e)));
+  }
+  function onFilmstripDown(e) {
+    if (!duration) return;
+    _dragEl = filmstripEl;
     onscrubstart?.();
     dragging = 'playhead';
     _beginScrub();
@@ -658,6 +684,7 @@
   function onWindowMouseUp() {
     if (dragging === 'playhead') _endScrub();
     dragging = null;
+    _dragEl = null;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -768,6 +795,36 @@
               </div>
             </div>
           </div>
+        </div>
+      {/if}
+
+      <!-- Filmstrip (video only, above waveform) -->
+      {#if item?.mediaType === 'video' && filmstripFrames.length > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div bind:this={filmstripEl}
+             class="shrink-0 relative mx-3 mb-1 mt-1.5 rounded overflow-hidden cursor-crosshair"
+             style="height:68px; background:#111"
+             onmousedown={onFilmstripDown}>
+          <!-- Frame strip -->
+          <div class="absolute inset-0 flex gap-px">
+            {#each filmstripFrames as frame}
+              <!-- svelte-ignore a11y_missing_attribute -->
+              <img src="data:image/jpeg;base64,{frame}"
+                   class="h-full object-cover min-w-0"
+                   style="flex:1 1 0%"
+                   draggable="false" />
+            {/each}
+          </div>
+          <!-- Playhead -->
+          {#if duration}
+            <div class="absolute inset-y-0 z-10 pointer-events-none"
+                 style="left:{playFrac * 100}%; transform:translateX(-50%)">
+              <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-[2px]"
+                   style="background:#60a5fa; opacity:0.85"></div>
+              <div class="absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full"
+                   style="bottom:-5px; background:#60a5fa; box-shadow:0 0 6px #60a5fa"></div>
+            </div>
+          {/if}
         </div>
       {/if}
 

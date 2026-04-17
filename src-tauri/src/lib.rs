@@ -908,6 +908,63 @@ fn get_spectrogram(path: String) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(&output.stdout))
 }
 
+// ── Filmstrip extraction ──────────────────────────────────────────────────────
+
+/// Extract `count` evenly-spaced JPEG thumbnail frames from a video and return
+/// them as a Vec of base64-encoded JPEG strings.
+#[command]
+fn get_filmstrip(path: String, count: usize, duration: f64) -> Result<Vec<String>, String> {
+    if count == 0 || duration <= 0.0 {
+        return Ok(vec![]);
+    }
+
+    // fps=COUNT/DURATION selects exactly COUNT frames spread over the file.
+    let vf = format!("fps={count}/{dur},scale=160:-2", dur = duration as u32 + 1);
+
+    let output = Command::new("ffmpeg")
+        .args([
+            "-i", &path,
+            "-vf", &vf,
+            "-frames:v", &count.to_string(),
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-q:v", "5",
+            "-",
+        ])
+        .output()
+        .map_err(|e| format!("ffmpeg not found: {e}"))?;
+
+    if output.stdout.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Split concatenated JPEG stream: each frame is FF D8 … FF D9
+    let data = &output.stdout;
+    let mut frames: Vec<String> = Vec::new();
+    let mut i = 0usize;
+
+    use base64::Engine as _;
+    while i + 1 < data.len() {
+        if data[i] == 0xFF && data[i + 1] == 0xD8 {
+            let start = i;
+            let mut j = i + 2;
+            while j + 1 < data.len() {
+                if data[j] == 0xFF && data[j + 1] == 0xD9 {
+                    j += 2;
+                    break;
+                }
+                j += 1;
+            }
+            frames.push(base64::engine::general_purpose::STANDARD.encode(&data[start..j]));
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+
+    Ok(frames)
+}
+
 // ── Compression diff preview ──────────────────────────────────────────────────
 
 #[derive(Serialize, Clone)]
@@ -2123,6 +2180,7 @@ pub fn run() {
             check_tools,
             get_waveform,
             get_spectrogram,
+            get_filmstrip,
             preview_diff,
             preview_image_quality,
             get_theme,
