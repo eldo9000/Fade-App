@@ -13,7 +13,9 @@
   "dependencies": {
     "@fontsource/geist": "^5.2.8",
     "@libre/ui": "file:./common-js",
-    "@tauri-apps/api": "^2"
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-updater": "^2",
+    "@tauri-apps/plugin-process": "^2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7",

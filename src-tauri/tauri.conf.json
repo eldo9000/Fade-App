@@ -34,9 +34,18 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCNTg1RURBRDAyOEY4NkMKUldScytDalEybDVZTzdRbTdpbmZhY25hNi90R0dBaWdRMk9uQkI4SU9kV1pnZkRGSm5kSWdvdHoK",
+      "endpoints": [
+        "https://github.com/eldo9000/Fade-App/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "linux": {
       "deb": {
         "depends": [

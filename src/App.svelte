@@ -17,6 +17,8 @@
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { createSettings } from './lib/stores/settings.svelte.js';
+  import { check as checkUpdate } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
 
   const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
   const ARCHIVE_FORMATS = ['zip', 'tar.gz', 'tar.xz', '7z'];
@@ -62,6 +64,63 @@
   function setStatus(text, kind = 'info') { statusMessage = text; statusKind = kind; }
   let validationErrors = $state({});
   let toolWarnings = $state({});
+
+  // ── Auto-updater ───────────────────────────────────────────────────────────
+  // Non-blocking check 2s after mount. Banner shows in the queue header area.
+  // 'idle' → 'available' → 'downloading' → (relaunch) | 'error' | 'dismissed'
+  let updateState = $state('idle');
+  let updateVersion = $state('');
+  let updateProgress = $state(0); // 0..100, downloading only
+  let _pendingUpdate = null; // the Update handle from check()
+
+  async function checkForUpdate() {
+    try {
+      const update = await checkUpdate();
+      if (update) {
+        _pendingUpdate = update;
+        updateVersion = update.version ?? '';
+        updateState = 'available';
+      }
+    } catch (e) {
+      console.error('[updater] check failed', e);
+      updateState = 'error';
+    }
+  }
+
+  async function installUpdate() {
+    if (!_pendingUpdate) return;
+    updateState = 'downloading';
+    updateProgress = 0;
+    let downloaded = 0;
+    let contentLength = 0;
+    try {
+      await _pendingUpdate.downloadAndInstall((event) => {
+        switch (event.event) {
+          case 'Started':
+            contentLength = event.data?.contentLength ?? 0;
+            break;
+          case 'Progress':
+            downloaded += event.data?.chunkLength ?? 0;
+            if (contentLength > 0) {
+              updateProgress = Math.min(100, Math.round((downloaded / contentLength) * 100));
+            }
+            break;
+          case 'Finished':
+            updateProgress = 100;
+            break;
+        }
+      });
+      await relaunch();
+    } catch (e) {
+      console.error('[updater] install failed', e);
+      updateState = 'error';
+    }
+  }
+
+  function dismissUpdate() {
+    updateState = 'dismissed';
+    _pendingUpdate = null;
+  }
 
   // ── Sequential load pipeline ────────────────────────────────────────────────
   //
@@ -613,6 +672,9 @@
 
     loadPresets();
     checkTools();
+
+    // Fire-and-forget update check after a short delay so startup isn't blocked.
+    setTimeout(() => { checkForUpdate(); }, 2000);
   });
 
   onDestroy(() => {
@@ -1269,6 +1331,34 @@
      ondragover={onWindowDragover}
      ondragleave={onWindowDragleave}
      ondrop={onWindowDrop}>
+
+  <!-- ── Updater banner (floats over the titlebar drag band) ──────────────── -->
+  {#if updateState === 'available' || updateState === 'downloading' || updateState === 'error'}
+    <div class="absolute top-1 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-md text-[12px] shadow-lg"
+         style="background:color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+                border:1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+                color:var(--text-primary)">
+      {#if updateState === 'available'}
+        <span>Update available: v{updateVersion}</span>
+        <button
+          onclick={installUpdate}
+          class="px-2 py-0.5 rounded bg-[var(--accent)] text-white text-[11px] font-semibold hover:opacity-90 transition-opacity"
+        >Install &amp; restart</button>
+        <button
+          onclick={dismissUpdate}
+          class="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] text-[11px] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
+        >Later</button>
+      {:else if updateState === 'downloading'}
+        <span>Downloading {updateProgress}%…</span>
+      {:else if updateState === 'error'}
+        <span style="color:var(--text-secondary)">Update check failed</span>
+        <button
+          onclick={dismissUpdate}
+          class="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] text-[11px] hover:text-[var(--text-primary)] transition-colors"
+        >Dismiss</button>
+      {/if}
+    </div>
+  {/if}
 
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
