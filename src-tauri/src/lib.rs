@@ -160,10 +160,6 @@ pub struct ConvertOptions {
     pub avif_speed: Option<u32>,     // 0-10
     pub avif_chroma: Option<String>, // "420" | "422" | "444"
     pub bmp_bit_depth: Option<u32>,  // 8 | 16 | 24 | 32
-
-    // ── Silence padding (audio only) ──
-    pub pad_front: Option<f64>, // seconds of silence prepended
-    pub pad_end: Option<f64>,   // seconds of silence appended
 }
 
 impl Default for ConvertOptions {
@@ -253,9 +249,6 @@ impl Default for ConvertOptions {
             avif_speed: None,
             avif_chroma: None,
             bmp_bit_depth: None,
-
-            pad_front: None,
-            pad_end: None,
         }
     }
 }
@@ -811,7 +804,7 @@ mod tests {
 
     // ── format-specific image args ────────────────────────────────────────────
 
-    fn find_pair<'a>(args: &'a [String], flag: &str, value: &str) -> bool {
+    fn find_pair(args: &[String], flag: &str, value: &str) -> bool {
         args.windows(2).any(|w| w[0] == flag && w[1] == value)
     }
 
