@@ -1,45 +1,97 @@
 name: CI
 
+# Runs on every PR and push to main to catch breakage before release tags.
+# Test/lint only — release.yml handles actual builds on tag push.
+
 on:
-  push:
-    branches: [main]
   pull_request:
+  push:
     branches: [main]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    name: Test and lint (macOS aarch64)
+    runs-on: macos-14
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          toolchain: stable
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
           components: clippy, rustfmt
 
-      - uses: actions/setup-node@v4
+      - name: Configure git auth for private cargo deps
+        # Fade depends on `librewin-common` from the private repo
+        # eldo9000/Libre-Apps. CI's default GITHUB_TOKEN can only read the
+        # current repo, so we rewrite https://github.com/ to include a PAT
+        # with `Contents: Read` on Libre-Apps. Secret: LIBRE_APPS_TOKEN.
+        env:
+          LIBRE_APPS_TOKEN: ${{ secrets.LIBRE_APPS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LIBRE_APPS_TOKEN:-}" ]; then
+            echo "::error::LIBRE_APPS_TOKEN secret is not set. Create a fine-grained PAT with Contents:Read on eldo9000/Libre-Apps and add it as a repo secret."
+            exit 1
+          fi
+
+          # Probe the token against the API so a misconfigured PAT fails
+          # here with a clear message rather than inside cargo.
+          code=$(curl -sS -o /tmp/probe.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${LIBRE_APPS_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/eldo9000/Libre-Apps)
+          if [ "$code" != "200" ]; then
+            echo "::error::LIBRE_APPS_TOKEN cannot read eldo9000/Libre-Apps (HTTP $code)."
+            echo "Fine-grained PAT requirements:"
+            echo "  - Resource owner: eldo9000"
+            echo "  - Repository access: eldo9000/Libre-Apps"
+            echo "  - Permissions: Contents=Read AND Metadata=Read"
+            cat /tmp/probe.json
+            exit 1
+          fi
+
+          # `oauth2:TOKEN@github.com/` works for both classic and fine-grained PATs.
+          git config --global \
+            "url.https://oauth2:${LIBRE_APPS_TOKEN}@github.com/.insteadOf" \
+            "https://github.com/"
+          # Make cargo shell out to the git CLI so it honors url.insteadOf
+          # (libgit2's built-in auth ignores the rewrite).
+          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
         with:
-          node-version: 22
-
-
-      - name: Configure git for private deps
-        run: git config --global url."https://x-access-token:${{ secrets.CARGO_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ci-cargo-${{ runner.os }}-aarch64-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ci-cargo-${{ runner.os }}-aarch64-
 
       - name: Install npm deps
-        run: npm install
+        run: npm ci
 
-      - name: Build frontend
-        run: npm run build
+      - name: Run frontend tests (vitest)
+        run: npm test
 
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      # NOTE: workspace Cargo.toml sets `unwrap_used = "warn"`. With `-D warnings`
+      # that becomes a hard fail. If existing unwraps break CI, temporarily add
+      # `-A clippy::unwrap_used` to the args below while the codebase is cleaned up.
       - name: Clippy
-        working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-      - name: Cargo check
-        working-directory: src-tauri
-        run: cargo check --all-targets
+      - name: Backend unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
