@@ -17,6 +17,30 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
 
+  // ── Zoom ───────────────────────────────────────────────────────────────────
+  const ZOOM_STEPS = [1.0, 1.1, 1.2, 1.3];
+  let zoomLevel = $state(ZOOM_STEPS.includes(parseFloat(localStorage.getItem('zoomLevel'))) ? parseFloat(localStorage.getItem('zoomLevel')) : 1.0);
+
+  function applyZoom(level) {
+    zoomLevel = level;
+    localStorage.setItem('zoomLevel', String(level));
+    document.documentElement.style.zoom = String(level);
+  }
+
+  function handleZoomKey(e) {
+    if (!e.metaKey) return;
+    if (e.key !== '=' && e.key !== '+' && e.key !== '-' && e.key !== '0') return;
+    e.preventDefault();
+    const idx = ZOOM_STEPS.indexOf(zoomLevel);
+    if (e.key === '=' || e.key === '+') {
+      if (idx < ZOOM_STEPS.length - 1) applyZoom(ZOOM_STEPS[idx + 1]);
+    } else if (e.key === '-') {
+      if (idx > 0) applyZoom(ZOOM_STEPS[idx - 1]);
+    } else if (e.key === '0') {
+      applyZoom(1.0);
+    }
+  }
+
   let queue = $state([]);
   let selectedId = $state(null);
   let selectedItem = $derived(queue.find(q => q.id === selectedId) ?? null);
@@ -466,6 +490,10 @@
   onMount(async () => {
     await initTheme(invoke);
 
+    // Restore zoom and wire hotkeys
+    document.documentElement.style.zoom = String(zoomLevel);
+    window.addEventListener('keydown', handleZoomKey);
+
     // Pre-load Test-Files folder
     try {
       const testDir = '/Users/eldo/Desktop/Test-Files';
@@ -539,6 +567,7 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener('keydown', handleZoomKey);
     _unlistenBgFilmstrip?.();
     unlistenProgress?.();
     unlistenDone?.();
@@ -1641,8 +1670,7 @@
               </p>
             </div>
           {:else if !selectedItem}
-            <div class="w-full h-full overflow-y-auto flex flex-col items-center px-10 py-10 select-none"
-                 style="scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.08) transparent">
+            <div class="w-full h-full overflow-y-auto flex flex-col items-center px-10 py-10 select-none">
               <!-- Drop prompt -->
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                    stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
@@ -1656,24 +1684,27 @@
 
               <!-- Input formats -->
               <div class="w-full max-w-xl mb-8">
-                <p class="text-[9px] font-semibold uppercase tracking-widest mb-3"
-                   style="color:rgba(255,255,255,0.2)">Supported Input Formats</p>
+                <p class="text-[18px] font-semibold mb-3"
+                   style="color:rgba(255,255,255,0.34)">Supported Input Formats</p>
                 <div class="flex flex-col gap-2.5">
                   {#each [
-                    { label: 'Image',           exts: 'jpg · jpeg · png · gif · webp · avif · bmp · svg · ico' },
-                    { label: 'RAW / Pro Image', exts: 'heic · heif · tiff · psd · raw · cr2 · cr3 · nef · arw · dng · orf · rw2 · exr · hdr · dds · xcf' },
-                    { label: 'Video',           exts: 'mp4 · m4v · mkv · webm · mov · avi · flv · wmv · mpg · mpeg · ogv · ts · 3gp · divx · rmvb · asf' },
-                    { label: 'Audio',           exts: 'mp3 · aac · ogg · wav · flac · m4a · opus · wma · aiff · alac · ac3 · dts' },
-                    { label: 'Document',        exts: 'pdf' },
-                    { label: '3D Model',        exts: 'obj · gltf · glb · stl · fbx · ply · 3ds' },
-                    { label: 'Archive',         exts: 'zip · tar · gz · 7z' },
-                    { label: 'Data',            exts: 'json · csv · tsv · xml · yaml' },
+                    { label: 'Image',           exts: ['jpg','jpeg','png','gif','webp','avif','bmp','svg','ico'] },
+                    { label: 'RAW / Pro Image', exts: ['heic','heif','tiff','psd','raw','cr2','cr3','nef','arw','dng','orf','rw2','exr','hdr','dds','xcf'] },
+                    { label: 'Video',           exts: ['mp4','m4v','mkv','webm','mov','avi','flv','wmv','mpg','mpeg','ogv','ts','3gp','divx','rmvb','asf'] },
+                    { label: 'Audio',           exts: ['mp3','aac','ogg','wav','flac','m4a','opus','wma','aiff','alac','ac3','dts'] },
+                    { label: 'Document',        exts: ['pdf'] },
+                    { label: '3D Model',        exts: ['obj','gltf','glb','stl','fbx','ply','3ds'] },
+                    { label: 'Archive',         exts: ['zip','tar','gz','7z'] },
+                    { label: 'Data',            exts: ['json','csv','tsv','xml','yaml'] },
                   ] as g}
                     <div class="flex gap-3 items-baseline">
                       <span class="shrink-0 text-[10px] font-semibold w-28 text-right"
                             style="color:rgba(255,255,255,0.22)">{g.label}</span>
-                      <span class="text-[10px] font-mono leading-relaxed"
-                            style="color:rgba(255,255,255,0.35)">{g.exts}</span>
+                      <span class="text-[10px] font-mono leading-relaxed">
+                        {#each g.exts as ext, i}
+                          <span style="color:rgba(255,255,255,0.44)">{ext}</span>{#if i < g.exts.length - 1}{'  '}{/if}
+                        {/each}
+                      </span>
                     </div>
                   {/each}
                 </div>
@@ -1681,22 +1712,25 @@
 
               <!-- Output formats -->
               <div class="w-full max-w-xl">
-                <p class="text-[9px] font-semibold uppercase tracking-widest mb-3"
-                   style="color:rgba(255,255,255,0.2)">Output Formats</p>
+                <p class="text-[18px] font-semibold mb-3"
+                   style="color:rgba(255,255,255,0.34)">Output Formats</p>
                 <div class="flex flex-col gap-2.5">
                   {#each [
-                    { label: 'Audio',    exts: 'mp3 · wav · flac · ogg · aac · opus · m4a · wma · aiff · alac · ac3 · dts' },
-                    { label: 'Video',    exts: 'mp4 · mov · webm · mkv · avi · gif' },
-                    { label: 'Image',    exts: 'jpeg · png · webp · tiff · bmp · avif' },
-                    { label: 'Document', exts: 'html · pdf · txt · md' },
-                    { label: 'Data',     exts: 'json · csv · tsv · xml · yaml' },
-                    { label: 'Archive',  exts: 'zip · tar · gz · 7z' },
+                    { label: 'Audio',    exts: ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'] },
+                    { label: 'Video',    exts: ['mp4','mov','webm','mkv','avi','gif'] },
+                    { label: 'Image',    exts: ['jpeg','png','webp','tiff','bmp','avif'] },
+                    { label: 'Document', exts: ['html','pdf','txt','md'] },
+                    { label: 'Data',     exts: ['json','csv','tsv','xml','yaml'] },
+                    { label: 'Archive',  exts: ['zip','tar','gz','7z'] },
                   ] as g}
                     <div class="flex gap-3 items-baseline">
                       <span class="shrink-0 text-[10px] font-semibold w-28 text-right"
                             style="color:rgba(255,255,255,0.22)">{g.label}</span>
-                      <span class="text-[10px] font-mono leading-relaxed"
-                            style="color:rgba(255,255,255,0.35)">{g.exts}</span>
+                      <span class="text-[10px] font-mono leading-relaxed">
+                        {#each g.exts as ext, i}
+                          <span style="color:rgba(255,255,255,0.33)">{ext}</span>{#if i < g.exts.length - 1}{'  '}{/if}
+                        {/each}
+                      </span>
                     </div>
                   {/each}
                 </div>
@@ -1731,7 +1765,7 @@
            style="height:24px; background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
         {#key tooltipText}
           {#if tooltipText}
-            <span class="absolute inset-0 flex items-center px-3 text-[11px] truncate"
+            <span class="absolute inset-0 flex items-center px-3 text-[11px] truncate pr-24"
                   style="color:rgba(255,255,255,0.5)"
                   in:fade={{ duration: 50 }}
                   out:fade={{ duration: 150 }}>
@@ -1739,6 +1773,31 @@
             </span>
           {/if}
         {/key}
+        <!-- Zoom controls -->
+        <div class="absolute right-1 inset-y-0 flex items-center gap-0.5">
+          <button
+            onclick={() => { const i = ZOOM_STEPS.indexOf(zoomLevel); if (i > 0) applyZoom(ZOOM_STEPS[i - 1]); }}
+            title="Zoom out (⌘-)"
+            disabled={zoomLevel === ZOOM_STEPS[0]}
+            class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
+                   bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
+            style="color:rgba(255,255,255,0.45)">−</button>
+          <button
+            onclick={() => applyZoom(1.0)}
+            title="Reset zoom (⌘0)"
+            class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
+                   bg-white/5 hover:bg-white/10
+                   {zoomLevel !== 1.0 ? 'text-[var(--accent)]' : ''}"
+            style={zoomLevel === 1.0 ? 'color:rgba(255,255,255,0.35)' : ''}>
+            {Math.round(zoomLevel * 100)}%</button>
+          <button
+            onclick={() => { const i = ZOOM_STEPS.indexOf(zoomLevel); if (i < ZOOM_STEPS.length - 1) applyZoom(ZOOM_STEPS[i + 1]); }}
+            title="Zoom in (⌘+)"
+            disabled={zoomLevel === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+            class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
+                   bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
+            style="color:rgba(255,255,255,0.45)">+</button>
+        </div>
       </div>
     </div>
 

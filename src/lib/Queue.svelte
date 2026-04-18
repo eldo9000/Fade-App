@@ -80,7 +80,11 @@
 </script>
 
 <!-- File list -->
-<div class="flex-1 min-h-0 overflow-y-auto" role="list" aria-label="Files in queue">
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div class="flex-1 min-h-0 overflow-y-auto" role="list" aria-label="Files in queue"
+     onclick={(e) => { if (e.target === e.currentTarget) onselect?.(null); }}>
   {#if queue.length === 0}
     <div class="h-full flex flex-col items-center justify-center gap-2 px-6 text-center select-none">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -99,7 +103,7 @@
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
         role="listitem"
-        onclick={() => onselect?.(item.id)}
+        onclick={() => onselect?.(selectedId === item.id ? null : item.id)}
         onmouseenter={(e) => onItemEnter(e, item)}
         onmouseleave={onItemLeave}
         class="relative overflow-hidden flex items-center gap-2 px-3 {compact ? 'py-1' : 'py-2'} border-b border-[var(--border)] group cursor-pointer transition-colors
