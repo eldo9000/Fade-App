@@ -24,7 +24,11 @@ fn zcr_to_hue(zcr: f32) -> u32 {
 /// Uses zero-crossing rate at 8 000 Hz — fast, no extra deps, works well
 /// for distinguishing bass kicks from hi-hats visually.
 #[command]
-pub fn get_waveform(path: String, draft: bool, buckets: Option<usize>) -> Result<WaveformData, String> {
+pub fn get_waveform(
+    path: String,
+    draft: bool,
+    buckets: Option<usize>,
+) -> Result<WaveformData, String> {
     let ar = if draft { "2000" } else { "8000" };
     let output = Command::new("ffmpeg")
         .args(["-i", &path, "-ac", "1", "-ar", ar, "-f", "f32le", "-"])
