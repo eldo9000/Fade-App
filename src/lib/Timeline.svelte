@@ -2,7 +2,7 @@
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
 
-  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false } = $props();
+  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false } = $props();
 
   // ── Media element ─────────────────────────────────────────────────────────
   // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives
@@ -81,12 +81,13 @@
   let _splitter     = null;
   let _srcConnected = false;
   let _shadowEl     = null; // silent clone feeding analysers (fallback path)
+  let _gainNode     = null; // GainNode for volume control on owned-internal (audio-only) path
 
   function _teardownGraph() {
     if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
     if (_shadowEl) { _shadowEl.pause(); _shadowEl.src = ''; _shadowEl = null; }
     if (_audioCtx) { _audioCtx.close().catch(() => {}); _audioCtx = null; }
-    _analyserL = _analyserR = _splitter = null;
+    _analyserL = _analyserR = _splitter = _gainNode = null;
     _srcConnected = false;
     _clipL = _clipR = false; _clipHoldL = _clipHoldR = 0;
   }
@@ -109,28 +110,53 @@
   }
 
   // Phase 2 — wire a signal source into the analyser graph.
-  // Try captureStream() first (zero latency impact). Fall back to a silent
-  // shadow Audio element routed through createMediaElementSource so the
-  // analysers always have a real signal regardless of WKWebView limitations.
+  //
+  // Strategy depends on who owns the media element:
+  //
+  //  _ownedInternal = true  (audio-only files — we created a fresh Audio() per file)
+  //    → createMediaElementSource(audioEl) directly. Each file is a new element so
+  //      "already connected" never applies. Audio is routed through Web Audio;
+  //      connect splitter output to ctx.destination so the user still hears it.
+  //
+  //  _ownedInternal = false  (video files — parent's <video> element is reused)
+  //    → captureStream() if available (no routing change, zero latency).
+  //      Otherwise a silent shadow Audio element routed through Web Audio —
+  //      analysers only, main video element keeps its native audio path.
+  //      Shadow is preloaded before play() so it's ready when play() fires.
   function _connectSource() {
     if (_srcConnected || !audioEl || !_audioCtx || !_splitter) return;
     try {
-      if (typeof audioEl.captureStream === 'function') {
-        // Best path: tap a copy of the native output stream.
+      if (_ownedInternal) {
+        // Audio file: route the owned element through Web Audio.
+        // audioEl is a fresh new Audio() per file — no "already connected" risk.
+        // GainNode sits between source and destination so _applyEnvelope can control
+        // volume reliably — audioEl.volume has no effect once createMediaElementSource
+        // takes over (WKWebView does not forward it through the Web Audio graph).
+        const src = _audioCtx.createMediaElementSource(audioEl);
+        const gain = _audioCtx.createGain();
+        src.connect(_splitter);
+        src.connect(gain);
+        gain.connect(_audioCtx.destination);
+        _gainNode = gain;
+        _srcConnected = true;
+      } else if (typeof audioEl.captureStream === 'function') {
+        // Video file — best path: tap a copy of the native output stream.
         const src = _audioCtx.createMediaStreamSource(audioEl.captureStream());
         src.connect(_splitter);
         _srcConnected = true;
       } else {
-        // Fallback: silent shadow element through Web Audio — analysers only.
-        // The main audioEl keeps playing natively so there is no added latency.
+        // Video file — fallback: silent shadow Audio element.
+        // The main <video> keeps its native audio path (no latency added).
+        // Preload so the element is ready when play() calls shadow.play().
         const shadow = new Audio(audioEl.src);
-        shadow.volume = 0;
+        shadow.preload = 'auto';
+        shadow.volume  = 0;
         shadow.currentTime = audioEl.currentTime;
-        shadow.loop = audioEl.loop;
+        shadow.loop    = audioEl.loop;
+        shadow.load();   // start buffering now, inside user-gesture if called from play()
         const src = _audioCtx.createMediaElementSource(shadow);
         src.connect(_splitter);
-        // GainNode keeps shadow silent even after createMediaElementSource
-        // (createMediaElementSource by itself routes to ctx.destination too).
+        // GainNode keeps shadow silent (createMediaElementSource routes to destination).
         const mute = _audioCtx.createGain();
         mute.gain.value = 0;
         src.connect(mute);
@@ -138,7 +164,7 @@
         _shadowEl = shadow;
         _srcConnected = true;
       }
-    } catch (e) { console.error('connectSource failed:', e); }
+    } catch (e) { console.error('[viz] connectSource failed:', e); }
   }
 
   // Keep the shadow element in sync with the main element.
@@ -165,22 +191,41 @@
   function _declick(to, durationMs, onDone) {
     const el = audioEl;
     if (!el) { onDone?.(); return; }
-    const from = el.volume;
+    const gn = _gainNode;
+    const from = gn ? gn.gain.value : el.volume;
     const id = ++_declickId;
     _declickActive = true;
     const start = performance.now();
     const tick = () => {
       if (_declickId !== id || audioEl !== el) { _declickActive = false; return; }
       const t = Math.min(1, (performance.now() - start) / durationMs);
-      el.volume = from + (to - from) * t;
+      const val = from + (to - from) * t;
+      if (gn) gn.gain.value = val; else el.volume = val;
       if (t < 1) setTimeout(tick, 0);
       else { _declickActive = false; onDone?.(); }
     };
     setTimeout(tick, 0);
   }
 
+  // Fade curve with guaranteed zero slope at BOTH endpoints for all tension values.
+  // Uses mirrored smoothstep composition — proven smooth at 0 and 1 for all exp > 0.
+  // Positive tension → convex S (fast-then-slow). Negative → concave S (slow-then-fast).
+  function _fadeCurve(p, tension) {
+    const pc = Math.max(0, Math.min(1, p));
+    if (tension >= 0) {
+      // pow(smoothstep(p), exp): slope at p=0 → smoothstep'(0)=0 kills product. ✓
+      //                          slope at p=1 → smoothstep'(1)=0 kills product. ✓
+      const s = pc * pc * (3 - 2 * pc);
+      return Math.pow(s, Math.pow(2, tension));
+    } else {
+      // Mirror: 1 − pow(smoothstep(1−p), exp) — symmetric, same guarantee for all exp. ✓
+      const q = 1 - pc;
+      const s = q * q * (3 - 2 * q);
+      return 1 - Math.pow(s, Math.pow(2, -tension));
+    }
+  }
+
   // Compute the fade-envelope amplitude [0,1] for a given playback time.
-  // Uses logarithmic curves so the fade sounds perceptually linear in loudness.
   function _computeFadeEnvelope(t) {
     const trimStart = options?.trim_start ?? 0;
     const trimEnd   = options?.trim_end   ?? duration ?? 0;
@@ -188,12 +233,12 @@
     const fadeOut   = options?.fade_out   ?? 0;
     let vol = 1;
     if (fadeIn > 0 && t < trimStart + fadeIn) {
-      const p = Math.max(0, (t - trimStart) / fadeIn); // linear 0→1
-      vol = Math.min(vol, p * p);                       // square for perceptual linearity
+      const p = Math.max(0, (t - trimStart) / fadeIn);
+      vol = Math.min(vol, _fadeCurve(p, options?.fade_in_curve ?? 0));
     }
     if (fadeOut > 0 && t > trimEnd - fadeOut) {
       const p = Math.max(0, (trimEnd - t) / fadeOut);
-      vol = Math.min(vol, p * p);
+      vol = Math.min(vol, _fadeCurve(p, options?.fade_out_curve ?? 0));
     }
     return vol;
   }
@@ -203,8 +248,13 @@
   function _applyEnvelope() {
     const t = audioEl?.currentTime ?? currentTime;
     const vol = _computeFadeEnvelope(t);
-    // Audio: only override when de-click is not active (de-click wins briefly on play/pause)
-    if (audioEl && !_declickActive && isPlaying) audioEl.volume = vol;
+    // Audio: only override when de-click is not active (de-click wins briefly on play/pause).
+    // Use GainNode when available — audioEl.volume has no effect once the element is routed
+    // through createMediaElementSource on WKWebView.
+    if (!_declickActive && isPlaying) {
+      if (_gainNode) _gainNode.gain.value = vol;
+      else if (audioEl) audioEl.volume = vol;
+    }
     // Video: always apply brightness so scrubbing into fades shows the effect
     if (mediaEl) mediaEl.style.filter = vol < 0.999 ? `brightness(${vol.toFixed(4)})` : '';
   }
@@ -232,7 +282,7 @@
     _connectSource();
     _audioCtx?.resume();
     isPlaying = true;
-    audioEl.volume = 0;
+    if (_gainNode) _gainNode.gain.value = 0; else audioEl.volume = 0;
     audioEl.play().catch(() => { isPlaying = false; });
     if (_shadowEl) { _shadowEl.currentTime = audioEl.currentTime; _shadowEl.play().catch(() => {}); }
     _declick(1, 25, null);
@@ -243,7 +293,8 @@
     isPlaying = false;
     const el = audioEl;
     const sh = _shadowEl;
-    _declick(0, 25, () => { el.pause(); el.volume = 1; sh?.pause(); if (mediaEl) mediaEl.style.filter = ''; });
+    const gn = _gainNode;
+    _declick(0, 25, () => { el.pause(); if (gn) gn.gain.value = 1; else el.volume = 1; sh?.pause(); if (mediaEl) mediaEl.style.filter = ''; });
   }
 
   function stop() {
@@ -251,7 +302,8 @@
     isPlaying = false;
     const el = audioEl;
     const sh = _shadowEl;
-    _declick(0, 25, () => { el.pause(); el.volume = 1; sh?.pause(); seekTo(options?.trim_start ?? 0); if (mediaEl) mediaEl.style.filter = ''; });
+    const gn = _gainNode;
+    _declick(0, 25, () => { el.pause(); if (gn) gn.gain.value = 1; else el.volume = 1; sh?.pause(); seekTo(options?.trim_start ?? 0); if (mediaEl) mediaEl.style.filter = ''; });
   }
 
   // Seek with de-click: always mute → seek → fade back in so the initial click
@@ -259,7 +311,7 @@
   // yet (play() is async, so audioEl.paused may still be true at call time).
   function seekWithDeclick(secs) {
     if (!audioEl) return;
-    audioEl.volume = 0;
+    if (_gainNode) _gainNode.gain.value = 0; else audioEl.volume = 0;
     seekTo(secs);
     _declick(1, 25, null);
   }
@@ -284,9 +336,23 @@
   // Lissajous — trail-faded XY scatter, L=X, R=Y
   function _drawLissajous() {
     const cv = lissajousCanvas;
-    if (!cv || !_analyserL || !_analyserR) return;
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const w = cv.width, h = cv.height, cx = w / 2, cy = h / 2;
+
+    if (!_analyserL || !_analyserR) {
+      // No analyser — draw static background + crosshairs
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
+      ctx.moveTo(0, cy); ctx.lineTo(w, cy);
+      ctx.stroke();
+      return;
+    }
+
     const n   = _analyserL.fftSize;
     const lBuf = new Float32Array(n);
     const rBuf = new Float32Array(n);
@@ -346,9 +412,28 @@
   // Oscilloscope — L + R time-domain waveforms superimposed on a grid
   function _drawOscilloscope() {
     const cv = oscilloscopeCanvas;
-    if (!cv || !_analyserL || !_analyserR) return;
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const w = cv.width, h = cv.height;
+
+    if (!_analyserL || !_analyserR) {
+      // No analyser — draw static grid only
+      ctx.fillStyle = '#080808';
+      ctx.fillRect(0, 0, w, h);
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = (i / 4) * h;
+        ctx.strokeStyle = i === 2 ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.12)';
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      for (let i = 0; i <= 8; i++) {
+        const x = (i / 8) * w;
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      return;
+    }
+
     const n = _analyserL.fftSize;
     const lBuf = new Float32Array(n);
     const rBuf = new Float32Array(n);
@@ -392,9 +477,28 @@
   // Spectrum — L + R frequency lines superimposed, same style as oscilloscope
   function _drawSpectrum() {
     const cv = spectrumCanvas;
-    if (!cv || !_analyserL || !_analyserR) return;
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const w = cv.width, h = cv.height;
+
+    if (!_analyserL || !_analyserR) {
+      // No analyser — draw static grid only
+      ctx.fillStyle = '#080808';
+      ctx.fillRect(0, 0, w, h);
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = (i / 4) * h;
+        ctx.strokeStyle = i === 2 ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.12)';
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      for (let i = 0; i <= 8; i++) {
+        const x = (i / 8) * w;
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      return;
+    }
+
     const n = _analyserL.frequencyBinCount;
     const lData = new Uint8Array(n);
     const rData = new Uint8Array(n);
@@ -455,12 +559,14 @@
   // VU meter — RMS level bars with peak hold, gradient green/yellow/red
   function _drawVU() {
     const cv = vuCanvas;
-    if (!cv || !_analyserL || !_analyserR) return;
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const w = cv.width, h = cv.height;
 
     ctx.fillStyle = '#080808';
     ctx.fillRect(0, 0, w, h);
+
+    if (!_analyserL || !_analyserR) return;
 
     const bufL = new Float32Array(_analyserL.fftSize);
     const bufR = new Float32Array(_analyserR.fftSize);
@@ -546,12 +652,23 @@
   $effect(() => {
     // Run the render loop whenever the visualiser panel is visible OR audio is
     // playing — so grids/axes appear immediately on expand even before playback.
+    // Also track mediaReady: when it transitions false→true the media $effect calls
+    // _teardownGraph() which kills _rafId, then _initCtx(). Without tracking
+    // mediaReady here the RAF never restarts (vizExpanded/isPlaying didn't change).
+    void mediaReady;
     if (isPlaying || vizExpanded) {
       if (!_rafId) _rafId = requestAnimationFrame(_renderLoop);
     } else {
       if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
     }
     return () => { if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; } };
+  });
+
+  // Connect audio source when viz panel opens before playback has started
+  $effect(() => {
+    if (vizExpanded && mediaReady && audioEl && _audioCtx && !_srcConnected) {
+      _connectSource();
+    }
   });
 
   // ── Static waveform / spectrogram / filmstrip (loaded via ffmpeg) ─────────
@@ -566,10 +683,14 @@
   $effect(() => {
     const it = item;
     const go = waveformReady;
+    const cached = cachedWaveform;
+    const isDraft = draft;
     waveformData = null;
     if (!it || !go) return;
-    const id = it.id; _capturedId = id; mediaLoading = true;
-    invoke('get_waveform', { path: it.path })
+    const id = it.id; _capturedId = id;
+    if (cached) { waveformData = /** @type {any} */ (cached); mediaLoading = false; return; }
+    mediaLoading = true;
+    invoke('get_waveform', { path: it.path, draft: isDraft })
       .then(d => { if (_capturedId === id) { waveformData = /** @type {any} */ (d); mediaLoading = false; } })
       .catch(e => { console.error('get_waveform failed:', e); if (_capturedId === id) mediaLoading = false; });
   });
@@ -589,8 +710,28 @@
     const it = item;
     const dur = duration;
     const go = filmstripReady;
+    const cached = cachedFilmstripFrames;
+    const isDraft = draft;
     filmstripFrames = [];
     if (!it || !go || !dur || it.mediaType !== 'video') return;
+
+    // If we have pre-loaded frames (full or partial), use them immediately.
+    // For partial (bg preload still in-flight), listen for the remaining -bg events
+    // instead of firing a new ffmpeg call — no double-loading.
+    if (cached && cached.length > 0) {
+      filmstripFrames = [...cached];
+      if (cached.some(f => f === null)) {
+        const bgId = it.id + '-bg';
+        let unlisten = null;
+        listen('filmstrip-frame', (ev) => {
+          const { id, index, data } = ev.payload;
+          if (id !== bgId) return;
+          filmstripFrames[index] = data;
+        }).then(fn => { unlisten = fn; });
+        return () => { unlisten?.(); };
+      }
+      return; // Fully cached — instant, no cleanup needed
+    }
 
     const myId = it.id;
     const COUNT = 20;
@@ -606,7 +747,7 @@
     }).then(fn => { unlistenFn = fn; });
 
     // Fire-and-forget — Rust thread emits events as each frame finishes
-    invoke('get_filmstrip', { path: it.path, id: myId, count: COUNT, duration: dur })
+    invoke('get_filmstrip', { path: it.path, id: myId, count: COUNT, duration: dur, draft: isDraft })
       .catch(() => {});
 
     return () => { unlistenFn?.(); };
@@ -636,12 +777,34 @@
     duration ? Math.max(startFrac, Math.min(endFrac,
       ((options?.trim_end ?? duration ?? 0) - (options?.fade_out ?? 0)) / duration)) : endFrac);
 
+  // Curve polyline points for SVG ramp lines — matches _fadeCurve exactly (40 segments)
+  let fadeInCurvePoints = $derived.by(() => {
+    const tension = options?.fade_in_curve ?? 0;
+    const pts = [];
+    for (let i = 0; i <= 40; i++) {
+      const p = i / 40;
+      pts.push(`${p * 100},${(1 - _fadeCurve(p, tension)) * 100}`);
+    }
+    return pts.join(' ');
+  });
+  let fadeOutCurvePoints = $derived.by(() => {
+    const tension = options?.fade_out_curve ?? 0;
+    const pts = [];
+    for (let i = 0; i <= 40; i++) {
+      const p = i / 40; // 0=handle, 1=trim end
+      pts.push(`${p * 100},${(1 - _fadeCurve(1 - p, tension)) * 100}`);
+    }
+    return pts.join(' ');
+  });
+
   // ── Drag ──────────────────────────────────────────────────────────────────
   let trackEl       = $state(null);
   let filmstripEl   = $state(null);
-  let dragging      = $state(null); // 'start' | 'end' | 'playhead'
+  let dragging      = $state(null); // 'start' | 'end' | 'playhead' | 'fade_in' | 'fade_out'
   let _dragEl       = null; // element the current drag started on
   let _wasPlayingBeforeDrag = false;
+  let _dragStartY     = 0;   // Y position at fade-handle mousedown
+  let _dragStartCurve = 0;   // curve value at fade-handle mousedown
 
   function getFrac(e) {
     const el = _dragEl ?? trackEl;
@@ -667,7 +830,8 @@
   function _endScrub() {
     if (audioEl && !_wasPlayingBeforeDrag && !audioEl.paused) {
       const sh = _shadowEl;
-      _declick(0, 25, () => { audioEl?.pause(); if (audioEl) audioEl.volume = 1; sh?.pause(); });
+      const gn = _gainNode;
+      _declick(0, 25, () => { audioEl?.pause(); if (gn) gn.gain.value = 1; else if (audioEl) audioEl.volume = 1; sh?.pause(); });
     }
     _wasPlayingBeforeDrag = false;
   }
@@ -691,11 +855,32 @@
   function onWindowMouseMove(e) {
     if (!dragging || !duration) return;
     const f = getFrac(e);
-    if      (dragging === 'start')    options.trim_start = fracToSecs(Math.min(f, endFrac - 1 / duration));
-    else if (dragging === 'end')      options.trim_end   = fracToSecs(Math.max(f, startFrac + 1 / duration));
-    else if (dragging === 'fade_in')  options.fade_in    = Math.max(0, fracToSecs(Math.min(f, fadeOutFrac)) - (options.trim_start ?? 0));
-    else if (dragging === 'fade_out') options.fade_out   = Math.max(0, (options.trim_end ?? duration ?? 0) - fracToSecs(Math.max(f, fadeInFrac)));
-    else                              seekTo(fracToSecs(f));
+    const minGap = 1 / duration; // one-frame minimum separation
+    if (dragging === 'start') {
+      // Can't go past end, and can't push fade-in handle past fade-out handle
+      const maxF = Math.min(endFrac - minGap, fadeOutFrac - (options?.fade_in ?? 0) / duration - minGap);
+      options.trim_start = fracToSecs(Math.max(0, Math.min(f, maxF)));
+    }
+    else if (dragging === 'end') {
+      // Can't go before start, and can't push fade-out handle before fade-in handle
+      const minF = Math.max(startFrac + minGap, fadeInFrac + (options?.fade_out ?? 0) / duration + minGap);
+      options.trim_end = fracToSecs(Math.min(1, Math.max(f, minF)));
+    }
+    else if (dragging === 'fade_in') {
+      // Horizontal: can't cross fade-out handle (leave one-frame gap)
+      options.fade_in = Math.max(0, fracToSecs(Math.min(f, fadeOutFrac - minGap)) - (options.trim_start ?? 0));
+      // Vertical: curve tension [-3, +3], drag down = positive (inverted)
+      const dy = e.clientY - _dragStartY;
+      options.fade_in_curve = Math.max(-3, Math.min(3, _dragStartCurve + dy / 100));
+    }
+    else if (dragging === 'fade_out') {
+      // Horizontal: can't cross fade-in handle (leave one-frame gap)
+      options.fade_out = Math.max(0, (options.trim_end ?? duration ?? 0) - fracToSecs(Math.max(f, fadeInFrac + minGap)));
+      // Vertical: curve tension [-3, +3], drag down = positive (inverted)
+      const dy = e.clientY - _dragStartY;
+      options.fade_out_curve = Math.max(-3, Math.min(3, _dragStartCurve + dy / 100));
+    }
+    else seekTo(fracToSecs(f));
   }
   function onWindowMouseUp() {
     if (dragging === 'playhead') _endScrub();
@@ -770,12 +955,14 @@
 
       {#if vizExpanded}
         <!-- Spectrogram (224px) — px-3 aligns with waveform mx-3 -->
-        {#if spectrogramData}
-          <div class="shrink-0 px-3 pt-2" style="height:224px">
+        <div class="shrink-0 px-3 pt-2" style="height:224px">
+          {#if spectrogramData}
             <img src="data:image/png;base64,{spectrogramData}" alt="Spectrogram"
                  class="w-full h-full object-fill rounded" style="display:block" />
-          </div>
-        {/if}
+          {:else}
+            <div class="w-full h-full rounded" style="background:#111"></div>
+          {/if}
+        </div>
 
         <!-- Viz row: lissajous | oscilloscope (1x) | spectrum (2x) -->
         <div class="shrink-0 flex gap-2 px-3 pt-2 pb-2" style="height:120px">
@@ -841,8 +1028,6 @@
                  style="left:{playFrac * 100}%; transform:translateX(-50%)">
               <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-[2px]"
                    style="background:#60a5fa; opacity:0.85"></div>
-              <div class="absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full"
-                   style="bottom:-5px; background:#60a5fa; box-shadow:0 0 6px #60a5fa"></div>
             </div>
           {/if}
         </div>
@@ -866,7 +1051,7 @@
             {@const h = Math.max(1, amp * 96)}
             {@const y = (100 - h) / 2}
             <rect x={i} y={y} width={0.85} height={h}
-                  fill={`hsl(${waveformData.hues[i]},100%,55%)`} opacity="0.85" />
+                  fill={`hsl(${waveformData.hues[i]},100%,55%)`} opacity="0.525" />
           {/each}
         </svg>
       {:else if item}
@@ -879,7 +1064,7 @@
     {#if showTrim}
       <!-- Pre-trim dim -->
       <div class="absolute inset-y-0 left-0 rounded-l pointer-events-none"
-           style="width:{startFrac * 100}%; background:rgba(0,0,0,0.55)"></div>
+           style="width:{startFrac * 100}%; background:rgba(0,0,0,0.85)"></div>
       <!-- Active region -->
       <div class="absolute inset-y-0 pointer-events-none"
            style="left:{startFrac * 100}%; width:{(endFrac - startFrac) * 100}%;
@@ -888,75 +1073,90 @@
                   background:rgba(255,255,255,0.03)"></div>
       <!-- Post-trim dim -->
       <div class="absolute inset-y-0 right-0 rounded-r pointer-events-none"
-           style="left:{endFrac * 100}%; background:rgba(0,0,0,0.55)"></div>
-      <!-- Fade-in curve overlay -->
+           style="left:{endFrac * 100}%; background:rgba(0,0,0,0.85)"></div>
+      <!-- Fade-in gradient overlay — opaque at trim start, transparent at fade handle -->
       {#if (options?.fade_in ?? 0) > 0}
-        <div class="absolute inset-y-0 pointer-events-none overflow-hidden"
+        <div class="absolute inset-y-0 pointer-events-none"
+             style="left:{startFrac * 100}%; width:{(fadeInFrac - startFrac) * 100}%;
+                    background:linear-gradient(to right, rgba(0,0,0,0.72), transparent)">
+        </div>
+      {/if}
+      <!-- Fade-out gradient overlay — transparent at fade handle, opaque at trim end -->
+      {#if (options?.fade_out ?? 0) > 0}
+        <div class="absolute inset-y-0 pointer-events-none"
+             style="left:{fadeOutFrac * 100}%; width:{(endFrac - fadeOutFrac) * 100}%;
+                    background:linear-gradient(to right, transparent, rgba(0,0,0,0.72))">
+        </div>
+      {/if}
+      <!-- Fade-in ramp curve — from trim start (bottom) to fade handle (top) -->
+      {#if (options?.fade_in ?? 0) > 0}
+        <div class="absolute inset-y-0 pointer-events-none"
              style="left:{startFrac * 100}%; width:{(fadeInFrac - startFrac) * 100}%">
-          <svg class="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <!-- Wedge: full-height at crop edge, tapers to a point at fade handle -->
-            <path d="M 0,0 C 20,0 100,50 100,50 C 100,50 20,100 0,100 Z" fill="rgba(0,0,0,0.45)"/>
+          <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <polyline points={fadeInCurvePoints} fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2" vector-effect="non-scaling-stroke"/>
           </svg>
         </div>
       {/if}
-      <!-- Fade-out curve overlay -->
+      <!-- Fade-out ramp curve — from fade handle (top) to trim end (bottom) -->
       {#if (options?.fade_out ?? 0) > 0}
-        <div class="absolute inset-y-0 pointer-events-none overflow-hidden"
+        <div class="absolute inset-y-0 pointer-events-none"
              style="left:{fadeOutFrac * 100}%; width:{(endFrac - fadeOutFrac) * 100}%">
-          <svg class="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <path d="M 100,0 C 80,0 0,50 0,50 C 0,50 80,100 100,100 Z" fill="rgba(0,0,0,0.45)"/>
+          <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <polyline points={fadeOutCurvePoints} fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2" vector-effect="non-scaling-stroke"/>
           </svg>
         </div>
       {/if}
       <!-- Fade-in triangle handle (sits at fadeInFrac, top of track) -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="absolute z-25 cursor-ew-resize"
+      <div class="absolute z-25 cursor-move"
            style="left:{fadeInFrac * 100}%; top:0; transform:translateX(-50%)"
            onmouseenter={() => fadeInHovered = true}
            onmouseleave={() => fadeInHovered = false}
-           onmousedown={(e) => { e.stopPropagation(); dragging = 'fade_in'; }}>
+           onmousedown={(e) => { e.stopPropagation(); _dragStartY = e.clientY; _dragStartCurve = options?.fade_in_curve ?? 0; dragging = 'fade_in'; }}
+           oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (options) options.fade_in_curve = 0; }}>
         <svg width="14" height="10" viewBox="0 0 14 10" xmlns="http://www.w3.org/2000/svg">
           <polygon points="7,10 0,0 14,0"
-                   fill="{(dragging==='fade_in'||fadeInHovered) ? 'rgba(251,191,36,1)' : 'rgba(251,191,36,0.65)'}"/>
+                   fill="{(dragging==='fade_in'||fadeInHovered) ? 'rgba(74,222,128,1)' : 'rgba(74,222,128,0.65)'}"/>
         </svg>
       </div>
       <!-- Fade-out triangle handle (sits at fadeOutFrac, top of track) -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="absolute z-25 cursor-ew-resize"
+      <div class="absolute z-25 cursor-move"
            style="left:{fadeOutFrac * 100}%; top:0; transform:translateX(-50%)"
            onmouseenter={() => fadeOutHovered = true}
            onmouseleave={() => fadeOutHovered = false}
-           onmousedown={(e) => { e.stopPropagation(); dragging = 'fade_out'; }}>
+           onmousedown={(e) => { e.stopPropagation(); _dragStartY = e.clientY; _dragStartCurve = options?.fade_out_curve ?? 0; dragging = 'fade_out'; }}
+           oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (options) options.fade_out_curve = 0; }}>
         <svg width="14" height="10" viewBox="0 0 14 10" xmlns="http://www.w3.org/2000/svg">
           <polygon points="7,10 0,0 14,0"
-                   fill="{(dragging==='fade_out'||fadeOutHovered) ? 'rgba(251,191,36,1)' : 'rgba(251,191,36,0.65)'}"/>
+                   fill="{(dragging==='fade_out'||fadeOutHovered) ? 'rgba(74,222,128,1)' : 'rgba(74,222,128,0.65)'}"/>
         </svg>
       </div>
-      <!-- Left handle -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="absolute inset-y-0 z-20 flex items-center justify-center cursor-ew-resize"
-           style="left:calc({startFrac * 100}% - 7px); width:14px"
-           onmouseenter={() => startHovered = true}
-           onmouseleave={() => startHovered = false}
-           onmousedown={(e) => { e.stopPropagation(); dragging = 'start'; }}>
+      <!-- Left handle — line is visual-only, only central icon is grabbable -->
+      <div class="absolute inset-y-0 z-20 pointer-events-none flex items-center justify-center"
+           style="left:calc({startFrac * 100}% - 7px); width:14px">
         <div class="absolute inset-y-0 w-[2px] rounded-full"
              style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)'}; transition:background 0.12s"></div>
-        <div class="relative z-10 flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="relative z-10 pointer-events-auto cursor-ew-resize flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+             onmouseenter={() => startHovered = true}
+             onmouseleave={() => startHovered = false}
+             onmousedown={(e) => { e.stopPropagation(); dragging = 'start'; }}
              style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.06)'}; border:1px solid {(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.12)'}; transition:background 0.12s, border-color 0.12s">
           <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
           <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
         </div>
       </div>
-      <!-- Right handle -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="absolute inset-y-0 z-20 flex items-center justify-center cursor-ew-resize"
-           style="left:calc({endFrac * 100}% - 7px); width:14px"
-           onmouseenter={() => endHovered = true}
-           onmouseleave={() => endHovered = false}
-           onmousedown={(e) => { e.stopPropagation(); dragging = 'end'; }}>
+      <!-- Right handle — line is visual-only, only central icon is grabbable -->
+      <div class="absolute inset-y-0 z-20 pointer-events-none flex items-center justify-center"
+           style="left:calc({endFrac * 100}% - 7px); width:14px">
         <div class="absolute inset-y-0 w-[2px] rounded-full"
              style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)'}; transition:background 0.12s"></div>
-        <div class="relative z-10 flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="relative z-10 pointer-events-auto cursor-ew-resize flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+             onmouseenter={() => endHovered = true}
+             onmouseleave={() => endHovered = false}
+             onmousedown={(e) => { e.stopPropagation(); dragging = 'end'; }}
              style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.06)'}; border:1px solid {(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.12)'}; transition:background 0.12s, border-color 0.12s">
           <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
           <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
@@ -970,8 +1170,6 @@
       <div class="absolute inset-y-0 z-30 cursor-ew-resize"
            style="left:{playFrac * 100}%; transform:translateX(-50%)"
            onmousedown={(e) => { e.stopPropagation(); dragging = 'playhead'; _beginScrub(); }}>
-        <div class="absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full"
-             style="top:-5px; background:#60a5fa; box-shadow:0 0 7px #60a5fa"></div>
         <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px"
              style="background:#60a5fa"></div>
       </div>
@@ -979,7 +1177,7 @@
       </div><!-- /track -->
 
       <!-- Controls row -->
-      <div class="relative shrink-0" style="height:44px">
+      <div class="relative shrink-0" style="height:34px">
 
     <!-- Playback buttons — left -->
     <div class="absolute left-3 top-0 bottom-0 flex items-center gap-1">
@@ -1037,6 +1235,13 @@
       </button>
     </div>
 
+    <!-- Fade handle hint — centre, only when a fade handle is hovered -->
+    {#if (fadeInHovered && (options?.fade_in ?? 0) > 0) || (fadeOutHovered && (options?.fade_out ?? 0) > 0)}
+      <div class="absolute inset-0 flex items-center justify-center pointer-events-none"
+           style="font-size:11px; font-family:monospace; color:rgba(255,255,255,0.42)">
+        ← drag → length &nbsp;·&nbsp; ↕ curve &nbsp;·&nbsp; right-click reset
+      </div>
+    {/if}
     <!-- Timecodes — right, vertically centred -->
     <div class="absolute right-3 inset-y-0 flex items-center gap-4 font-mono tabular-nums" style="font-size:11px">
       <span>
@@ -1060,7 +1265,7 @@
     </div><!-- /left column -->
 
     <!-- Right column: VU meter spanning full height (expands with panel) -->
-    <div class="relative shrink-0 mr-3 mt-1.5 mb-1" style="width:48px">
+    <div class="relative shrink-0 mr-3 mt-1.5 mb-[16px]" style="width:48px">
       <canvas bind:this={vuCanvas} width="96" height={vizExpanded ? 1040 : 352}
               style="width:48px; height:100%; display:block; border-radius:4px"
       ></canvas>

@@ -1,8 +1,6 @@
 <script>
   let { options = $bindable(), errors = {} } = $props();
 
-  const quickFormats   = ['mp3', 'wav', 'flac'];
-  const extendedFormats = ['ogg', 'aac', 'opus', 'm4a', 'wma', 'aiff', 'alac', 'ac3', 'dts'];
   const bitrates = [64, 128, 192, 256, 320];
   const sampleRates = [
     { value: 44100,  label: '44.1 kHz — CD' },
@@ -10,21 +8,6 @@
     { value: 96000,  label: '96 kHz — Hi-Fi' },
     { value: 192000, label: '192 kHz — Archival' },
   ];
-  const presets = [
-    { label: 'Streaming',    fmt: 'mp3',  br: 192,  sr: 44100, norm: false },
-    { label: 'Voice only',   fmt: 'mp3',  br: 64,   sr: 44100, norm: true  },
-    { label: 'CD quality',   fmt: 'mp3',  br: 320,  sr: 44100, norm: false },
-    { label: 'Lossless',     fmt: 'flac', br: null,  sr: 44100, norm: false },
-    { label: 'Podcast',      fmt: 'mp3',  br: 128,  sr: 44100, norm: true  },
-    { label: 'Opus (small)', fmt: 'opus', br: 96,   sr: 48000, norm: false },
-  ];
-
-  function applyPreset(p) {
-    options.output_format = p.fmt;
-    if (p.br != null) options.bitrate = p.br;
-    options.sample_rate = p.sr;
-    options.normalize_loudness = p.norm;
-  }
 
   const isLossless = $derived(['flac','wav','aiff','alac'].includes(options.output_format));
 
@@ -76,6 +59,20 @@
     return [base, round, mt, color].filter(Boolean).join(' ');
   }
 
+  // Dev-only green segment helpers
+  function devSeg(i, total) {
+    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
+    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
+    const ml    = i > 0 ? '-ml-px' : '';
+    return [base, round, ml, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
+  }
+  function devSegV(i, total) {
+    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
+    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
+    const mt    = i > 0 ? '-mt-px' : '';
+    return [base, round, mt, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
+  }
+
   // 2-D grid (N columns) — corners get their own rounding
   function segGrid(i, cols, total, active = false) {
     const row     = Math.floor(i / cols);
@@ -101,56 +98,6 @@
 </script>
 
 <div class="space-y-5" role="form" aria-label="Audio conversion options">
-
-  <!-- Output format -->
-  <fieldset>
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
-      Output Format
-    </legend>
-    <div class="flex gap-2 items-center">
-      <!-- Primary 3 — connected group -->
-      <div class="flex-1 grid" style="grid-template-columns: repeat({quickFormats.length}, 1fr)">
-        {#each quickFormats as fmt, i}
-          <button
-            onclick={() => options.output_format = fmt}
-            class={seg(options.output_format === fmt, i, quickFormats.length)}
-          >{fmt.toUpperCase()}</button>
-        {/each}
-      </div>
-      <!-- Extended formats dropdown -->
-      <select
-        onchange={(e) => options.output_format = e.target.value}
-        class="px-2 py-1 rounded text-[12px] border transition-colors
-               bg-[var(--surface)] outline-none cursor-pointer
-               {extendedFormats.includes(options.output_format)
-                 ? 'border-[var(--accent)] text-[var(--accent)]'
-                 : 'border-[var(--border)] text-[var(--text-secondary)]'}"
-      >
-        <option value="" disabled selected={!extendedFormats.includes(options.output_format)}>More…</option>
-        {#each extendedFormats as fmt}
-          <option value={fmt} selected={options.output_format === fmt}>{fmt.toUpperCase()}</option>
-        {/each}
-      </select>
-    </div>
-    {#if isLossless}
-      <p class="text-[11px] text-[var(--text-secondary)] mt-1.5">Lossless — bitrate not applicable.</p>
-    {/if}
-  </fieldset>
-
-  <!-- Quick presets — 3-column connected grid -->
-  <fieldset>
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
-      Quick Presets
-    </legend>
-    <div class="grid grid-cols-3">
-      {#each presets as p, i}
-        <button
-          onclick={() => applyPreset(p)}
-          class={segGrid(i, 3, presets.length)}
-        >{p.label}</button>
-      {/each}
-    </div>
-  </fieldset>
 
   <!-- Bitrate — horizontal connected -->
   {#if !isLossless}
@@ -221,6 +168,190 @@
       <p class="text-[11px] text-red-500 mt-1">{errors.audio_trim}</p>
     {/if}
   </fieldset>
+
+  <!-- ── Format-specific controls (dev) ──────────────────────────────────── -->
+  {#if import.meta.env.DEV}
+    <div class="flex items-center gap-2">
+      <div class="flex-1 h-px bg-green-900/50"></div>
+      <span class="text-[9px] text-green-500/70 uppercase tracking-widest font-mono shrink-0">format-specific · dev</span>
+      <div class="flex-1 h-px bg-green-900/50"></div>
+    </div>
+
+    {#if options.output_format === 'mp3'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bitrate Mode</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['CBR','VBR'] as m, i}<button class={devSeg(i,2)}>{m}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">VBR Quality</legend>
+        <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+          {#each ['V0','V2','V4','V6','V9'] as v, i}<button class={devSeg(i,5)}>{v}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">V0 best · V9 smallest</p>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['Mono','Stereo','Joint Stereo'] as ch, i}<button class={devSeg(i,3)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'wav' || options.output_format === 'aiff'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bit Depth</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['16-bit','24-bit','32-bit float'] as d, i}<button class={devSeg(i,3)}>{d}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['Mono','Stereo'] as ch, i}<button class={devSeg(i,2)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'flac'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Compression Level</legend>
+        <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+          {#each [0,2,5,6,8] as l, i}<button class={devSeg(i,5)}>{l}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">0 fastest · 8 smallest · no quality difference</p>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bit Depth</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['16-bit','24-bit'] as d, i}<button class={devSeg(i,2)}>{d}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['Mono','Stereo','Multi'] as ch, i}<button class={devSeg(i,3)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'ogg'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bitrate Mode</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['VBR','CBR','ABR'] as m, i}<button class={devSeg(i,3)}>{m}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">VBR Quality</legend>
+        <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+          {#each [-1,1,3,6,10] as q, i}<button class={devSeg(i,5)}>{q}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">−1 lowest · 10 highest · 3–6 typical</p>
+      </fieldset>
+
+    {:else if options.output_format === 'aac'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">AAC Profile</legend>
+        <div class="flex flex-col">
+          {#each ['AAC-LC','HE-AAC','HE-AACv2'] as p, i}<button class={devSegV(i,3)}>{p}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">HE-AAC efficient at ≤128 kbps · HE-AACv2 adds Parametric Stereo</p>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['Mono','Stereo'] as ch, i}<button class={devSeg(i,2)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'opus'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Application Mode</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['Music','Voice','Low-Delay'] as m, i}<button class={devSeg(i,3)}>{m}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['Mono','Stereo'] as ch, i}<button class={devSeg(i,2)}>{ch}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">Always 48 kHz — Opus resamples internally</p>
+      </fieldset>
+
+    {:else if options.output_format === 'm4a'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Sub-Codec</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['AAC (lossy)','ALAC (lossless)'] as c, i}<button class={devSeg(i,2)}>{c}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bit Depth (ALAC)</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['16-bit','24-bit'] as d, i}<button class={devSeg(i,2)}>{d}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'wma'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">WMA Mode</legend>
+        <div class="flex flex-col">
+          {#each ['Standard','Pro (multi-channel)','Lossless'] as m, i}<button class={devSegV(i,3)}>{m}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'alac'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bit Depth</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['16-bit','24-bit','32-bit'] as d, i}<button class={devSeg(i,3)}>{d}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['Mono','Stereo','Multi'] as ch, i}<button class={devSeg(i,3)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'ac3'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['Mono','Stereo','5.1'] as ch, i}<button class={devSeg(i,3)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bitrate</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['192 kbps','384 kbps','640 kbps'] as br, i}<button class={devSeg(i,3)}>{br}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">448 kbps typical for 5.1 broadcast · 48 kHz required</p>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Dialogue Normalization</legend>
+        <div class="flex items-center gap-3">
+          <input type="range" min="-31" max="-1" value="-31" disabled class="flex-1 accent-green-600 opacity-60" />
+          <span class="text-[11px] text-green-400 font-mono shrink-0">−31 dBFS</span>
+        </div>
+      </fieldset>
+
+    {:else if options.output_format === 'dts'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Channels</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['Stereo','5.1'] as ch, i}<button class={devSeg(i,2)}>{ch}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bitrate</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each ['754 kbps','1510 kbps'] as br, i}<button class={devSeg(i,2)}>{br}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">FFmpeg encodes DTS core only — usually passthrough</p>
+      </fieldset>
+    {/if}
+  {/if}
 
   <!-- Processing -->
   <fieldset

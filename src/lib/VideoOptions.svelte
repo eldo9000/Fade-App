@@ -1,7 +1,6 @@
 <script>
   let { options = $bindable(), errors = {} } = $props();
 
-  const formats = ['mp4','mkv','webm','avi','mov'];
   const codecs  = [
     { value: 'copy',  label: 'Copy' },
     { value: 'h264',  label: 'H.264' },
@@ -61,6 +60,20 @@
     return [base, round, overlap, color].filter(Boolean).join(' ');
   }
 
+  // Dev-only green segment helpers
+  function devSeg(i, total) {
+    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
+    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
+    const ml    = i > 0 ? '-ml-px' : '';
+    return [base, round, ml, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
+  }
+  function devSegV(i, total) {
+    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
+    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
+    const mt    = i > 0 ? '-mt-px' : '';
+    return [base, round, mt, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
+  }
+
   // Vertical connected row (for Audio Track and similar)
   function segV(active, i, total) {
     const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
@@ -74,21 +87,6 @@
 </script>
 
 <div class="space-y-5" role="form" aria-label="Video conversion options">
-
-  <!-- ── Output format (segmented) ─────────────────────────────────────── -->
-  <fieldset data-tooltip="Choose the output container format">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
-      Output Format
-    </legend>
-    <div class="grid" style="grid-template-columns: repeat({formats.length}, 1fr)">
-      {#each formats as fmt, i}
-        <button onclick={() => options.output_format = fmt}
-                data-tooltip="Convert to {fmt.toUpperCase()}"
-                class={seg(options.output_format === fmt, i, formats.length)}
-        >{fmt.toUpperCase()}</button>
-      {/each}
-    </div>
-  </fieldset>
 
   <!-- ── Codec (button group) ─────────────────────────────────────────── -->
   <fieldset data-tooltip="Video encoding codec — H.264 for compatibility, H.265/AV1 for smaller files">
@@ -194,6 +192,141 @@
       <p class="text-[11px] text-red-500 mt-1">{errors.video_trim}</p>
     {/if}
   </fieldset>
+
+  <!-- ── Format-specific controls (dev) ──────────────────────────────────── -->
+  {#if import.meta.env.DEV}
+    <div class="flex items-center gap-2">
+      <div class="flex-1 h-px bg-green-900/50"></div>
+      <span class="text-[9px] text-green-500/70 uppercase tracking-widest font-mono shrink-0">format-specific · dev</span>
+      <div class="flex-1 h-px bg-green-900/50"></div>
+    </div>
+
+    {#if ['mp4','mov','mkv','webm'].includes(options.output_format)}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Quality / CRF</legend>
+        <div class="flex items-center gap-3">
+          <input type="range" min="0" max="51" value="23" disabled class="flex-1 accent-green-600 opacity-60" />
+          <span class="text-[11px] text-green-400 font-mono shrink-0">23</span>
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">0 lossless · 18–28 typical · 51 worst · lower = better</p>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Encode Preset</legend>
+        <div class="flex flex-col">
+          {#each ['ultrafast','fast','medium','slow','veryslow'] as p, i}
+            <button class={devSegV(i,5)}>{p}</button>
+          {/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">Slower = smaller file at same quality</p>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'mov'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">ProRes Profile</legend>
+        <div class="flex flex-col">
+          {#each ['Proxy (45 Mbps)','LT (102 Mbps)','422 (147 Mbps)','422 HQ (220 Mbps)','4444','4444 XQ'] as p, i}
+            <button class={devSegV(i,6)}>{p}</button>
+          {/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'webm'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Bitrate Mode</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['CRF','CBR','Constrained VBR'] as m, i}<button class={devSeg(i,3)}>{m}</button>{/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'mkv'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Subtitle Track</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['None','Copy','SRT / ASS'] as s, i}<button class={devSeg(i,3)}>{s}</button>{/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'avi'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Video Bitrate</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each ['1 Mbps','4 Mbps','8 Mbps','20 Mbps'] as b, i}<button class={devSeg(i,4)}>{b}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">Legacy format — no H.265 or modern codec support</p>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'gif'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Output Width (px)</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each ['320','480','640','original'] as w, i}<button class={devSeg(i,4)}>{w}</button>{/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">Height auto-scaled to preserve aspect ratio</p>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Frame Rate</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each ['5','10','15','original'] as r, i}<button class={devSeg(i,4)}>{r} fps</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Loop</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['Infinite','Once','No loop'] as l, i}<button class={devSeg(i,3)}>{l}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Palette Size</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each [32,64,128,256] as p, i}<button class={devSeg(i,4)}>{p}</button>{/each}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Dither</legend>
+        <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each ['None','Bayer','Floyd-Steinberg'] as d, i}<button class={devSeg(i,3)}>{d}</button>{/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'prores'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">ProRes Profile</legend>
+        <div class="flex flex-col">
+          {#each ['Proxy (45 Mbps)','LT (102 Mbps)','422 (147 Mbps)','422 HQ (220 Mbps)','4444','4444 XQ'] as p, i}
+            <button class={devSegV(i,6)}>{p}</button>
+          {/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">Editing / intermediate only — not for distribution</p>
+      </fieldset>
+    {/if}
+
+    {#if options.output_format === 'dnxhd'}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">DNxHD Profile</legend>
+        <div class="flex flex-col">
+          {#each ['DNxHD 36','DNxHD 115','DNxHD 145','DNxHD 220','DNxHR LB','DNxHR SQ','DNxHR HQ','DNxHR HQX','DNxHR 444'] as p, i}
+            <button class={devSegV(i,9)}>{p}</button>
+          {/each}
+        </div>
+        <p class="text-[10px] text-green-500/60 mt-1">DNxHD for ≤1080p · DNxHR for 2K/4K+</p>
+      </fieldset>
+    {/if}
+
+    {#if !['gif'].includes(options.output_format)}
+      <fieldset>
+        <legend class="text-[12px] font-medium text-green-400 uppercase tracking-wide mb-2">Frame Rate</legend>
+        <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+          {#each ['original','24','25','30','60'] as r, i}<button class={devSeg(i,5)}>{r === 'original' ? 'Orig' : r + ' fps'}</button>{/each}
+        </div>
+      </fieldset>
+    {/if}
+  {/if}
 
   <!-- ── Audio bitrate (segmented) ─────────────────────────────────────── -->
   {#if !options.remove_audio}

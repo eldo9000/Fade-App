@@ -53,7 +53,21 @@
   let tlFilmstripReady    = $state(false);
   let _generation         = 0;
 
+  // ── Pre-load cache ─────────────────────────────────────────────────────────
+  // Loads waveform + filmstrip for queue items in the background, one at a time.
+  // Priority slot: the existing pipeline serves items the user clicks immediately.
+  let preloadCache = new Map(); // id → { waveform?, filmstripFrames? }
+  let _bgBusy = false;
+  let _unlistenBgFilmstrip = null;
+  let cachedWaveformForTimeline = $state(null);
+  let cachedFilmstripForTimeline = $state(null);
+
   function onPreviewLoaded() { previewLoading = false; }
+  function onVideoMetaLoaded() {
+    previewLoading = false;
+    // Seek to first real frame — prevents "black preview" for videos that open on black
+    if (videoEl) videoEl.currentTime = 0.001;
+  }
 
   /** Yield to browser for one frame — returns a Promise that resolves after paint */
   function frameYield(ms = 50) { return new Promise(r => setTimeout(r, ms)); }
@@ -110,8 +124,10 @@
     tlSpectrogramReady = true;
 
     // ── Step 7: unlock filmstrip (ffmpeg, background, lowest priority) ──
-    // Yield long enough that waveform has finished and the user can interact.
-    await frameYield(800);
+    // Skip the delay if filmstrip is already cached (instant display).
+    if (!cachedFilmstripForTimeline) {
+      await frameYield(800);
+    }
     if (stale()) return;
     tlFilmstripReady = true;
   }
@@ -131,14 +147,21 @@
   // ── Settings ───────────────────────────────────────────────────────────────
   const SETTINGS_KEY = 'fade-settings';
   function _loadSettings() {
-    try { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false,
+    try { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false, previewHighQuality: false, autoCompact: true,
                    ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') }; }
-    catch { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false }; }
+    catch { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false, previewHighQuality: false, autoCompact: true }; }
   }
   let settings     = $state(_loadSettings());
   let settingsOpen = $state(false);
 
   $effect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); });
+
+  // Auto-collapse queue once per session when it grows large enough to scroll
+  let _autoCompactDone = false;
+  $effect(() => {
+    if (!settings.autoCompact || _autoCompactDone || queueCompact) return;
+    if (queue.length > 12) { queueCompact = true; _autoCompactDone = true; }
+  });
 
   // Compression diff preview
   let diffClipPath   = $state(null);
@@ -409,6 +432,8 @@
     normalize_loudness: false,
     trim_start: null,
     trim_end: null,
+    fade_in: null,
+    fade_out: null,
     dsp_highpass_freq: null,
     dsp_lowpass_freq: null,
     dsp_stereo_width: null,
@@ -456,6 +481,18 @@
       }
     } catch { /* non-fatal — folder may not exist */ }
 
+    // Background filmstrip preload accumulator — listens for '-bg' suffixed events
+    _unlistenBgFilmstrip = await listen('filmstrip-frame', (ev) => {
+      const { id, index, data } = ev.payload;
+      if (!id.endsWith('-bg')) return;
+      const realId = id.slice(0, -3);
+      const cached = preloadCache.get(realId);
+      if (!cached) return;
+      if (!cached.filmstripFrames) cached.filmstripFrames = new Array(20).fill(null);
+      cached.filmstripFrames[index] = data;
+      preloadCache.set(realId, cached);
+    });
+
     unlistenProgress = await listen('job-progress', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
       if (item) {
@@ -502,11 +539,55 @@
   });
 
   onDestroy(() => {
+    _unlistenBgFilmstrip?.();
     unlistenProgress?.();
     unlistenDone?.();
     unlistenError?.();
     unlistenCancelled?.();
   });
+
+  // ── Background preloader ───────────────────────────────────────────────────
+  // Processes queue items one at a time: waveform first (sequential), then fires
+  // filmstrip in the background (events accumulate via _unlistenBgFilmstrip).
+  // Priority slot: existing pipeline handles whichever item the user clicks.
+  async function _bgPreloadNext() {
+    if (_bgBusy) return;
+
+    // Find the first uncached media item that isn't currently selected
+    const nextItem = queue.find(item =>
+      item.id !== selectedId &&
+      ['video', 'audio'].includes(item.mediaType) &&
+      !preloadCache.has(item.id)
+    );
+    if (!nextItem) return;
+
+    _bgBusy = true;
+    const cached = {};
+    preloadCache.set(nextItem.id, cached); // mark as in-progress
+
+    // Waveform (blocking — one at a time)
+    try {
+      const data = await invoke('get_waveform', { path: nextItem.path, draft: !settings.previewHighQuality });
+      cached.waveform = data;
+      preloadCache.set(nextItem.id, cached);
+    } catch { /* non-fatal */ }
+
+    // Filmstrip (video only) — fire-and-forget; frames arrive via bg listener
+    if (nextItem.mediaType === 'video') {
+      const dur = nextItem.info?.duration_secs ?? null;
+      if (dur) {
+        cached.filmstripFrames = new Array(20).fill(null);
+        preloadCache.set(nextItem.id, cached);
+        invoke('get_filmstrip', {
+          path: nextItem.path, id: nextItem.id + '-bg',
+          count: 20, duration: dur, draft: !settings.previewHighQuality
+        }).catch(() => {});
+      }
+    }
+
+    _bgBusy = false;
+    setTimeout(_bgPreloadNext, 100); // chain to next item
+  }
 
   // ── Tool detection ─────────────────────────────────────────────────────────
 
@@ -570,6 +651,8 @@
         }).catch(() => {});
       }
     }
+    // Start background preloading for newly added items (small delay so queue renders first)
+    setTimeout(_bgPreloadNext, 500);
   }
 
   function removeItem(id) {
@@ -677,7 +760,6 @@
   // ── Drag over window ───────────────────────────────────────────────────────
 
   let outputSuffix = $state('converted');
-  let outputPickerOpen = $state(false);
   let outputDestMode = $state('source'); // 'source' | 'custom'
   let customOutputDir = $state(null);
   let folderInput = $state(null);
@@ -734,14 +816,29 @@
     else if (cat === 'archive')  archiveOptions.output_format  = globalOutputFormat;
   });
 
+  // Built-in presets — always available, never persisted to backend
+  const BUILTIN_PRESETS = {
+    audio: [
+      { id: '__b_streaming',   name: 'Streaming',    media_type: 'audio', output_format: 'mp3',  bitrate: 192,  sample_rate: 44100, normalize_loudness: false },
+      { id: '__b_voice',       name: 'Voice only',   media_type: 'audio', output_format: 'mp3',  bitrate: 64,   sample_rate: 44100, normalize_loudness: true  },
+      { id: '__b_cd',          name: 'CD quality',   media_type: 'audio', output_format: 'mp3',  bitrate: 320,  sample_rate: 44100, normalize_loudness: false },
+      { id: '__b_lossless',    name: 'Lossless',     media_type: 'audio', output_format: 'flac', bitrate: null, sample_rate: 44100, normalize_loudness: false },
+      { id: '__b_podcast',     name: 'Podcast',      media_type: 'audio', output_format: 'mp3',  bitrate: 128,  sample_rate: 44100, normalize_loudness: true  },
+      { id: '__b_opus',        name: 'Opus (small)', media_type: 'audio', output_format: 'opus', bitrate: 96,   sample_rate: 48000, normalize_loudness: false },
+    ],
+    video: [],
+    image: [],
+  };
+  const ALL_BUILTINS = Object.values(BUILTIN_PRESETS).flat();
+
   async function loadPresets() {
     try { presets = await invoke('list_presets'); } catch { /* no-op */ }
   }
 
   function applyPreset(id) {
-    const p = presets.find(p => p.id === id);
-    if (!p) return;
     _hpSuppressReset = true;
+    const p = ALL_BUILTINS.find(b => b.id === id) ?? presets.find(p => p.id === id);
+    if (!p) return;
     if (p.media_type === 'image') {
       imageOptions.output_format = p.output_format;
       if (p.quality != null) imageOptions.quality = p.quality;
@@ -754,7 +851,10 @@
       audioOptions.output_format = p.output_format;
       if (p.bitrate != null) audioOptions.bitrate = p.bitrate;
       if (p.sample_rate != null) audioOptions.sample_rate = p.sample_rate;
+      if (p.normalize_loudness != null) audioOptions.normalize_loudness = p.normalize_loudness;
     }
+    // Also sync globalOutputFormat so the header button reflects the preset's format
+    globalOutputFormat = p.output_format;
     queueMicrotask(() => { _hpSuppressReset = false; });
   }
 
@@ -932,6 +1032,7 @@
   // into ONE DOM flush — guaranteed clear before any file I/O begins.
   // Then the async pipeline runs each loading stage in sequence.
   function handleSelect(id) {
+    settingsOpen = false;
     const gen = ++_generation;  // cancel any in-flight pipeline
     const newItem = id ? queue.find(q => q.id === id) : null;
     const isMedia = !!(newItem && ['video', 'audio', 'image'].includes(newItem.mediaType));
@@ -947,13 +1048,20 @@
     videoEl?.load();   // flash existing video to black immediately
     selectedId         = id ?? null;
 
-    // Apply viz default for this media type
+    // Auto-expand viz based on setting — only ever set to true, never force-collapse.
+    // User's manual expand/collapse state is preserved across file switches.
     const vd = settings.vizDefault;
-    vizExpanded = newItem?.mediaType === 'video'
+    const shouldExpand = newItem?.mediaType === 'video'
       ? vd === 'av'
       : newItem?.mediaType === 'audio'
         ? vd === 'audio' || vd === 'av'
         : false;
+    if (shouldExpand) vizExpanded = true;
+
+    // Serve pre-loaded data to Timeline immediately (avoids re-invoking ffmpeg)
+    const _cached = preloadCache.get(id ?? '');
+    cachedWaveformForTimeline = _cached?.waveform ?? null;
+    cachedFilmstripForTimeline = _cached?.filmstripFrames ?? null;
 
     // ── Async pipeline: stages run sequentially after browser paints ──
     runLoadPipeline(gen, newItem);
@@ -984,8 +1092,8 @@
 
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
-    <!-- ── LEFT: File queue (312px) ───────────────────────────────────────── -->
-    <aside class="w-[312px] shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
+    <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
+    <aside class="{queueCompact ? 'w-[234px]' : 'w-[390px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights -->
@@ -1039,80 +1147,6 @@
         </div>
       </div>
 
-      <!-- Settings panel — takes over sidebar body -->
-      {#if settingsOpen}
-        <div class="flex-1 min-h-0 overflow-y-auto flex flex-col" style="background:var(--surface-raised)">
-
-          <!-- Section: Updates -->
-          <div class="px-4 pt-4 pb-3 border-b border-[var(--border)]">
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] mb-3">Updates</p>
-            <div class="flex items-center justify-between gap-3">
-              <div class="flex flex-col gap-2 flex-1">
-                <!-- Notify + Auto on one row -->
-                <div class="flex items-center gap-3">
-                  <label class="flex items-center gap-2 cursor-pointer flex-1">
-                    <input type="checkbox" bind:checked={settings.notifyUpdates}
-                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
-                    <span class="text-[12px] text-[var(--text-primary)]">Notify of updates</span>
-                  </label>
-                  <label class="flex items-center gap-2 cursor-pointer flex-1">
-                    <input type="checkbox" bind:checked={settings.autoUpdate}
-                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
-                    <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
-                  </label>
-                  <button class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
-                                 text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                                 hover:border-[var(--accent)] transition-colors shrink-0">
-                    Update Now
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Section: UI -->
-          <div class="px-4 pt-4 pb-3 border-b border-[var(--border)] flex flex-col gap-3">
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">UI</p>
-
-            <!-- Visualizer default -->
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-[12px] text-[var(--text-primary)]">Visualizer expanded</span>
-              <div class="flex rounded overflow-hidden border border-[var(--border)]">
-                {#each [['no','Off'],['audio','Audio'],['av','A+V']] as [val, label]}
-                  <button
-                    onclick={() => settings.vizDefault = val}
-                    class="px-2.5 py-1 text-[11px] transition-colors
-                           {settings.vizDefault === val
-                             ? 'bg-[var(--accent)] text-white'
-                             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-                  >{label}</button>
-                {/each}
-              </div>
-            </div>
-
-            <!-- Limiter auto -->
-            <label class="flex items-center justify-between gap-2 cursor-pointer">
-              <span class="text-[12px] text-[var(--text-primary)]">Auto-enable limiter with DSP</span>
-              <input type="checkbox" bind:checked={settings.limiterAuto}
-                     class="w-3.5 h-3.5 accent-[var(--accent)]" />
-            </label>
-          </div>
-
-          <!-- Section: Data -->
-          <div class="px-4 pt-4 pb-3 flex flex-col gap-3">
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Data</p>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-[12px] text-[var(--text-secondary)]">Waveform / thumbnail cache</span>
-              <button class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
-                             text-[var(--text-secondary)] opacity-40 cursor-not-allowed"
-                      disabled title="No cache yet">Clear Cache</button>
-            </div>
-          </div>
-
-        </div>
-      {/if}
-
-      {#if !settingsOpen}
       <!-- Tool warnings -->
       {#if toolWarnings.ffmpeg && !dismissedWarnings.has('ffmpeg')}
         <div class="flex items-center justify-between gap-2 px-3 py-1.5
@@ -1151,8 +1185,6 @@
         aria-hidden="true"
         webkitdirectory
       />
-
-      {/if}<!-- /settingsOpen guard -->
 
       <!-- ── Bottom panel: output + convert + settings ──────────────────────── -->
       <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
@@ -1263,20 +1295,102 @@
           </div>
         {/if}
 
-        <!-- Settings button -->
-        <button
-          onclick={() => settingsOpen = true}
-          class="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] border border-[var(--border)]
-                 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
-                 transition-colors w-full {settingsOpen ? 'border-[var(--accent)] text-[var(--text-primary)]' : ''}"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-          Settings
-        </button>
+        <!-- Settings button + floating panel -->
+        <div class="relative">
+          {#if settingsOpen}
+            <!-- Floating settings panel — positioned above settings button, flush to sidebar edges -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              style="position:absolute; bottom:100%; left:-0.75rem; right:-0.75rem;
+                     background:color-mix(in srgb, var(--surface-raised) 96%, #000 4%);
+                     border:1px solid var(--border); border-bottom:none;
+                     border-radius:10px 10px 0 0;
+                     box-shadow:0 -10px 36px rgba(0,0,0,0.6);
+                     overflow-y:auto; z-index:50"
+              onmousedown={(e) => e.stopPropagation()}
+            >
+              <!-- Section: Updates -->
+              <div class="px-4 pt-4 pb-3 border-b border-[var(--border)]">
+                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] mb-3">Updates</p>
+                <div class="flex items-center gap-3">
+                  <label class="flex items-center gap-2 cursor-pointer flex-1">
+                    <input type="checkbox" bind:checked={settings.notifyUpdates}
+                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                    <span class="text-[12px] text-[var(--text-primary)]">Notify</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer flex-1">
+                    <input type="checkbox" bind:checked={settings.autoUpdate}
+                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                    <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
+                  </label>
+                  <button class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                                 text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                                 hover:border-[var(--accent)] transition-colors shrink-0">
+                    Update Now
+                  </button>
+                </div>
+              </div>
+
+              <!-- Section: UI -->
+              <div class="px-4 pt-3 pb-3 border-b border-[var(--border)] flex flex-col gap-2.5">
+                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">UI</p>
+                <!-- Visualizer default -->
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-[12px] text-[var(--text-primary)]">Visualizer</span>
+                  <div class="flex rounded overflow-hidden border border-[var(--border)]">
+                    {#each [['no','Off'],['audio','Audio'],['av','A+V']] as [val, label]}
+                      <button
+                        onclick={() => settings.vizDefault = val}
+                        class="px-2 py-1 text-[11px] transition-colors
+                               {settings.vizDefault === val
+                                 ? 'bg-[var(--accent)] text-white'
+                                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+                      >{label}</button>
+                    {/each}
+                  </div>
+                </div>
+                <!-- Limiter auto -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Auto-enable limiter</span>
+                  <input type="checkbox" bind:checked={settings.limiterAuto}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
+                <!-- Auto-collapse queue -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Auto-collapse large queue</span>
+                  <input type="checkbox" bind:checked={settings.autoCompact}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
+              </div>
+
+              <!-- Section: Data -->
+              <div class="px-4 pt-3 pb-4 flex items-center justify-between gap-2">
+                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Data</p>
+                <button
+                  onclick={() => { preloadCache.clear(); cachedWaveformForTimeline = null; cachedFilmstripForTimeline = null; }}
+                  class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                         text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
+                         transition-colors">
+                  Clear Cache
+                </button>
+              </div>
+            </div>
+          {/if}
+
+          <button
+            onclick={() => settingsOpen = !settingsOpen}
+            class="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] border border-[var(--border)]
+                   text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
+                   transition-colors w-full {settingsOpen ? 'border-[var(--accent)] text-[var(--text-primary)]' : ''}"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            Settings
+          </button>
+        </div>
       </div>
 
     </aside>
@@ -1292,6 +1406,20 @@
 
       <!-- Preview area -->
       <div class="flex-1 min-h-0 bg-[#1a1a1a] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
+
+        <!-- HQ toggle — top-left corner, visible for video/audio -->
+        {#if selectedItem && ['video', 'audio'].includes(selectedItem.mediaType)}
+          <button
+            onclick={() => settings.previewHighQuality = !settings.previewHighQuality}
+            title={settings.previewHighQuality ? 'High quality mode on — click to use draft' : 'Draft quality — click for high quality'}
+            class="absolute top-2 left-2 z-20 px-2 py-0.5 rounded text-[11px] font-mono
+                   border backdrop-blur-sm transition-all select-none
+                   {settings.previewHighQuality
+                     ? 'bg-[var(--accent)]/15 border-[var(--accent)]/50 text-[var(--accent)]'
+                     : 'bg-black/50 border-white/10 text-white/25 hover:text-white/45 hover:border-white/20'}"
+          >HQ</button>
+        {/if}
+
         <!-- ── VIDEO: lives outside {#key} so videoEl is NEVER null while a
                video is selected — prevents Timeline falling back to new Audio() ── -->
         {#if selectedItem?.mediaType === 'video'}
@@ -1299,8 +1427,8 @@
           <video
             bind:this={videoEl}
             src={liveSrc ?? undefined}
-            preload="metadata"
-            onloadedmetadata={onPreviewLoaded}
+            preload="auto"
+            onloadedmetadata={onVideoMetaLoaded}
             class="max-w-full max-h-full object-contain {(!liveSrc || diffClipPath) ? 'hidden' : ''}"
           ></video>
             {#if diffClipPath}
@@ -1513,15 +1641,66 @@
               </p>
             </div>
           {:else if !selectedItem}
-            <div class="text-center select-none">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                   stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
-                   class="text-white/10 mx-auto mb-3">
-                <rect x="2" y="2" width="20" height="20" rx="2"/>
-                <circle cx="8" cy="8" r="2"/>
-                <polyline points="22,14 16,8 5,19"/>
+            <div class="w-full h-full overflow-y-auto flex flex-col items-center px-10 py-10 select-none"
+                 style="scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.08) transparent">
+              <!-- Drop prompt -->
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+                   class="text-white/12 mb-3 shrink-0">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
               </svg>
-              <p class="text-white/20 text-[12px]">No file selected</p>
+              <p class="text-white/25 text-[13px] font-medium mb-1">Drop files or click Browse</p>
+              <p class="text-white/12 text-[11px] mb-8">Select a file in the queue to preview and configure</p>
+
+              <!-- Input formats -->
+              <div class="w-full max-w-xl mb-8">
+                <p class="text-[9px] font-semibold uppercase tracking-widest mb-3"
+                   style="color:rgba(255,255,255,0.2)">Supported Input Formats</p>
+                <div class="flex flex-col gap-2.5">
+                  {#each [
+                    { label: 'Image',           exts: 'jpg · jpeg · png · gif · webp · avif · bmp · svg · ico' },
+                    { label: 'RAW / Pro Image', exts: 'heic · heif · tiff · psd · raw · cr2 · cr3 · nef · arw · dng · orf · rw2 · exr · hdr · dds · xcf' },
+                    { label: 'Video',           exts: 'mp4 · m4v · mkv · webm · mov · avi · flv · wmv · mpg · mpeg · ogv · ts · 3gp · divx · rmvb · asf' },
+                    { label: 'Audio',           exts: 'mp3 · aac · ogg · wav · flac · m4a · opus · wma · aiff · alac · ac3 · dts' },
+                    { label: 'Document',        exts: 'pdf' },
+                    { label: '3D Model',        exts: 'obj · gltf · glb · stl · fbx · ply · 3ds' },
+                    { label: 'Archive',         exts: 'zip · tar · gz · 7z' },
+                    { label: 'Data',            exts: 'json · csv · tsv · xml · yaml' },
+                  ] as g}
+                    <div class="flex gap-3 items-baseline">
+                      <span class="shrink-0 text-[10px] font-semibold w-28 text-right"
+                            style="color:rgba(255,255,255,0.22)">{g.label}</span>
+                      <span class="text-[10px] font-mono leading-relaxed"
+                            style="color:rgba(255,255,255,0.35)">{g.exts}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+
+              <!-- Output formats -->
+              <div class="w-full max-w-xl">
+                <p class="text-[9px] font-semibold uppercase tracking-widest mb-3"
+                   style="color:rgba(255,255,255,0.2)">Output Formats</p>
+                <div class="flex flex-col gap-2.5">
+                  {#each [
+                    { label: 'Audio',    exts: 'mp3 · wav · flac · ogg · aac · opus · m4a · wma · aiff · alac · ac3 · dts' },
+                    { label: 'Video',    exts: 'mp4 · mov · webm · mkv · avi · gif' },
+                    { label: 'Image',    exts: 'jpeg · png · webp · tiff · bmp · avif' },
+                    { label: 'Document', exts: 'html · pdf · txt · md' },
+                    { label: 'Data',     exts: 'json · csv · tsv · xml · yaml' },
+                    { label: 'Archive',  exts: 'zip · tar · gz · 7z' },
+                  ] as g}
+                    <div class="flex gap-3 items-baseline">
+                      <span class="shrink-0 text-[10px] font-semibold w-28 text-right"
+                            style="color:rgba(255,255,255,0.22)">{g.label}</span>
+                      <span class="text-[10px] font-mono leading-relaxed"
+                            style="color:rgba(255,255,255,0.35)">{g.exts}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
             </div>
           {/if}
           <!-- Loading text — shown while preview is clearing/loading -->
@@ -1542,14 +1721,9 @@
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={!settings.previewHighQuality} />
       {:else if selectedItem?.mediaType === 'audio'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} />
-      {:else}
-        <div class="h-28 shrink-0 border-t border-[var(--border)] flex items-center justify-center"
-             style="background:#0a0a0a">
-          <span class="text-[11px]" style="color:#333">—</span>
-        </div>
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={!settings.previewHighQuality} />
       {/if}
 
       <!-- Tooltip bar — crossfade: 50ms in, 150ms out, overlapping spans -->
@@ -1580,20 +1754,22 @@
       <!-- ── Panel header: Output picker + Presets ────────────────────────────── -->
       <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0 relative">
 
-        <!-- Output format button — toggles picker in body -->
+        <!-- Output format button — shows selected format or "Output"; click to reset/pick -->
         <button
-          onclick={() => { outputPickerOpen = !outputPickerOpen; }}
-          class="px-2 py-1 rounded text-[12px] border transition-colors flex items-center gap-1.5
-                 {globalOutputFormat && !outputPickerOpen
-                   ? 'border-[var(--accent)] text-[var(--accent)]'
+          onclick={() => { globalOutputFormat = null; }}
+          class="px-2.5 py-1 rounded text-[12px] font-medium border transition-colors flex items-center gap-1.5
+                 {globalOutputFormat
+                   ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
         >
-          {globalOutputFormat && !outputPickerOpen
-            ? FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)?.label?.toUpperCase() ?? globalOutputFormat.toUpperCase()
-            : 'Output'}
+          {#if globalOutputFormat}
+            {FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)?.label?.toUpperCase() ?? globalOutputFormat.toUpperCase()}
+          {:else}
+            Output
+          {/if}
           <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-               class="shrink-0 transition-transform {outputPickerOpen || !globalOutputFormat ? 'rotate-180' : ''}">
+               class="shrink-0 {globalOutputFormat ? 'rotate-180' : ''}">
             <path d="M1 1l3 3 3-3"/>
           </svg>
         </button>
@@ -1634,6 +1810,9 @@
                        {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
               >
                 <option value="">Presets</option>
+                {#each (BUILTIN_PRESETS[activeOutputCategory] ?? []) as p (p.id)}
+                  <option value={p.id}>{p.name}</option>
+                {/each}
                 {#each presets.filter(p => p.media_type === activeOutputCategory) as p (p.id)}
                   <option value={p.id}>{p.name}</option>
                 {/each}
@@ -1647,7 +1826,7 @@
               >+</button>
               <button
                 onclick={() => deletePreset(headerPresetId)}
-                disabled={!headerPresetId}
+                disabled={!headerPresetId || headerPresetId.startsWith('__b_')}
                 title="Delete this preset"
                 class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
                        text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
@@ -1660,7 +1839,7 @@
 
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
-        {#if !globalOutputFormat || outputPickerOpen}
+        {#if !globalOutputFormat}
           <!-- ── Format picker: sectioned list with columns ─────────────────── -->
           <div class="space-y-4">
             {#each FORMAT_GROUPS as group}
@@ -1675,14 +1854,12 @@
                   {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
                     {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
                     <button
-                      onclick={() => { if (!incompatible) { globalOutputFormat = f.id; outputPickerOpen = false; } }}
+                      onclick={() => { if (!incompatible) { globalOutputFormat = f.id; } }}
                       class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
                              {incompatible ? 'opacity-25 cursor-default' : ''}
-                             {globalOutputFormat === f.id
-                               ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-                               : f.todo
-                                 ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
-                                 : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                             {f.todo
+                               ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                               : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
                     >{f.label ?? f.id}</button>
                   {/each}
                 </div>

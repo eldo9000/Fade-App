@@ -1,4 +1,6 @@
 <script>
+  import { convertFileSrc } from '@tauri-apps/api/core';
+
   let { queue, selectedId, onselect, onremove, oncancel, compatibleTypes = [], compact = false } = $props();
 
   function statusColor(status) {
@@ -17,7 +19,7 @@
       case 'error':      return '✕';
       case 'cancelled':  return '⊘';
       case 'converting': return '↻';
-      default:           return '·';
+      default:           return '';
     }
   }
 
@@ -28,27 +30,6 @@
     if (next.has(id)) next.delete(id);
     else next.add(id);
     expandedErrors = next;
-  }
-
-  function fileStats(item) {
-    const info = item.info;
-    const mt = item.mediaType;
-    if (!info) return null;
-    if (mt === 'video') {
-      const res  = info.width && info.height ? `${info.width}×${info.height}` : null;
-      const codec = info.codec ? info.codec.toUpperCase() : null;
-      return [res, codec].filter(Boolean).join(' · ') || null;
-    }
-    if (mt === 'audio') {
-      const codec = info.codec ? info.codec.toUpperCase() : null;
-      const fmt   = info.format ? info.format.toUpperCase() : null;
-      if (codec && fmt && codec !== fmt) return `${codec} / ${fmt}`;
-      return codec ?? fmt ?? null;
-    }
-    if (mt === 'image') {
-      return info.width && info.height ? `${info.width}×${info.height}` : null;
-    }
-    return null;
   }
 
   // ── Info hover popover ─────────────────────────────────────────────────────
@@ -101,35 +82,15 @@
 <!-- File list -->
 <div class="flex-1 min-h-0 overflow-y-auto" role="list" aria-label="Files in queue">
   {#if queue.length === 0}
-    <div class="h-full overflow-y-auto px-4 py-3 flex flex-col gap-0">
-
-      <!-- Drop hint -->
-      <div class="flex flex-col items-center gap-1.5 py-4 mb-3 border border-dashed border-[var(--border)]
-                  rounded-lg text-center">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-             class="text-[var(--border)]">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <p class="text-[11px] text-[var(--text-secondary)]">Drop files or click Browse</p>
-      </div>
-
-      <!-- Supported types -->
-      {#each [
-        { label: 'Image',            exts: 'jpg  jpeg  png  gif  webp  avif  bmp  svg  ico' },
-        { label: 'RAW & Pro Image',  exts: 'heic  heif  tiff  psd  raw  cr2  cr3  nef  arw  dng  orf  rw2  exr  hdr  dds  xcf' },
-        { label: 'Video',            exts: 'mp4  m4v  mkv  webm  mov  avi  flv  wmv  mpg  mpeg  ogv  ts  3gp  divx  rmvb  asf' },
-        { label: 'Audio',            exts: 'mp3  aac  ogg  wav  flac  m4a  opus  wma  aiff  alac  ac3  dts' },
-        { label: 'Document',         exts: 'pdf' },
-        { label: '3D Model',         exts: 'obj  gltf  glb  stl  fbx  ply  3ds' },
-      ] as group}
-        <div class="py-2.5 border-b border-[var(--border)] last:border-0">
-          <p class="text-[11px] font-semibold text-[var(--text-primary)] mb-1">{group.label}</p>
-          <p class="text-[10px] text-[var(--text-secondary)] leading-relaxed font-mono tracking-wide">{group.exts}</p>
-        </div>
-      {/each}
+    <div class="h-full flex flex-col items-center justify-center gap-2 px-6 text-center select-none">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+           class="text-[var(--border)]">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p class="text-[11px] text-[var(--text-secondary)]">Drop files or click Browse</p>
     </div>
   {:else}
     {#each queue as item (item.id)}
@@ -141,7 +102,7 @@
         onclick={() => onselect?.(item.id)}
         onmouseenter={(e) => onItemEnter(e, item)}
         onmouseleave={onItemLeave}
-        class="relative overflow-hidden flex {compact ? 'items-center' : 'items-start'} gap-2 px-3 {compact ? 'py-1' : 'py-2'} border-b border-[var(--border)] group cursor-pointer transition-colors
+        class="relative overflow-hidden flex items-center gap-2 px-3 {compact ? 'py-1' : 'py-2'} border-b border-[var(--border)] group cursor-pointer transition-colors
                {selectedId === item.id ? '' : 'hover:bg-[var(--surface)]'}
                {compatibleTypes.length > 0 && !compatibleTypes.includes(item.mediaType) ? 'opacity-40' : ''}"
         style={selectedId === item.id
@@ -166,19 +127,43 @@
             aria-label="Remove"
           >×</button>
         {:else}
-          <!-- Expanded: status + name + sub-line + actions -->
-          <span class="text-[13px] shrink-0 mt-0.5 {statusColor(item.status)}
-                       {item.status === 'converting' ? 'animate-spin' : ''}">
-            {statusIcon(item.status)}
-          </span>
+          <!-- Expanded: thumbnail + status icon + name + actions -->
+
+          <!-- Thumbnail -->
+          <div class="shrink-0 w-9 h-9 rounded overflow-hidden bg-[var(--surface)] flex items-center justify-center">
+            {#if item.mediaType === 'image'}
+              <img src={convertFileSrc(item.path)} alt="" class="w-full h-full object-cover" />
+            {:else if item.mediaType === 'video'}
+              <!-- film icon -->
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                   stroke-linecap="round" stroke-linejoin="round" class="text-[var(--text-secondary)]">
+                <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+                <line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/>
+                <line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/>
+                <line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/>
+                <line x1="17" y1="7" x2="22" y2="7"/>
+              </svg>
+            {:else}
+              <!-- audio wave icon -->
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                   stroke-linecap="round" stroke-linejoin="round" class="text-[var(--text-secondary)]">
+                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+              </svg>
+            {/if}
+          </div>
+
+          {#if statusIcon(item.status)}
+            <span class="text-[13px] shrink-0 {statusColor(item.status)}
+                         {item.status === 'converting' ? 'animate-spin' : ''}">
+              {statusIcon(item.status)}
+            </span>
+          {/if}
 
           <div class="flex-1 min-w-0">
-            <p class="text-[12px] text-[var(--text-primary)] truncate leading-tight"
+            <p class="text-[15px] font-medium text-[var(--text-primary)] truncate leading-tight"
                title={item.path}>{item.name}</p>
 
-            {#if item.status === 'converting'}
-              <!-- progress shown as overlay fill on row -->
-            {:else if item.status === 'error'}
+            {#if item.status === 'error'}
               <div class="mt-0.5">
                 <div class="flex items-center gap-1">
                   <p class="text-[11px] text-red-500 truncate flex-1">
@@ -197,15 +182,6 @@
                                break-all">{item.error}</pre>
                 {/if}
               </div>
-            {:else if item.status === 'done'}
-              <p class="text-[11px] text-green-500">Converted</p>
-            {:else if item.status === 'cancelled'}
-              <p class="text-[11px] text-orange-400">Cancelled</p>
-            {:else}
-              {@const stats = fileStats(item)}
-              {#if stats}
-                <p class="text-[11px] text-[var(--text-secondary)] font-mono">{stats}</p>
-              {/if}
             {/if}
           </div>
 
