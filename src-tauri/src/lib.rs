@@ -825,9 +825,10 @@ fn zcr_to_hue(zcr: f32) -> u32 {
 /// Uses zero-crossing rate at 8 000 Hz — fast, no extra deps, works well
 /// for distinguishing bass kicks from hi-hats visually.
 #[command]
-fn get_waveform(path: String) -> Result<WaveformData, String> {
+fn get_waveform(path: String, draft: bool) -> Result<WaveformData, String> {
+    let ar = if draft { "2000" } else { "8000" };
     let output = Command::new("ffmpeg")
-        .args(["-i", &path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"])
+        .args(["-i", &path, "-ac", "1", "-ar", ar, "-f", "f32le", "-"])
         .output()
         .map_err(|e| format!("ffmpeg not found: {e}"))?;
 
@@ -923,11 +924,12 @@ struct FilmstripFrameEvent {
 /// as it finishes, so the UI fills in incrementally without blocking.
 /// Each frame is a separate fast-seek ffmpeg call at nice -n 19 / 1 thread.
 #[command]
-fn get_filmstrip(window: Window, path: String, id: String, count: usize, duration: f64) -> Result<(), String> {
+fn get_filmstrip(window: Window, path: String, id: String, count: usize, duration: f64, draft: bool) -> Result<(), String> {
     if count == 0 || duration <= 0.0 {
         return Ok(());
     }
 
+    let scale_filter = if draft { "scale=80:-2:flags=fast_bilinear" } else { "scale=160:-2:flags=fast_bilinear" }.to_string();
     std::thread::spawn(move || {
         use base64::Engine as _;
 
@@ -944,7 +946,7 @@ fn get_filmstrip(window: Window, path: String, id: String, count: usize, duratio
                     "-ss", &ts,
                     "-i", &path,
                     "-frames:v", "1",
-                    "-vf", "scale=160:-2:flags=fast_bilinear",
+                    "-vf", &scale_filter,
                     "-threads", "1",
                     "-f", "image2pipe",
                     "-vcodec", "mjpeg",
