@@ -38,30 +38,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Sanitize signing secrets
-        # GitHub's secret UI sometimes appends newlines / whitespace on paste,
-        # which corrupts the base64 key when tauri's signer decodes it.
-        # Strip all whitespace and export clean values for later steps.
+      - name: Sanitize signing secrets and write key file
+        # Tauri's signer accepts TAURI_SIGNING_PRIVATE_KEY as either a FILE PATH
+        # or a *base64-encoded* blob (it tries to decode the env value as
+        # base64 when it isn't a path). Our key file *content* is already
+        # base64, so passing the content directly would require double-encoding.
+        # Writing to a file and exporting the path dodges that entirely and
+        # also immunizes us against GitHub's secret UI occasionally adding
+        # whitespace.
         run: |
+          set -euo pipefail
           if [ -z "${_RAW_TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
             echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set."
             exit 1
           fi
           CLEAN_KEY=$(printf '%s' "$_RAW_TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')
           CLEAN_PW=$(printf '%s' "${_RAW_TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" | tr -d '\r\n')
-          # Length sanity check: warn (don't fail) if anything was stripped.
           RAW_LEN=${#_RAW_TAURI_SIGNING_PRIVATE_KEY}
           CLEAN_LEN=${#CLEAN_KEY}
           if [ "$RAW_LEN" != "$CLEAN_LEN" ]; then
-            echo "::warning::Stripped $((RAW_LEN - CLEAN_LEN)) whitespace char(s) from TAURI_SIGNING_PRIVATE_KEY (raw=$RAW_LEN, clean=$CLEAN_LEN)."
+            echo "::warning::Stripped $((RAW_LEN - CLEAN_LEN)) whitespace char(s) from TAURI_SIGNING_PRIVATE_KEY."
           fi
-          # Mask before exporting so logs don't leak the value.
+          echo "key length: $CLEAN_LEN bytes"
+
+          # Write to $RUNNER_TEMP so it's outside the checkout and auto-cleaned.
+          KEY_FILE="$RUNNER_TEMP/fade-signing.key"
+          printf '%s' "$CLEAN_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
           echo "::add-mask::$CLEAN_KEY"
           {
-            echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
-            echo "$CLEAN_KEY"
-            echo "EOF"
+            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_FILE"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$CLEAN_PW"
+            echo "FADE_SIGNING_KEY_FILE=$KEY_FILE"
           } >> "$GITHUB_ENV"
 
       - name: Resolve tag
@@ -210,13 +218,9 @@ jobs:
           set -euo pipefail
           TARBALL='${{ steps.artifacts.outputs.tarball }}'
           SIG='${{ steps.artifacts.outputs.sig }}'
-          # Write the private key to a temp file so we can pass it via -f.
-          KEY_FILE=$(mktemp)
-          trap 'rm -f "$KEY_FILE"' EXIT
-          printf '%s' "${TAURI_SIGNING_PRIVATE_KEY}" > "$KEY_FILE"
           rm -f "$SIG"
           npx --yes @tauri-apps/cli signer sign \
-            -f "$KEY_FILE" \
+            -f "$FADE_SIGNING_KEY_FILE" \
             -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
             "$TARBALL"
           if [ ! -s "$SIG" ]; then
