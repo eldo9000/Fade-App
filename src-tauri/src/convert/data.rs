@@ -39,14 +39,13 @@ fn parse_input(in_ext: &str, raw: &str) -> Result<serde_json::Value, String> {
     match in_ext {
         "json" | "ndjson" | "jsonl" => {
             serde_json::from_str(raw).map_err(|e| format!("JSON parse error: {e}"))
-        },
-        "yaml" | "yml" => {
-            serde_yaml::from_str(raw).map_err(|e| format!("YAML parse error: {e}"))
-        },
+        }
+        "yaml" | "yml" => serde_yaml::from_str(raw).map_err(|e| format!("YAML parse error: {e}")),
         "toml" => {
-            let v: toml::Value = toml::from_str(raw).map_err(|e| format!("TOML parse error: {e}"))?;
+            let v: toml::Value =
+                toml::from_str(raw).map_err(|e| format!("TOML parse error: {e}"))?;
             serde_json::to_value(v).map_err(|e| e.to_string())
-        },
+        }
         "csv" | "tsv" => parse_csv(raw, if in_ext == "tsv" { b'\t' } else { b',' }),
         "xml" => parse_xml(raw),
         _ => Err(format!("Unsupported input format: {in_ext}")),
@@ -54,7 +53,9 @@ fn parse_input(in_ext: &str, raw: &str) -> Result<serde_json::Value, String> {
 }
 
 fn parse_csv(raw: &str, sep: u8) -> Result<serde_json::Value, String> {
-    let mut rdr = csv::ReaderBuilder::new().delimiter(sep).from_reader(raw.as_bytes());
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(sep)
+        .from_reader(raw.as_bytes());
     let headers: Vec<String> = rdr
         .headers()
         .map_err(|e| format!("CSV header error: {e}"))?
@@ -85,7 +86,7 @@ fn parse_xml(raw: &str) -> Result<serde_json::Value, String> {
             Ok(quick_xml::events::Event::Start(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 stack.push((name, serde_json::Map::new()));
-            },
+            }
             Ok(quick_xml::events::Event::End(_)) => {
                 if let Some((name, obj)) = stack.pop() {
                     let val = serde_json::Value::Object(obj);
@@ -95,7 +96,7 @@ fn parse_xml(raw: &str) -> Result<serde_json::Value, String> {
                         root_value = Some(val);
                     }
                 }
-            },
+            }
             Ok(quick_xml::events::Event::Text(e)) => {
                 let text = e.unescape().map_err(|e| e.to_string())?.to_string();
                 if !text.trim().is_empty() {
@@ -103,10 +104,10 @@ fn parse_xml(raw: &str) -> Result<serde_json::Value, String> {
                         obj.insert("#text".to_string(), serde_json::Value::String(text));
                     }
                 }
-            },
+            }
             Ok(quick_xml::events::Event::Eof) => break,
             Err(e) => return Err(format!("XML parse error: {e}")),
-            _ => {},
+            _ => {}
         }
         buf.clear();
     }
@@ -126,7 +127,7 @@ fn write_output(
             } else {
                 serde_json::to_string(value).map_err(|e| e.to_string())
             }
-        },
+        }
         "yaml" => serde_yaml::to_string(value).map_err(|e| e.to_string()),
         "toml" => write_toml(value),
         "csv" | "tsv" => write_csv(value, delim_byte),
@@ -193,7 +194,11 @@ fn write_xml(value: &serde_json::Value, pretty: bool) -> String {
 
 fn value_to_xml(key: &str, val: &serde_json::Value, out: &mut String, indent: &str, pretty: bool) {
     let nl = if pretty { "\n" } else { "" };
-    let next_indent = if pretty { format!("{}  ", indent) } else { String::new() };
+    let next_indent = if pretty {
+        format!("{}  ", indent)
+    } else {
+        String::new()
+    };
     match val {
         serde_json::Value::Object(obj) => {
             out.push_str(&format!("{}<{}>{}", indent, key, nl));
@@ -207,17 +212,17 @@ fn value_to_xml(key: &str, val: &serde_json::Value, out: &mut String, indent: &s
                 }
             }
             out.push_str(&format!("{}</{}>{}", indent, key, nl));
-        },
+        }
         serde_json::Value::Array(arr) => {
             for item in arr {
                 value_to_xml(key, item, out, indent, pretty);
             }
-        },
+        }
         serde_json::Value::String(s) => {
             out.push_str(&format!("{}<{}>{}</{}>{}", indent, key, s, key, nl));
-        },
+        }
         other => {
             out.push_str(&format!("{}<{}>{}</{}>{}", indent, key, other, key, nl));
-        },
+        }
     }
 }

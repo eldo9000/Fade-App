@@ -44,16 +44,25 @@ pub fn get_filmstrip(
             // -ss before -i = fast keyframe seek; nice -n 19 + 1 thread = truly background
             let output = Command::new("nice")
                 .args([
-                    "-n", "19",
+                    "-n",
+                    "19",
                     "ffmpeg",
-                    "-ss", &ts,
-                    "-i", &path,
-                    "-frames:v", "1",
-                    "-vf", &scale_filter,
-                    "-threads", "1",
-                    "-f", "image2pipe",
-                    "-vcodec", "mjpeg",
-                    "-q:v", "7",
+                    "-ss",
+                    &ts,
+                    "-i",
+                    &path,
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    &scale_filter,
+                    "-threads",
+                    "1",
+                    "-f",
+                    "image2pipe",
+                    "-vcodec",
+                    "mjpeg",
+                    "-q:v",
+                    "7",
                     "-",
                 ])
                 .output();
@@ -61,7 +70,7 @@ pub fn get_filmstrip(
             let data = match output {
                 Ok(o) if !o.stdout.is_empty() => {
                     base64::engine::general_purpose::STANDARD.encode(&o.stdout)
-                },
+                }
                 _ => continue,
             };
 

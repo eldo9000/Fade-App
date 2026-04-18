@@ -31,21 +31,27 @@ pub fn run(
             let mut html = String::new();
             pulldown_cmark::html::push_html(&mut html, parser);
             html
-        },
+        }
         ("md" | "markdown", "txt") => strip_md(&raw),
         ("md" | "markdown", "md") => raw,
         ("html" | "htm", "txt") => html_to_text(&raw),
         ("html" | "htm", "md") => html_to_md(&raw),
         ("html" | "htm", "html") => raw,
         ("txt", "html") => {
-            let escaped = raw.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let escaped = raw
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
             let paragraphs: String = escaped
                 .split("\n\n")
                 .map(|p| format!("<p>{}</p>", p.trim().replace('\n', "<br>")))
                 .collect::<Vec<_>>()
                 .join("\n");
-            format!("<!DOCTYPE html>\n<html><body>\n{}\n</body></html>", paragraphs)
-        },
+            format!(
+                "<!DOCTYPE html>\n<html><body>\n{}\n</body></html>",
+                paragraphs
+            )
+        }
         ("txt", "md") => raw.clone(),
         ("txt", "txt") => raw,
         _ => return Err(format!("Unsupported conversion: {in_ext} → {out_fmt}")),
@@ -165,9 +171,9 @@ fn html_to_text(html: &str) -> String {
             '>' => {
                 in_tag = false;
                 out.push(' ');
-            },
+            }
             _ if !in_tag => out.push(ch),
-            _ => {},
+            _ => {}
         }
     }
     // Decode basic HTML entities
@@ -179,7 +185,11 @@ fn html_to_text(html: &str) -> String {
         .replace("&#39;", "'")
         .replace("&nbsp;", " ");
     // Collapse whitespace
-    let lines: Vec<&str> = out.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = out
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
     lines.join("\n")
 }
 
@@ -191,11 +201,23 @@ fn html_to_md(html: &str) -> String {
         let close = format!("</h{n}>");
         let prefix = "#".repeat(n as usize) + " ";
         while let Some(s) = out.to_lowercase().find(&tag) {
-            let tag_end = out[s..].find('>').map(|i| s + i + 1).unwrap_or(s + tag.len() + 1);
-            let close_pos = out[tag_end..].to_lowercase().find(&close).map(|i| tag_end + i);
+            let tag_end = out[s..]
+                .find('>')
+                .map(|i| s + i + 1)
+                .unwrap_or(s + tag.len() + 1);
+            let close_pos = out[tag_end..]
+                .to_lowercase()
+                .find(&close)
+                .map(|i| tag_end + i);
             if let Some(e) = close_pos {
                 let inner = out[tag_end..e].to_string();
-                out = format!("{}{}{}\n{}", &out[..s], prefix, inner, &out[e + close.len()..]);
+                out = format!(
+                    "{}{}{}\n{}",
+                    &out[..s],
+                    prefix,
+                    inner,
+                    &out[e + close.len()..]
+                );
             } else {
                 break;
             }
@@ -243,7 +265,13 @@ fn html_to_md(html: &str) -> String {
         };
         if let Some(e) = out[tag_end..].to_lowercase().find("</a>") {
             let text = out[tag_end..tag_end + e].to_string();
-            out = format!("{}[{}]({}){}", &out[..s], text, href, &out[tag_end + e + 4..]);
+            out = format!(
+                "{}[{}]({}){}",
+                &out[..s],
+                text,
+                href,
+                &out[tag_end + e + 4..]
+            );
         } else {
             break;
         }
@@ -259,7 +287,10 @@ fn html_to_md(html: &str) -> String {
     }
     // Paragraphs
     out = out.replace("<p>", "").replace("</p>", "\n\n");
-    out = out.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n");
+    out = out
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n");
     // List items
     out = out.replace("<li>", "- ").replace("</li>", "\n");
     out = out.replace("<ul>", "").replace("</ul>", "\n");
