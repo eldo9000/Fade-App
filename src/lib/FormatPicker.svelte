@@ -1,11 +1,19 @@
 <script>
-  let { options = $bindable() } = $props();
-  const formats = ['zip', 'tar.gz', 'tar.xz', '7z'];
+  let {
+    options = $bindable(),
+    formats,
+    label = 'Output Format',
+    ariaLabel,
+    upperCase = true,
+    children,
+  } = $props();
+
+  const formatted = (fmt) => (upperCase ? fmt.toUpperCase() : fmt);
 </script>
 
-<div class="space-y-5" role="form" aria-label="Archive conversion options">
+<div class="space-y-5" role="form" aria-label={ariaLabel ?? label}>
   <fieldset>
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Output Format</legend>
+    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">{label}</legend>
     <div class="flex flex-wrap gap-2">
       {#each formats as fmt}
         <button onclick={() => options.output_format = fmt}
@@ -13,8 +21,9 @@
             {options.output_format === fmt
               ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
               : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
-        >{fmt}</button>
+        >{formatted(fmt)}</button>
       {/each}
     </div>
   </fieldset>
+  {@render children?.()}
 </div>

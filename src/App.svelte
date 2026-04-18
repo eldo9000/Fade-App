@@ -11,35 +11,17 @@
   import VideoOptions from './lib/VideoOptions.svelte';
   import AudioOptions from './lib/AudioOptions.svelte';
   import DataOptions from './lib/DataOptions.svelte';
-  import DocumentOptions from './lib/DocumentOptions.svelte';
-  import ArchiveOptions from './lib/ArchiveOptions.svelte';
+  import FormatPicker from './lib/FormatPicker.svelte';
   import { mediaTypeFor, validateOptions } from './lib/utils.js';
+  import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
+  import { createSettings } from './lib/stores/settings.svelte.js';
+
+  const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
+  const ARCHIVE_FORMATS = ['zip', 'tar.gz', 'tar.xz', '7z'];
 
   // ── State ──────────────────────────────────────────────────────────────────
 
-  // ── Zoom ───────────────────────────────────────────────────────────────────
-  const ZOOM_STEPS = [1.0, 1.1, 1.2, 1.3];
-  let zoomLevel = $state(ZOOM_STEPS.includes(parseFloat(localStorage.getItem('zoomLevel'))) ? parseFloat(localStorage.getItem('zoomLevel')) : 1.0);
-
-  function applyZoom(level) {
-    zoomLevel = level;
-    localStorage.setItem('zoomLevel', String(level));
-    document.documentElement.style.zoom = String(level);
-  }
-
-  function handleZoomKey(e) {
-    if (!e.metaKey) return;
-    if (e.key !== '=' && e.key !== '+' && e.key !== '-' && e.key !== '0') return;
-    e.preventDefault();
-    const idx = ZOOM_STEPS.indexOf(zoomLevel);
-    if (e.key === '=' || e.key === '+') {
-      if (idx < ZOOM_STEPS.length - 1) applyZoom(ZOOM_STEPS[idx + 1]);
-    } else if (e.key === '-') {
-      if (idx > 0) applyZoom(ZOOM_STEPS[idx - 1]);
-    } else if (e.key === '0') {
-      applyZoom(1.0);
-    }
-  }
+  const zoom = createZoom();
 
   let queue = $state([]);
   let selectedId = $state(null);
@@ -47,7 +29,30 @@
 
   let converting = $state(false);
   let paused = $state(false);
-  let overallPercent = $state(0);
+
+  // Two independent progress signals stacked in the bottom panel:
+  //   currentPercent — % of the active job (averaged if >1 in flight; usually 1)
+  //   overallPercent — count of terminated items in the CURRENT BATCH / batch size × 100
+  // A "batch" is one click of Convert Selected/All. Without batching, overall
+  // would stay pinned at 100% forever once any item finishes, because every
+  // newly-submitted item becomes terminal immediately (fast data conversions
+  // flip 'pending' → 'done' in one event-loop tick with no visible interim).
+  let batchIds = $state(new Set());
+  let currentPercent = $derived.by(() => {
+    const active = queue.filter(q => q.status === 'converting');
+    if (active.length === 0) return 0;
+    return active.reduce((s, q) => s + (q.percent ?? 0), 0) / active.length;
+  });
+  let overallPercent = $derived.by(() => {
+    if (batchIds.size === 0) return 0;
+    const batch = queue.filter(q => batchIds.has(q.id));
+    if (batch.length === 0) return 0;
+    const terminal = batch.filter(q =>
+      q.status === 'done' || q.status === 'error' || q.status === 'cancelled'
+    ).length;
+    return (terminal / batch.length) * 100;
+  });
+
   let statusMessage = $state('');
   let validationErrors = $state({});
   let toolWarnings = $state({});
@@ -169,16 +174,8 @@
   let queueCompact = $state(false);
 
   // ── Settings ───────────────────────────────────────────────────────────────
-  const SETTINGS_KEY = 'fade-settings';
-  function _loadSettings() {
-    try { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false, previewHighQuality: false, autoCompact: true,
-                   ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') }; }
-    catch { return { notifyUpdates: true, autoUpdate: false, vizDefault: 'no', limiterAuto: false, previewHighQuality: false, autoCompact: true }; }
-  }
-  let settings     = $state(_loadSettings());
+  const settings   = createSettings();
   let settingsOpen = $state(false);
-
-  $effect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); });
 
   // Auto-collapse queue once per session when it grows large enough to scroll
   let _autoCompactDone = false;
@@ -491,8 +488,8 @@
     await initTheme(invoke);
 
     // Restore zoom and wire hotkeys
-    document.documentElement.style.zoom = String(zoomLevel);
-    window.addEventListener('keydown', handleZoomKey);
+    document.documentElement.style.zoom = String(zoom.level);
+    window.addEventListener('keydown', zoom.handleKey);
 
     // Pre-load Test-Files folder
     try {
@@ -528,7 +525,6 @@
         item.percent = payload.percent;
         statusMessage = payload.message;
       }
-      updateOverall();
     });
 
     unlistenDone = await listen('job-done', ({ payload }) => {
@@ -538,7 +534,6 @@
         item.percent = 100;
         item.outputPath = payload.output_path;
       }
-      updateOverall();
       checkAllDone();
     });
 
@@ -548,7 +543,6 @@
         item.status = 'error';
         item.error = payload.message;
       }
-      updateOverall();
       checkAllDone();
     });
 
@@ -558,7 +552,6 @@
         item.status = 'cancelled';
         item.percent = 0;
       }
-      updateOverall();
       checkAllDone();
     });
 
@@ -567,7 +560,7 @@
   });
 
   onDestroy(() => {
-    window.removeEventListener('keydown', handleZoomKey);
+    window.removeEventListener('keydown', zoom.handleKey);
     _unlistenBgFilmstrip?.();
     unlistenProgress?.();
     unlistenDone?.();
@@ -642,25 +635,30 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function updateOverall() {
-    if (queue.length === 0) { overallPercent = 0; return; }
-    const total = queue.reduce((sum, q) => sum + (q.percent ?? 0), 0);
-    overallPercent = total / queue.length;
-  }
-
   function checkAllDone() {
-    const active = queue.filter(q => q.status === 'converting' || q.status === 'pending');
+    const active = queue.filter(q => q.status === 'converting');
     if (active.length === 0) {
       converting = false;
       paused = false;
-      const done = queue.filter(q => q.status === 'done').length;
-      const cancelled = queue.filter(q => q.status === 'cancelled').length;
-      const errored = queue.filter(q => q.status === 'error').length;
-      const parts = [];
-      if (done) parts.push(`${done} converted`);
-      if (cancelled) parts.push(`${cancelled} cancelled`);
-      if (errored) parts.push(`${errored} failed`);
-      statusMessage = parts.length ? `Done — ${parts.join(', ')}` : 'Done';
+      // Summarise the CURRENT batch (not the whole queue), matching the
+      // user's mental model: "the thing I just clicked Convert on is done".
+      const batch = queue.filter(q => batchIds.has(q.id));
+      const total = batch.length;
+      const done = batch.filter(q => q.status === 'done').length;
+      const cancelled = batch.filter(q => q.status === 'cancelled').length;
+      const errored = batch.filter(q => q.status === 'error').length;
+
+      if (total === 0) {
+        statusMessage = '';
+      } else if (errored === 0 && cancelled === 0) {
+        statusMessage = total === 1 ? '1 file done' : `${total} files done`;
+      } else {
+        const parts = [];
+        if (done) parts.push(`${done} of ${total} done`);
+        if (errored) parts.push(`${errored} failed`);
+        if (cancelled) parts.push(`${cancelled} cancelled`);
+        statusMessage = parts.join(', ');
+      }
     }
   }
 
@@ -687,17 +685,16 @@
   function removeItem(id) {
     queue = queue.filter(q => q.id !== id);
     if (selectedId === id) handleSelect(queue.length > 0 ? queue[0].id : null);
-    updateOverall();
   }
 
   function clearQueue() {
     queue = [];
     selectedId = null;
-    overallPercent = 0;
     statusMessage = '';
     converting = false;
     paused = false;
     validationErrors = {};
+    batchIds = new Set();
   }
 
   // ── Browse ─────────────────────────────────────────────────────────────────
@@ -751,7 +748,7 @@
 
     const candidates = mode === 'selected'
       ? (selectedItem ? [selectedItem] : [])
-      : queue;
+      : visibleQueue;
 
     const allPending = candidates.filter(q => q.status === 'pending' || q.status === 'error');
     const compat = compatibleTypes;
@@ -763,6 +760,13 @@
         : 'No files to convert';
       return;
     }
+
+    // Start a fresh batch if the previous one already finished. If the user
+    // clicks Convert again while jobs are still in flight, items pile onto
+    // the current batch instead (progress scales with total).
+    const next = converting ? new Set(batchIds) : new Set();
+    for (const item of pending) next.add(item.id);
+    batchIds = next;
 
     converting = true;
     paused = false;
@@ -794,6 +798,18 @@
   let folderInput = $state(null);
   let outputDir = $derived(outputDestMode === 'source' ? null : (customOutputDir ?? null));
   let dragOver = $state(false);
+
+  // Hide files whose stem ends with `_<outputSuffix>` — these are prior outputs
+  // that would otherwise keep getting re-converted each time Fade scans the folder.
+  // Used as the source of truth for the queue display AND for Convert All.
+  let visibleQueue = $derived.by(() => {
+    if (!settings.hideConverted || !outputSuffix) return queue;
+    const suf = `_${outputSuffix}`;
+    return queue.filter(q => {
+      const stem = q.ext ? q.name.slice(0, -(q.ext.length + 1)) : q.name;
+      return !stem.endsWith(suf);
+    });
+  });
 
   function onFolderInputChange(e) {
     const files = Array.from(e.target.files ?? []);
@@ -1122,34 +1138,32 @@
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
-    <aside class="{queueCompact ? 'w-[234px]' : 'w-[390px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
+    <aside class="{queueCompact ? 'w-[280px]' : 'w-[390px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
            role="region" aria-label="File queue">
 
-      <!-- Queue header — pl-20 clears macOS traffic lights -->
-      <div class="flex items-center gap-1.5 pl-20 pr-3 py-2.5 border-b border-[var(--border)] shrink-0"
+      <!-- Queue header — pl-20 clears macOS traffic lights.
+           All controls form one attached group on the right: Browse | Clear | Expanded | Compact -->
+      <div class="flex items-center pl-20 pr-3 py-2.5 border-b border-[var(--border)] shrink-0"
            data-tauri-drag-region>
-        <button
-          onclick={onBrowse}
-          class="px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--accent)] text-white
-                 hover:opacity-90 transition-opacity shrink-0"
-        >Browse…</button>
-        {#if queue.length > 0}
+        <div class="ml-auto flex items-stretch rounded overflow-hidden border border-[var(--border)] divide-x divide-[var(--border)]">
           <button
-            onclick={clearQueue}
-            class="px-2 py-0.5 rounded text-[11px] text-[var(--text-secondary)]
-                   border border-[var(--border)] hover:text-red-400 hover:border-red-400
-                   transition-colors shrink-0"
-          >Clear</button>
-        {/if}
-        <!-- List view toggle -->
-        <div class="flex items-center gap-1 ml-auto">
+            onclick={onBrowse}
+            class="px-2.5 h-7 text-[11px] font-medium bg-[var(--accent)] text-white hover:opacity-90 transition-opacity shrink-0"
+          >Browse…</button>
+          {#if queue.length > 0}
+            <button
+              onclick={clearQueue}
+              class="px-2.5 h-7 text-[11px] text-[var(--text-secondary)]
+                     hover:text-red-400 hover:bg-red-900/20 transition-colors shrink-0"
+            >Clear</button>
+          {/if}
           <!-- Expanded view -->
           <button
             onclick={() => queueCompact = false}
             title="Expanded list"
-            class="w-7 h-7 flex items-center justify-center rounded transition-all
+            class="w-7 h-7 flex items-center justify-center transition-colors shrink-0
                    {!queueCompact
-                     ? 'text-[var(--accent)] bg-[var(--accent)]/10 ring-1 ring-[var(--accent)]/60'
+                     ? 'text-[var(--accent)] bg-[var(--accent)]/10'
                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
           >
             <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
@@ -1161,9 +1175,9 @@
           <button
             onclick={() => queueCompact = true}
             title="Compact list"
-            class="w-7 h-7 flex items-center justify-center rounded transition-all
+            class="w-7 h-7 flex items-center justify-center transition-colors shrink-0
                    {queueCompact
-                     ? 'text-[var(--accent)] bg-[var(--accent)]/10 ring-1 ring-[var(--accent)]/60'
+                     ? 'text-[var(--accent)] bg-[var(--accent)]/10'
                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
           >
             <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
@@ -1196,7 +1210,7 @@
 
       <!-- File list -->
       <Queue
-        {queue}
+        queue={visibleQueue}
         {selectedId}
         onselect={handleSelect}
         onremove={(id) => removeItem(id)}
@@ -1219,74 +1233,18 @@
       <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
            style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
 
-        <!-- Overall progress -->
-        <ProgressBar value={overallPercent} />
-
-        <!-- Output destination -->
-        <div class="flex flex-col gap-1">
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="flex gap-1.5">
-            <button
-              onclick={() => outputDestMode = 'source'}
-              class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
-                     {outputDestMode === 'source'
-                       ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
-                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-            >
-              <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
-                           {outputDestMode === 'source' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
-                {#if outputDestMode === 'source'}<span class="w-1 h-1 rounded-full bg-[var(--accent)]"></span>{/if}
-              </span>
-              Source folder
-            </button>
-            <button
-              onclick={() => { outputDestMode = 'custom'; if (!customOutputDir) folderInput?.click(); }}
-              class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
-                     {outputDestMode === 'custom'
-                       ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
-                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-            >
-              <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
-                           {outputDestMode === 'custom' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
-                {#if outputDestMode === 'custom'}<span class="w-1 h-1 rounded-full bg-[var(--accent)]"></span>{/if}
-              </span>
-              Custom…
-            </button>
+        <!-- Progress — current job on top, queue completion below.
+             Label column is a fixed width so both bars start at the same x. -->
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-center gap-2">
+            <span class="w-12 text-right text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">Current</span>
+            <div class="flex-1"><ProgressBar value={currentPercent} label="Current job" /></div>
           </div>
-          {#if outputDestMode === 'custom'}
-            <div class="flex gap-1">
-              <span class="flex-1 min-w-0 px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--border)]
-                           bg-[var(--surface)] text-[var(--text-secondary)] truncate">
-                {customOutputDir ?? '—'}
-              </span>
-              <button
-                onclick={() => folderInput?.click()}
-                class="px-2 py-0.5 rounded text-[11px] border border-[var(--border)]
-                       text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)] transition-colors shrink-0"
-              >Browse</button>
-            </div>
-          {/if}
+          <div class="flex items-center gap-2">
+            <span class="w-12 text-right text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">All</span>
+            <div class="flex-1"><ProgressBar value={overallPercent} label="Queue" /></div>
+          </div>
         </div>
-
-        <!-- Suffix -->
-        <div class="flex items-center gap-2">
-          <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap shrink-0">Suffix</label>
-          <input
-            id="output-suffix"
-            type="text"
-            bind:value={outputSuffix}
-            disabled={converting}
-            placeholder="converted"
-            class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
-                   bg-[var(--surface)] text-[var(--text-primary)] outline-none
-                   focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
-          />
-        </div>
-
-        <!-- Status message -->
-        {#if statusMessage}
-          <p class="text-[11px] text-[var(--text-secondary)] truncate" aria-live="polite">{statusMessage}</p>
-        {/if}
 
         <!-- Convert / Pause / Cancel -->
         {#if converting}
@@ -1324,17 +1282,20 @@
           </div>
         {/if}
 
-        <!-- Settings button + floating panel -->
-        <div class="relative">
+        <!-- Settings button (snug) + status box (fills remaining width, right-aligned) -->
+        <div class="flex items-stretch gap-1.5 relative">
           {#if settingsOpen}
-            <!-- Floating settings panel — positioned above settings button, flush to sidebar edges -->
+            <!-- Floating settings panel — fixed width, anchored to the right
+                 edge of the settings button so compact sidebar doesn't squish it.
+                 Overflows into the preview area; the backdrop dims everything. -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
-              style="position:absolute; bottom:100%; left:-0.75rem; right:-0.75rem;
+              style="position:absolute; bottom:100%; left:-0.75rem; width:360px; max-height:70vh;
                      background:color-mix(in srgb, var(--surface-raised) 96%, #000 4%);
-                     border:1px solid var(--border); border-bottom:none;
-                     border-radius:10px 10px 0 0;
+                     border:1px solid var(--border);
+                     border-radius:10px;
                      box-shadow:0 -10px 36px rgba(0,0,0,0.6);
+                     margin-bottom:0.5rem;
                      overflow-y:auto; z-index:50"
               onmousedown={(e) => e.stopPropagation()}
             >
@@ -1358,6 +1319,75 @@
                     Update Now
                   </button>
                 </div>
+              </div>
+
+              <!-- Section: Output -->
+              <div class="px-4 pt-3 pb-3 border-b border-[var(--border)] flex flex-col gap-2.5">
+                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Output</p>
+                <!-- Destination -->
+                <div class="flex flex-col gap-1.5">
+                  <div class="flex gap-1.5">
+                    <button
+                      onclick={() => outputDestMode = 'source'}
+                      class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
+                             {outputDestMode === 'source'
+                               ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
+                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                    >
+                      <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
+                                   {outputDestMode === 'source' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
+                        {#if outputDestMode === 'source'}<span class="w-1 h-1 rounded-full bg-[var(--accent)]"></span>{/if}
+                      </span>
+                      Source folder
+                    </button>
+                    <button
+                      onclick={() => { outputDestMode = 'custom'; if (!customOutputDir) folderInput?.click(); }}
+                      class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
+                             {outputDestMode === 'custom'
+                               ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
+                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                    >
+                      <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
+                                   {outputDestMode === 'custom' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
+                        {#if outputDestMode === 'custom'}<span class="w-1 h-1 rounded-full bg-[var(--accent)]"></span>{/if}
+                      </span>
+                      Custom…
+                    </button>
+                  </div>
+                  {#if outputDestMode === 'custom'}
+                    <div class="flex gap-1">
+                      <span class="flex-1 min-w-0 px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--border)]
+                                   bg-[var(--surface)] text-[var(--text-secondary)] truncate">
+                        {customOutputDir ?? '—'}
+                      </span>
+                      <button
+                        onclick={() => folderInput?.click()}
+                        class="px-2 py-0.5 rounded text-[11px] border border-[var(--border)]
+                               text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)] transition-colors shrink-0"
+                      >Browse</button>
+                    </div>
+                  {/if}
+                </div>
+                <!-- Suffix -->
+                <div class="flex items-center gap-2">
+                  <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap shrink-0">Suffix</label>
+                  <input
+                    id="output-suffix"
+                    type="text"
+                    bind:value={outputSuffix}
+                    disabled={converting}
+                    placeholder="converted"
+                    class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
+                           bg-[var(--surface)] text-[var(--text-primary)] outline-none
+                           focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
+                  />
+                </div>
+                <!-- Hide converted files toggle -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Hide converted files</span>
+                  <input type="checkbox" bind:checked={settings.hideConverted}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
               </div>
 
               <!-- Section: UI -->
@@ -1410,7 +1440,7 @@
             onclick={() => settingsOpen = !settingsOpen}
             class="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] border border-[var(--border)]
                    text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
-                   transition-colors w-full {settingsOpen ? 'border-[var(--accent)] text-[var(--text-primary)]' : ''}"
+                   transition-colors shrink-0 {settingsOpen ? 'border-[var(--accent)] text-[var(--text-primary)]' : ''}"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
@@ -1419,6 +1449,12 @@
             </svg>
             Settings
           </button>
+
+          <!-- Status box: last job/queue outcome, right-justified -->
+          <div class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded
+                      bg-[var(--surface)]/60 border border-[var(--border)]" aria-live="polite">
+            <span class="text-[11px] text-[var(--text-secondary)] truncate text-right">{statusMessage}</span>
+          </div>
         </div>
       </div>
 
@@ -1776,24 +1812,24 @@
         <!-- Zoom controls -->
         <div class="absolute right-1 inset-y-0 flex items-center gap-0.5">
           <button
-            onclick={() => { const i = ZOOM_STEPS.indexOf(zoomLevel); if (i > 0) applyZoom(ZOOM_STEPS[i - 1]); }}
+            onclick={zoom.stepOut}
             title="Zoom out (⌘-)"
-            disabled={zoomLevel === ZOOM_STEPS[0]}
+            disabled={zoom.level === ZOOM_STEPS[0]}
             class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
             style="color:rgba(255,255,255,0.45)">−</button>
           <button
-            onclick={() => applyZoom(1.0)}
+            onclick={zoom.reset}
             title="Reset zoom (⌘0)"
             class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
                    bg-white/5 hover:bg-white/10
-                   {zoomLevel !== 1.0 ? 'text-[var(--accent)]' : ''}"
-            style={zoomLevel === 1.0 ? 'color:rgba(255,255,255,0.35)' : ''}>
-            {Math.round(zoomLevel * 100)}%</button>
+                   {zoom.level !== 1.0 ? 'text-[var(--accent)]' : ''}"
+            style={zoom.level === 1.0 ? 'color:rgba(255,255,255,0.35)' : ''}>
+            {Math.round(zoom.level * 100)}%</button>
           <button
-            onclick={() => { const i = ZOOM_STEPS.indexOf(zoomLevel); if (i < ZOOM_STEPS.length - 1) applyZoom(ZOOM_STEPS[i + 1]); }}
+            onclick={zoom.stepIn}
             title="Zoom in (⌘+)"
-            disabled={zoomLevel === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+            disabled={zoom.level === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
             class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
             style="color:rgba(255,255,255,0.45)">+</button>
@@ -1949,9 +1985,9 @@
         {:else if activeOutputCategory === 'data'}
           <DataOptions bind:options={dataOptions} />
         {:else if activeOutputCategory === 'document'}
-          <DocumentOptions bind:options={documentOptions} />
+          <FormatPicker bind:options={documentOptions} formats={DOCUMENT_FORMATS} ariaLabel="Document conversion options" />
         {:else if activeOutputCategory === 'archive'}
-          <ArchiveOptions bind:options={archiveOptions} toolWarnings={toolWarnings} />
+          <FormatPicker bind:options={archiveOptions} formats={ARCHIVE_FORMATS} ariaLabel="Archive conversion options" upperCase={false} />
         {:else}
           <div class="flex flex-col items-center justify-center h-full text-center gap-2">
             <p class="text-[11px] text-green-500">Coming soon</p>

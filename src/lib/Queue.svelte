@@ -1,6 +1,4 @@
 <script>
-  import { convertFileSrc } from '@tauri-apps/api/core';
-
   let { queue, selectedId, onselect, onremove, oncancel, compatibleTypes = [], compact = false } = $props();
 
   function statusColor(status) {
@@ -119,85 +117,55 @@
           </div>
         {/if}
 
-        {#if compact}
-          <!-- Compact: ext in gray on left, then filename without ext in white -->
-          <div class="flex-1 min-w-0 flex items-center gap-1.5 text-[12px] overflow-hidden">
-            {#if item.ext}
-              <span class="shrink-0 text-[var(--text-secondary)] font-mono">.{item.ext}</span>
-            {/if}
-            <p class="min-w-0 text-white truncate leading-tight" title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
-          </div>
-          <button
-            onclick={(e) => { e.stopPropagation(); onremove?.(item.id); }}
-            class="w-5 h-5 flex items-center justify-center rounded shrink-0
-                   opacity-0 group-hover:opacity-100
-                   text-[var(--text-secondary)] hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500
-                   transition-all text-[14px]"
-            aria-label="Remove"
-          >×</button>
-        {:else}
-          <!-- Expanded: thumbnail + status icon + name + actions -->
+        <!-- 3-column layout: [status icon] [filename →] [← .ext]
+             Action buttons (cancel / remove) overlay the .ext column on hover.
+             No vertical dividers between columns — spacing only. -->
 
-          <!-- Thumbnail -->
-          <div class="shrink-0 w-9 h-9 rounded overflow-hidden bg-[var(--surface)] flex items-center justify-center">
-            {#if item.mediaType === 'image'}
-              <img src={convertFileSrc(item.path)} alt="" class="w-full h-full object-cover" />
-            {:else if item.mediaType === 'video'}
-              <!-- film icon -->
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-                   stroke-linecap="round" stroke-linejoin="round" class="text-[var(--text-secondary)]">
-                <rect x="2" y="2" width="20" height="20" rx="2.18"/>
-                <line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/>
-                <line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/>
-                <line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/>
-                <line x1="17" y1="7" x2="22" y2="7"/>
-              </svg>
-            {:else}
-              <!-- audio wave icon -->
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-                   stroke-linecap="round" stroke-linejoin="round" class="text-[var(--text-secondary)]">
-                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-              </svg>
-            {/if}
-          </div>
-
+        <!-- Col 1: status icon (centered, fixed width) -->
+        <div class="shrink-0 w-5 flex items-center justify-center">
           {#if statusIcon(item.status)}
-            <span class="text-[13px] shrink-0 {statusColor(item.status)}
+            <span class="text-[13px] {statusColor(item.status)}
                          {item.status === 'converting' ? 'animate-spin' : ''}">
               {statusIcon(item.status)}
             </span>
           {/if}
+        </div>
 
-          <div class="flex-1 min-w-0">
-            <p class="text-[15px] font-medium text-[var(--text-primary)] truncate leading-tight"
-               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
-            {#if item.ext}
-              <p class="text-[11px] text-[var(--text-secondary)] leading-tight">.{item.ext}</p>
-            {/if}
+        <!-- Col 2: filename (left) -->
+        <div class="flex-1 min-w-0">
+          <p class="{compact ? 'text-[12px]' : 'text-[14px]'} font-medium text-[var(--text-primary)] truncate leading-tight"
+             title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
 
-            {#if item.status === 'error'}
-              <div class="mt-0.5">
-                <div class="flex items-center gap-1">
-                  <p class="text-[11px] text-red-500 truncate flex-1">
-                    {item.error?.split('\n')[0] ?? 'Conversion failed'}
-                  </p>
-                  {#if item.error && item.error.includes('\n')}
-                    <button
-                      onclick={(e) => { e.stopPropagation(); toggleError(item.id); }}
-                      class="shrink-0 text-[10px] text-red-400 hover:text-red-600 transition-colors"
-                    >{expandedErrors.has(item.id) ? '▾ Hide' : '▸ Details'}</button>
-                  {/if}
-                </div>
-                {#if expandedErrors.has(item.id)}
-                  <pre class="mt-1 text-[11px] text-red-400 font-mono overflow-y-auto
-                               max-h-[200px] bg-[var(--surface)] rounded p-1.5 whitespace-pre-wrap
-                               break-all">{item.error}</pre>
+          {#if item.status === 'error'}
+            <div class="mt-0.5">
+              <div class="flex items-center gap-1">
+                <p class="text-[11px] text-red-500 truncate flex-1">
+                  {item.error?.split('\n')[0] ?? 'Conversion failed'}
+                </p>
+                {#if item.error && item.error.includes('\n')}
+                  <button
+                    onclick={(e) => { e.stopPropagation(); toggleError(item.id); }}
+                    class="shrink-0 text-[10px] text-red-400 hover:text-red-600 transition-colors"
+                  >{expandedErrors.has(item.id) ? '▾ Hide' : '▸ Details'}</button>
                 {/if}
               </div>
-            {/if}
-          </div>
+              {#if expandedErrors.has(item.id)}
+                <pre class="mt-1 text-[11px] text-red-400 font-mono overflow-y-auto
+                             max-h-[200px] bg-[var(--surface)] rounded p-1.5 whitespace-pre-wrap
+                             break-all">{item.error}</pre>
+              {/if}
+            </div>
+          {/if}
+        </div>
 
-          <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <!-- Col 3: extension (right) + hover actions overlay -->
+        <div class="relative shrink-0 min-w-[32px] flex items-center justify-end">
+          {#if item.ext}
+            <span class="text-[11px] text-[var(--text-secondary)] font-mono
+                         group-hover:opacity-0 transition-opacity">{item.ext}</span>
+          {/if}
+          <div class="absolute inset-0 flex items-center justify-end gap-0.5
+                      opacity-0 group-hover:opacity-100 transition-opacity">
             {#if item.status === 'converting'}
               <button
                 onclick={(e) => { e.stopPropagation(); oncancel?.(item.id); }}
@@ -217,7 +185,7 @@
               aria-label="Remove"
             >×</button>
           </div>
-        {/if}
+        </div>
       </div>
     {/each}
   {/if}
