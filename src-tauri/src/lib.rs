@@ -19,7 +19,7 @@ pub use args::{
     build_ffmpeg_audio_args, build_ffmpeg_video_args, build_image_magick_args,
     ffmpeg_video_codec_args, resolution_to_scale,
 };
-pub use fs_commands::scan_dir;
+pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
 pub use preview::{preview_diff, preview_image_quality};
 pub use probe::{get_file_info, get_filmstrip, get_spectrogram, get_waveform};
@@ -499,6 +499,7 @@ pub fn run() {
             save_preset,
             delete_preset,
             scan_dir,
+            file_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

@@ -2,6 +2,12 @@
 
 use tauri::command;
 
+/// Return true if a file or directory exists at `path`.
+#[command]
+pub fn file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
 /// List all files (non-recursive) in a directory. Returns full paths, sorted.
 /// Falls back to the current working directory if the given path fails to open.
 #[command]

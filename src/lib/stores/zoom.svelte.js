@@ -1,4 +1,4 @@
-export const ZOOM_STEPS = [1.0, 1.1, 1.2, 1.3];
+export const ZOOM_STEPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5];
 const KEY = 'zoomLevel';
 
 function loadInitial() {

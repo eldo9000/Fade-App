@@ -8,6 +8,7 @@ const DEFAULTS = {
   previewHighQuality: false,
   autoCompact: true,
   hideConverted: true,
+  fileTypeColumn: true,
 };
 
 function load() {

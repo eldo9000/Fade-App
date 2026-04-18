@@ -54,6 +54,10 @@
   });
 
   let statusMessage = $state('');
+  // 'info' | 'success' | 'error' — drives the colour of the status box text.
+  // Gray by default; green for success states; red for things the user must see.
+  let statusKind    = $state('info');
+  function setStatus(text, kind = 'info') { statusMessage = text; statusKind = kind; }
   let validationErrors = $state({});
   let toolWarnings = $state({});
 
@@ -523,7 +527,7 @@
       if (item) {
         item.status = 'converting';
         item.percent = payload.percent;
-        statusMessage = payload.message;
+        setStatus(payload.message, 'info');
       }
     });
 
@@ -649,15 +653,16 @@
       const errored = batch.filter(q => q.status === 'error').length;
 
       if (total === 0) {
-        statusMessage = '';
+        setStatus('', 'info');
       } else if (errored === 0 && cancelled === 0) {
-        statusMessage = total === 1 ? '1 file done' : `${total} files done`;
+        setStatus(total === 1 ? '1 file done' : `${total} files done`, 'success');
       } else {
         const parts = [];
         if (done) parts.push(`${done} of ${total} done`);
         if (errored) parts.push(`${errored} failed`);
         if (cancelled) parts.push(`${cancelled} cancelled`);
-        statusMessage = parts.join(', ');
+        // Red if anything failed; otherwise (only cancellations) keep it gray.
+        setStatus(parts.join(', '), errored > 0 ? 'error' : 'info');
       }
     }
   }
@@ -690,7 +695,7 @@
   function clearQueue() {
     queue = [];
     selectedId = null;
-    statusMessage = '';
+    setStatus('', 'info');
     converting = false;
     paused = false;
     validationErrors = {};
@@ -729,12 +734,24 @@
 
   function togglePause() {
     if (paused) { paused = false; startConvert(); }
-    else { paused = true; statusMessage = 'Paused — click Resume to continue'; }
+    else { paused = true; setStatus('Paused — click Resume to continue', 'info'); }
   }
 
 
 
   // ── Convert ────────────────────────────────────────────────────────────────
+
+  // Mirrors src-tauri/src/lib.rs::build_output_path so we can check collisions
+  // client-side before invoking convert_file. Keep them in sync.
+  function expectedOutputPath(item, newExt, suffix, outputDirOverride) {
+    const lastSlash = item.path.lastIndexOf('/');
+    const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '.';
+    const dir = outputDirOverride ?? parentDir;
+    const stem = item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name;
+    return suffix
+      ? `${dir}/${stem}_${suffix}.${newExt}`
+      : `${dir}/${stem}.${newExt}`;
+  }
 
   async function startConvert(mode = 'all') {
     const errors = validateOptions(videoOptions, audioOptions);
@@ -742,7 +759,7 @@
     validationErrors = {};
 
     if (!globalOutputFormat) {
-      statusMessage = 'Select an output format first';
+      setStatus('Select an output format first', 'error');
       return;
     }
 
@@ -750,14 +767,32 @@
       ? (selectedItem ? [selectedItem] : [])
       : visibleQueue;
 
-    const allPending = candidates.filter(q => q.status === 'pending' || q.status === 'error');
+    // Allow re-converting done / error / cancelled items. Only skip items
+    // that are actively converting right now.
+    const eligible = candidates.filter(q => q.status !== 'converting');
     const compat = compatibleTypes;
-    const pending = allPending.filter(q => compat.includes(q.mediaType));
-    const skipped = allPending.length - pending.length;
-    if (pending.length === 0) {
-      statusMessage = skipped > 0
+    const compatible = eligible.filter(q => compat.includes(q.mediaType));
+    const skipped = eligible.length - compatible.length;
+    if (compatible.length === 0) {
+      setStatus(skipped > 0
         ? `No compatible files — ${skipped} skipped (incompatible)`
-        : 'No files to convert';
+        : 'No files to convert', 'error');
+      return;
+    }
+
+    // Pre-flight: skip items whose output file already exists. User must
+    // delete the old output manually to re-run (avoids silent overwrite).
+    const outExt = globalOutputFormat;
+    const checked = await Promise.all(compatible.map(async item => ({
+      item,
+      exists: await invoke('file_exists', {
+        path: expectedOutputPath(item, outExt, outputSuffix, outputDir),
+      }).catch(() => false),
+    })));
+    const willRun     = checked.filter(c => !c.exists).map(c => c.item);
+    const alreadyDone = checked.filter(c =>  c.exists).length;
+    if (willRun.length === 0) {
+      setStatus(alreadyDone === 1 ? 'File already exists.' : 'Files already exist.', 'error');
       return;
     }
 
@@ -765,15 +800,17 @@
     // clicks Convert again while jobs are still in flight, items pile onto
     // the current batch instead (progress scales with total).
     const next = converting ? new Set(batchIds) : new Set();
-    for (const item of pending) next.add(item.id);
+    for (const item of willRun) next.add(item.id);
     batchIds = next;
 
     converting = true;
     paused = false;
-    statusMessage = 'Converting…';
-    if (skipped > 0) statusMessage = `Converting… — ${skipped} skipped (incompatible)`;
+    const parts = [];
+    if (skipped)     parts.push(`${skipped} incompatible`);
+    if (alreadyDone) parts.push(`${alreadyDone} already exist${alreadyDone === 1 ? 's' : ''}`);
+    setStatus(parts.length ? `Converting… — skipped ${parts.join(', ')}` : 'Converting…', 'info');
 
-    for (const item of pending) {
+    for (const item of willRun) {
       if (paused) break;
       item.status = 'converting';
       item.percent = 0;
@@ -1059,6 +1096,18 @@
     selectedItem ? (OUTPUT_CATS_FOR[selectedItem.mediaType] ?? null) : null
   );
 
+  // FORMAT_GROUPS sorted so compatible categories float to the top whenever
+  // a file is selected — prevents useful options falling below the scroll
+  // fold. Reverts to default order as soon as nothing is selected.
+  let sortedFormatGroups = $derived.by(() => {
+    if (!compatibleOutputCats) return FORMAT_GROUPS;
+    return [...FORMAT_GROUPS].sort((a, b) => {
+      const aOk = compatibleOutputCats.includes(a.cat);
+      const bOk = compatibleOutputCats.includes(b.cat);
+      return aOk === bOk ? 0 : (aOk ? -1 : 1);
+    });
+  });
+
   let activeOutputCategory = $derived(categoryFor(globalOutputFormat));
 
   let compatibleTypes = $derived(
@@ -1071,6 +1120,16 @@
     activeOutputCategory === 'archive'  ? ['archive'] :
     []
   );
+
+  // If the currently-selected item becomes incompatible with a newly-chosen
+  // output format, clear the selection so the user doesn't end up acting on
+  // an item they're not allowed to select.
+  $effect(() => {
+    if (!selectedItem) return;
+    if (compatibleTypes.length > 0 && !compatibleTypes.includes(selectedItem.mediaType)) {
+      handleSelect(null);
+    }
+  });
 
   // ── Selection handler ──────────────────────────────────────────────────────
   // All mutations happen synchronously in the same call so Svelte batches them
@@ -1142,18 +1201,24 @@
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights.
-           All controls form one attached group on the right: Browse | Clear | Expanded | Compact -->
-      <div class="flex items-center pl-20 pr-3 py-2.5 border-b border-[var(--border)] shrink-0"
-           data-tauri-drag-region>
+           Matches the right-sidebar header exactly (subtle accent wash,
+           blue-tinted bottom border, py-3 + larger buttons) so the two
+           "control planes" read as a unified band at the top of the app.
+           shrink-0 + outer aside's flex-col means the list below scrolls
+           underneath it. -->
+      <div class="flex items-center pl-20 pr-3 py-1.5 shrink-0"
+           data-tauri-drag-region
+           style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
+                  border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
         <div class="ml-auto flex items-stretch rounded overflow-hidden border border-[var(--border)] divide-x divide-[var(--border)]">
           <button
             onclick={onBrowse}
-            class="px-2.5 h-7 text-[11px] font-medium bg-[var(--accent)] text-white hover:opacity-90 transition-opacity shrink-0"
+            class="px-3 py-1 text-[13px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity shrink-0"
           >Browse…</button>
           {#if queue.length > 0}
             <button
               onclick={clearQueue}
-              class="px-2.5 h-7 text-[11px] text-[var(--text-secondary)]
+              class="px-3 py-1 text-[13px] font-semibold text-[var(--text-secondary)]
                      hover:text-red-400 hover:bg-red-900/20 transition-colors shrink-0"
             >Clear</button>
           {/if}
@@ -1161,7 +1226,7 @@
           <button
             onclick={() => queueCompact = false}
             title="Expanded list"
-            class="w-7 h-7 flex items-center justify-center transition-colors shrink-0
+            class="w-9 flex items-center justify-center transition-colors shrink-0
                    {!queueCompact
                      ? 'text-[var(--accent)] bg-[var(--accent)]/10'
                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
@@ -1175,7 +1240,7 @@
           <button
             onclick={() => queueCompact = true}
             title="Compact list"
-            class="w-7 h-7 flex items-center justify-center transition-colors shrink-0
+            class="w-9 flex items-center justify-center transition-colors shrink-0
                    {queueCompact
                      ? 'text-[var(--accent)] bg-[var(--accent)]/10'
                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
@@ -1217,6 +1282,7 @@
         oncancel={(id) => cancelJob(id)}
         compatibleTypes={compatibleTypes}
         compact={queueCompact}
+        showExtColumn={settings.fileTypeColumn}
       />
 
       <!-- Hidden folder picker input -->
@@ -1420,6 +1486,12 @@
                   <input type="checkbox" bind:checked={settings.autoCompact}
                          class="w-3.5 h-3.5 accent-[var(--accent)]" />
                 </label>
+                <!-- File type column toggle — off = ext merged into filename (gray) -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">File type column</span>
+                  <input type="checkbox" bind:checked={settings.fileTypeColumn}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
               </div>
 
               <!-- Section: Data -->
@@ -1450,10 +1522,14 @@
             Settings
           </button>
 
-          <!-- Status box: last job/queue outcome, right-justified -->
+          <!-- Status box: last job/queue outcome, right-justified.
+               Colour coded: gray = info, green = success, red = error/warning. -->
           <div class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded
                       bg-[var(--surface)]/60 border border-[var(--border)]" aria-live="polite">
-            <span class="text-[11px] text-[var(--text-secondary)] truncate text-right">{statusMessage}</span>
+            <span class="text-[11px] truncate text-right
+                         {statusKind === 'success' ? 'text-green-400'
+                          : statusKind === 'error' ? 'text-red-400'
+                          : 'text-[var(--text-secondary)]'}">{statusMessage}</span>
           </div>
         </div>
       </div>
@@ -1846,13 +1922,18 @@
            onmouseleave={() => { tooltipText = ''; }}
            onblur={() => tooltipText = ''}>
 
-      <!-- ── Panel header: Output picker + Presets ────────────────────────────── -->
-      <div class="flex items-center gap-2 px-3 py-2.5 border-b border-[var(--border)] shrink-0 relative">
+      <!-- ── Panel header: Output picker + Presets — the "control plane"
+           for the options panel. Always docked (shrink-0 + no scroll wrapper).
+           Subtle accent tint + heavier border make it visually distinct from
+           the option fields below. ────────────────────────────────────── -->
+      <div class="flex items-center gap-2 px-3 py-1.5 shrink-0 relative"
+           style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
+                  border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
 
         <!-- Output format button — shows selected format or "Output"; click to reset/pick -->
         <button
           onclick={() => { globalOutputFormat = null; }}
-          class="px-3 py-1.5 rounded text-[13px] font-semibold border transition-colors flex items-center gap-1.5 shrink-0
+          class="px-3 py-1 rounded text-[13px] font-semibold border transition-colors flex items-center gap-1.5 shrink-0
                  {globalOutputFormat
                    ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
@@ -1879,17 +1960,17 @@
               placeholder="Name…"
               autofocus
               onkeydown={(e) => { if (e.key === 'Enter') saveHeaderPreset(); if (e.key === 'Escape') { headerAdding = false; headerPresetName = ''; } }}
-              class="w-24 px-2 py-1.5 rounded-l text-[12px] border border-[var(--border)]
+              class="w-24 px-3 py-1 rounded-l text-[13px] border border-[var(--border)]
                      bg-[var(--surface)] text-[var(--text-primary)] outline-none
                      focus:border-[var(--accent)] transition-colors"
             />
             <button onclick={saveHeaderPreset}
-                    class="px-2 py-1.5 text-[12px] border -ml-px border-[var(--accent)]
+                    class="px-3 py-1 text-[13px] font-semibold border -ml-px border-[var(--accent)]
                            bg-[var(--accent)] text-white rounded-r hover:opacity-90 transition-opacity">
               Save
             </button>
             <button onclick={() => { headerAdding = false; headerPresetName = ''; }}
-                    class="px-2 py-1.5 text-[12px] border border-[var(--border)] rounded
+                    class="px-3 py-1 text-[13px] border border-[var(--border)] rounded
                            text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
               ✕
             </button>
@@ -1899,8 +1980,9 @@
             <select
               bind:value={headerPresetId}
               onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
-              class="px-2 py-1.5 rounded text-[12px] border border-[var(--border)]
+              class="px-3 py-1 rounded text-[13px] font-semibold border border-[var(--border)]
                      bg-[var(--surface)] outline-none transition-colors cursor-pointer
+                     hover:border-[var(--accent)]
                      {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
             >
               <option value="">Presets</option>
@@ -1924,7 +2006,7 @@
               onclick={() => { headerAdding = true; headerPresetName = ''; }}
               disabled={!activeOutputCategory || !['image','video','audio'].includes(activeOutputCategory)}
               title="Save current settings as preset"
-              class="px-2 py-1.5 text-[13px] border border-[var(--border)] rounded
+              class="w-9 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
                      text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
                      transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
             >+</button>
@@ -1932,7 +2014,7 @@
               onclick={() => deletePreset(headerPresetId)}
               disabled={!headerPresetId || headerPresetId.startsWith('__b_')}
               title="Delete this preset"
-              class="px-2 py-1.5 text-[13px] border border-[var(--border)] rounded
+              class="w-9 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
                      text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
                      transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
             >−</button>
@@ -1945,7 +2027,7 @@
         {#if !globalOutputFormat}
           <!-- ── Format picker: sectioned list with columns ─────────────────── -->
           <div class="space-y-4">
-            {#each FORMAT_GROUPS as group}
+            {#each sortedFormatGroups as group (group.cat)}
               <div>
                 <div class="flex items-center gap-2 mb-1.5">
                   <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
