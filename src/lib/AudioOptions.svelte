@@ -1,4 +1,5 @@
 <script>
+  import SilencePad from './SilencePad.svelte';
   let { options = $bindable(), errors = {} } = $props();
 
   const bitrates = [64, 128, 192, 256, 320];
@@ -170,6 +171,11 @@
     {#if errors.audio_trim}
       <p class="text-[11px] text-red-500 mt-1">{errors.audio_trim}</p>
     {/if}
+  </fieldset>
+
+  <fieldset>
+    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Silence Padding</legend>
+    <SilencePad bind:padFront={options.pad_front} bind:padEnd={options.pad_end} />
   </fieldset>
 
   <!-- ── Format-specific controls ──────────────────────────────────────── -->

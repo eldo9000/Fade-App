@@ -126,33 +126,17 @@
   </fieldset>
 
   <!-- ── Audio track ────────────────────────────────────────────────────── -->
-  <fieldset data-tooltip="Keep, strip, or extract the audio track from the video">
+  <fieldset data-tooltip="Strip the audio track from the video output">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Audio Track
     </legend>
-    <div class="flex flex-col">
-      <button onclick={() => { options.remove_audio = false; options.extract_audio = false; }}
-              class={segV(!options.remove_audio && !options.extract_audio, 0, 3)}>
-        Keep audio
-      </button>
-      <button onclick={() => { options.remove_audio = true; options.extract_audio = false; }}
-              class={segV(options.remove_audio, 1, 3)}>
-        Remove audio
-      </button>
-      <button onclick={() => { options.extract_audio = true; options.remove_audio = false; }}
-              class={segV(options.extract_audio, 2, 3)}>
-        Extract audio only
-      </button>
-    </div>
-    {#if options.extract_audio}
-      <div class="grid mt-2" style="grid-template-columns: repeat({audioFormats.length}, 1fr)">
-        {#each audioFormats as fmt, i}
-          <button onclick={() => options.audio_format = fmt}
-                  class={seg(options.audio_format === fmt, i, audioFormats.length)}
-          >{fmt}</button>
-        {/each}
-      </div>
-    {/if}
+    <label class="flex items-center gap-2 cursor-pointer text-[13px] text-[var(--text-primary)]">
+      <input type="checkbox"
+             checked={options.remove_audio === true}
+             onchange={(e) => { options.remove_audio = e.currentTarget.checked; options.extract_audio = false; }}
+             class="accent-[var(--accent)]" />
+      Remove audio
+    </label>
   </fieldset>
 
   <!-- ── Trim ───────────────────────────────────────────────────────────── -->

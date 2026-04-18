@@ -684,14 +684,12 @@
   $effect(() => {
     const it = item;
     const go = waveformReady;
-    const cached = cachedWaveform;
     const isDraft = draft;
     waveformData = null;
     if (!it || !go) return;
     const id = it.id; _capturedId = id;
-    if (cached) { waveformData = /** @type {any} */ (cached); mediaLoading = false; return; }
     mediaLoading = true;
-    invoke('get_waveform', { path: it.path, draft: isDraft })
+    invoke('get_waveform', { path: it.path, draft: isDraft, buckets: 4000 })
       .then(d => { if (_capturedId === id) { waveformData = /** @type {any} */ (d); mediaLoading = false; } })
       .catch(e => { console.error('get_waveform failed:', e); if (_capturedId === id) mediaLoading = false; });
   });
@@ -764,11 +762,19 @@
   // ── Derived fractions ─────────────────────────────────────────────────────
   let startFrac = $derived(
     duration && options?.trim_start != null
-      ? Math.max(0, Math.min(1, options.trim_start / duration)) : 0);
+      ? options.trim_start / duration : 0);
   let endFrac = $derived(
     duration && options?.trim_end != null
-      ? Math.max(0, Math.min(1, options.trim_end / duration)) : 1);
+      ? options.trim_end / duration : 1);
   let playFrac = $derived(duration ? Math.max(0, Math.min(1, currentTime / duration)) : 0);
+
+  // ── Silence padding fractions (relative to total displayed width) ─────────
+  let padFrontSecs   = $derived(options?.pad_front ?? 0);
+  let padEndSecs     = $derived(options?.pad_end   ?? 0);
+  let totalDispSecs  = $derived((duration ?? 0) + padFrontSecs + padEndSecs);
+  let silFrontFrac   = $derived(totalDispSecs > 0 ? padFrontSecs / totalDispSecs : 0);
+  let silEndFrac     = $derived(totalDispSecs > 0 ? padEndSecs   / totalDispSecs : 0);
+  let audioWidthFrac = $derived(Math.max(0, 1 - silFrontFrac - silEndFrac));
 
   // Fade handle fractions — clamped so they stay inside [startFrac, endFrac].
   let fadeInFrac = $derived(
@@ -807,11 +813,50 @@
   let _dragStartY     = 0;   // Y position at fade-handle mousedown
   let _dragStartCurve = 0;   // curve value at fade-handle mousedown
 
+  // ── Zoom / pan ────────────────────────────────────────────────────────────
+  let viewportEl = $state(null);
+  let zoom       = $state(1);
+  let panCenter  = $state(0.5);
+  let _panning   = $state(false);
+  let _panStartX = 0;
+  let _panStartPan = 0.5;
+  let widthPct  = $derived(zoom * 100);
+  let leftPct   = $derived((0.5 - panCenter * zoom) * 100);
+  // Bars get visually thin at low zoom; boost opacity there. 2× at zoom=1 → baseline at zoom≥4.
+  let waveOpacity = $derived(0.525 * (2 - Math.min(1, (zoom - 1) / 3)));
+
+  function _clampPan(p, z) {
+    if (z <= 1) return 0.5;
+    const half = 0.5 / z;
+    return Math.max(half, Math.min(1 - half, p));
+  }
+  function onTrackWheel(e) {
+    if (!viewportEl) return;
+    e.preventDefault();
+    const r = viewportEl.getBoundingClientRect();
+    const v = (e.clientX - r.left) / r.width;
+    const factor = e.deltaY < 0 ? 1.32 : 1 / 1.32;
+    const newZoom = Math.max(1, Math.min(20, zoom * factor));
+    if (newZoom === zoom) return;
+    const contentFrac = panCenter + (v - 0.5) / zoom;
+    panCenter = _clampPan(contentFrac - (v - 0.5) / newZoom, newZoom);
+    zoom = newZoom;
+  }
+  function onTrackAuxDown(e) {
+    if (e.button !== 1 && e.button !== 2) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (zoom <= 1) return;
+    _panning = true;
+    _panStartX = e.clientX;
+    _panStartPan = panCenter;
+  }
+
   function getFrac(e) {
     const el = _dragEl ?? trackEl;
     if (!el) return 0;
     const r = el.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    return (e.clientX - r.left) / r.width; // unclamped; trim may extend into silence padding
   }
   function fracToSecs(f) { return f * (duration ?? 0); }
 
@@ -838,55 +883,60 @@
   }
 
   function onTrackDown(e) {
+    if (e.button !== 0) return; // only left click seeks; middle/right bubble to viewport for pan
     if (!duration) return;
     _dragEl = trackEl;
     onscrubstart?.();
     dragging = 'playhead';
-    _beginScrub();
     seekWithDeclick(fracToSecs(getFrac(e)));
   }
   function onFilmstripDown(e) {
+    if (e.button !== 0) return;
     if (!duration) return;
     _dragEl = filmstripEl;
     onscrubstart?.();
     dragging = 'playhead';
-    _beginScrub();
     seekWithDeclick(fracToSecs(getFrac(e)));
   }
   function onWindowMouseMove(e) {
+    if (_panning && viewportEl) {
+      const r = viewportEl.getBoundingClientRect();
+      const dx = (e.clientX - _panStartX) / r.width;
+      panCenter = _clampPan(_panStartPan - dx / zoom, zoom);
+      return;
+    }
     if (!dragging || !duration) return;
     const f = getFrac(e);
-    const minGap = 1 / duration; // one-frame minimum separation
+    // Trim may extend into silence padding on either side; fractions are relative to audio duration.
+    const loFrac = -padFrontSecs / duration;
+    const hiFrac = 1 + padEndSecs / duration;
     if (dragging === 'start') {
-      // Can't go past end, and can't push fade-in handle past fade-out handle
-      const maxF = Math.min(endFrac - minGap, fadeOutFrac - (options?.fade_in ?? 0) / duration - minGap);
-      options.trim_start = fracToSecs(Math.max(0, Math.min(f, maxF)));
+      // Block against trim_end and against the fade-in handle hitting fade-out.
+      const maxF = Math.min(endFrac, fadeOutFrac - (options?.fade_in ?? 0) / duration);
+      options.trim_start = fracToSecs(Math.max(loFrac, Math.min(f, maxF)));
     }
     else if (dragging === 'end') {
-      // Can't go before start, and can't push fade-out handle before fade-in handle
-      const minF = Math.max(startFrac + minGap, fadeInFrac + (options?.fade_out ?? 0) / duration + minGap);
-      options.trim_end = fracToSecs(Math.min(1, Math.max(f, minF)));
+      const minF = Math.max(startFrac, fadeInFrac + (options?.fade_out ?? 0) / duration);
+      options.trim_end = fracToSecs(Math.min(hiFrac, Math.max(f, minF)));
     }
     else if (dragging === 'fade_in') {
-      // Horizontal: can't cross fade-out handle (leave one-frame gap)
-      options.fade_in = Math.max(0, fracToSecs(Math.min(f, fadeOutFrac - minGap)) - (options.trim_start ?? 0));
-      // Vertical: curve tension [-3, +3], drag down = positive (inverted)
+      // Horizontal: block against fade-out handle.
+      options.fade_in = Math.max(0, fracToSecs(Math.min(f, fadeOutFrac)) - (options.trim_start ?? 0));
       const dy = e.clientY - _dragStartY;
       options.fade_in_curve = Math.max(-3, Math.min(3, _dragStartCurve + dy / 100));
     }
     else if (dragging === 'fade_out') {
-      // Horizontal: can't cross fade-in handle (leave one-frame gap)
-      options.fade_out = Math.max(0, (options.trim_end ?? duration ?? 0) - fracToSecs(Math.max(f, fadeInFrac + minGap)));
-      // Vertical: curve tension [-3, +3], drag down = positive (inverted)
+      options.fade_out = Math.max(0, (options.trim_end ?? duration ?? 0) - fracToSecs(Math.max(f, fadeInFrac)));
       const dy = e.clientY - _dragStartY;
       options.fade_out_curve = Math.max(-3, Math.min(3, _dragStartCurve + dy / 100));
     }
-    else seekTo(fracToSecs(f));
+    else seekTo(fracToSecs(Math.max(0, Math.min(1, f))));
   }
   function onWindowMouseUp() {
     if (dragging === 'playhead') _endScrub();
     dragging = null;
     _dragEl = null;
+    _panning = false;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1037,10 +1087,39 @@
       <!-- Waveform track + controls (fixed 176px) -->
       <div class="shrink-0 flex flex-col" style="height:176px">
 
+      <!-- Viewport (clips zoomed content; wheel + middle/right-click pan) -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div bind:this={viewportEl}
+           class="flex-1 min-h-0 relative mx-3 mt-1.5 mb-1 overflow-hidden"
+           style="cursor:{_panning ? 'grabbing' : 'auto'}"
+           onwheel={onTrackWheel}
+           onmousedown={onTrackAuxDown}
+           oncontextmenu={(e) => { if (zoom > 1) e.preventDefault(); }}>
+      <!-- Zoom/pan transform layer -->
+      <div class="absolute inset-y-0" style="left:{leftPct}%; width:{widthPct}%; transition:left 0.18s ease, width 0.18s ease">
+      <!-- Silence region: front -->
+      {#if silFrontFrac > 0}
+        <div class="absolute inset-y-0 left-0 rounded-l overflow-hidden pointer-events-none"
+             style="width:{silFrontFrac * 100}%; background:#0e0e0e; border-right:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease">
+          <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 10 100" xmlns="http://www.w3.org/2000/svg">
+            <line x1="0" y1="50" x2="10" y2="50" stroke="rgba(96,165,250,0.45)" stroke-width="1" vector-effect="non-scaling-stroke" />
+          </svg>
+        </div>
+      {/if}
+      <!-- Silence region: end -->
+      {#if silEndFrac > 0}
+        <div class="absolute inset-y-0 right-0 rounded-r overflow-hidden pointer-events-none"
+             style="width:{silEndFrac * 100}%; background:#0e0e0e; border-left:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease">
+          <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 10 100" xmlns="http://www.w3.org/2000/svg">
+            <line x1="0" y1="50" x2="10" y2="50" stroke="rgba(96,165,250,0.45)" stroke-width="1" vector-effect="non-scaling-stroke" />
+          </svg>
+        </div>
+      {/if}
       <!-- Track (waveform + trim + playhead) -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div bind:this={trackEl}
-           class="flex-1 min-h-0 relative mx-3 mt-1.5 mb-1 rounded cursor-crosshair"
+           class="absolute inset-y-0 rounded cursor-crosshair"
+           style="left:{silFrontFrac * 100}%; width:{audioWidthFrac * 100}%; transition:left 0.18s ease, width 0.18s ease"
            onmousedown={onTrackDown}>
 
     <!-- Background / waveform -->
@@ -1048,12 +1127,14 @@
       {#if waveformData && waveformData.amplitudes.length > 0}
         <svg class="w-full h-full" preserveAspectRatio="none"
              viewBox="0 0 {waveformData.amplitudes.length} 100" xmlns="http://www.w3.org/2000/svg">
-          {#each waveformData.amplitudes as amp, i}
-            {@const h = Math.max(1, amp * 96)}
-            {@const y = (100 - h) / 2}
-            <rect x={i} y={y} width={0.85} height={h}
-                  fill={`hsl(${waveformData.hues[i]},100%,55%)`} opacity="0.525" />
-          {/each}
+          <g style="opacity:{waveOpacity}; transition:opacity 0.18s ease">
+            {#each waveformData.amplitudes as amp, i}
+              {@const h = Math.max(1, amp * 96)}
+              {@const y = (100 - h) / 2}
+              <rect x={i} y={y} width={0.85} height={h}
+                    fill={`hsl(${waveformData.hues[i]},100%,55%)`} />
+            {/each}
+          </g>
         </svg>
       {:else if item}
         <div class="absolute inset-0 flex items-center justify-center">
@@ -1170,12 +1251,14 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="absolute inset-y-0 z-30 cursor-ew-resize"
            style="left:{playFrac * 100}%; transform:translateX(-50%)"
-           onmousedown={(e) => { e.stopPropagation(); dragging = 'playhead'; _beginScrub(); }}>
+           onmousedown={(e) => { if (e.button !== 0) return; e.stopPropagation(); dragging = 'playhead'; }}>
         <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px"
              style="background:#60a5fa"></div>
       </div>
     {/if}
       </div><!-- /track -->
+      </div><!-- /transform layer -->
+      </div><!-- /viewport -->
 
       <!-- Controls row -->
       <div class="relative shrink-0" style="height:34px">

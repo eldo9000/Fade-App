@@ -220,9 +220,15 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         args.extend(["-ar".to_string(), sr.to_string()]);
     }
 
-    // DSP filter chain — order: filters → stereo width → loudnorm → limiter
+    // DSP filter chain — order: pad_front → filters → stereo width → loudnorm → limiter → pad_end
     let mut filters: Vec<String> = Vec::new();
 
+    if let Some(secs) = opts.pad_front {
+        if secs > 0.0 {
+            let ms = (secs * 1000.0).round() as u64;
+            filters.push(format!("adelay={ms}:all=1"));
+        }
+    }
     if let Some(freq) = opts.dsp_highpass_freq {
         if freq > 0.0 {
             filters.push(format!("highpass=f={freq:.1}:p=2"));
@@ -249,6 +255,11 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
     if let Some(db) = opts.dsp_limiter_db {
         let linear = 10.0_f64.powf(db / 20.0);
         filters.push(format!("alimiter=limit={linear:.6}:attack=5:release=50"));
+    }
+    if let Some(secs) = opts.pad_end {
+        if secs > 0.0 {
+            filters.push(format!("apad=pad_dur={secs:.3}"));
+        }
     }
 
     if !filters.is_empty() {

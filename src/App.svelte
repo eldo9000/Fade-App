@@ -524,7 +524,7 @@
     bitrate: 192,
     sample_rate: 48000,
     // ── Format-specific ──
-    crf: 23,
+    crf: 20,
     preset: 'medium',
     h264_profile: 'high',
     pix_fmt: 'yuv420p',
@@ -553,6 +553,8 @@
     trim_end: null,
     fade_in: null,
     fade_out: null,
+    pad_front: null,
+    pad_end: null,
     dsp_highpass_freq: null,
     dsp_lowpass_freq: null,
     dsp_stereo_width: null,
