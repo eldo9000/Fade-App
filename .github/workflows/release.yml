@@ -52,7 +52,10 @@ jobs:
             echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set."
             exit 1
           fi
-          CLEAN_KEY=$(printf '%s' "$_RAW_TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')
+          # tr -cd keeps ONLY base64 chars — strips whitespace, BOMs, zero-width
+          # joiners, stray quotes, and anything else GitHub's secret UI might
+          # paste into the value.
+          CLEAN_KEY=$(printf '%s' "$_RAW_TAURI_SIGNING_PRIVATE_KEY" | LC_ALL=C tr -cd 'A-Za-z0-9+/=')
           CLEAN_PW=$(printf '%s' "${_RAW_TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" | tr -d '\r\n')
           RAW_LEN=${#_RAW_TAURI_SIGNING_PRIVATE_KEY}
           CLEAN_LEN=${#CLEAN_KEY}
