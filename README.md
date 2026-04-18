@@ -2,7 +2,9 @@
 
 # Fade
 
-**The multimedia utility knife. For when you need to do that one thing to that one file — without stopping what you're actually doing.**
+The multimedia utility knife. 
+
+For when you need to do that one thing to that one file, **without stopping what you're actually doing.**
 
 ![Fade screenshot](Screenshot.2.jpg)
 
