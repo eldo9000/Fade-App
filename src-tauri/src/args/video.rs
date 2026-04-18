@@ -71,32 +71,38 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
                 "cbr" => {
                     // Prefer dedicated webm_video_bitrate; fall back to shared
                     // `bitrate` (legacy behavior) so older FE payloads still work.
-                    let br = opts.webm_video_bitrate
-                        .or(opts.bitrate)
-                        .unwrap_or(2000);
+                    let br = opts.webm_video_bitrate.or(opts.bitrate).unwrap_or(2000);
                     args.extend([
-                        "-b:v".to_string(), format!("{}k", br),
-                        "-minrate".to_string(), format!("{}k", br),
-                        "-maxrate".to_string(), format!("{}k", br),
+                        "-b:v".to_string(),
+                        format!("{}k", br),
+                        "-minrate".to_string(),
+                        format!("{}k", br),
+                        "-maxrate".to_string(),
+                        format!("{}k", br),
                     ]);
                     format_override_applied = true;
-                },
+                }
                 "cvbr" => {
-                    let br = opts.webm_video_bitrate
-                        .or(opts.bitrate)
-                        .unwrap_or(2000);
+                    let br = opts.webm_video_bitrate.or(opts.bitrate).unwrap_or(2000);
                     let maxr = (br as f64 * 1.5).round() as u32;
                     args.extend([
-                        "-b:v".to_string(), format!("{}k", br),
-                        "-maxrate".to_string(), format!("{}k", maxr),
+                        "-b:v".to_string(),
+                        format!("{}k", br),
+                        "-maxrate".to_string(),
+                        format!("{}k", maxr),
                     ]);
                     format_override_applied = true;
-                },
+                }
                 _ => {
                     // "crf" — rely on -crf (already emitted above) + -b:v 0
-                    args.extend(["-b:v".to_string(), "0".to_string(), "-crf".to_string(), crf.to_string()]);
+                    args.extend([
+                        "-b:v".to_string(),
+                        "0".to_string(),
+                        "-crf".to_string(),
+                        crf.to_string(),
+                    ]);
                     format_override_applied = true;
-                },
+                }
             }
         }
     }
@@ -132,7 +138,7 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
         match opts.mkv_subtitle.as_deref() {
             Some("none") => args.push("-sn".to_string()),
             Some("copy") => args.extend(["-c:s".to_string(), "copy".to_string()]),
-            _ => {},
+            _ => {}
         }
     }
 
@@ -143,7 +149,10 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
             // When webm_video_bitrate is supplied the audio `bitrate` stays
             // available, so only suppress audio when we fell back to it.
             let consumed_for_video = opts.output_format == "webm"
-                && matches!(opts.webm_bitrate_mode.as_deref(), Some("cbr") | Some("cvbr"))
+                && matches!(
+                    opts.webm_bitrate_mode.as_deref(),
+                    Some("cbr") | Some("cvbr")
+                )
                 && opts.webm_video_bitrate.is_none();
             if !consumed_for_video {
                 args.extend(["-b:a".to_string(), format!("{}k", br)]);
@@ -200,32 +209,38 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             if let Some(pf) = opts.pix_fmt.as_deref() {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);
             }
-        },
+        }
         "vp9" => {
             // WebM override path handles -b:v/-crf when output_format=="webm";
             // for non-webm mp4/mkv containers with vp9, emit defaults here.
             if opts.output_format != "webm" {
                 let crf = opts.crf.unwrap_or(33);
                 out.extend([
-                    "-crf".to_string(), crf.to_string(),
-                    "-b:v".to_string(), "0".to_string(),
+                    "-crf".to_string(),
+                    crf.to_string(),
+                    "-b:v".to_string(),
+                    "0".to_string(),
                 ]);
             }
             if let Some(s) = opts.vp9_speed {
                 out.extend([
-                    "-deadline".to_string(), "good".to_string(),
-                    "-cpu-used".to_string(), s.to_string(),
+                    "-deadline".to_string(),
+                    "good".to_string(),
+                    "-cpu-used".to_string(),
+                    s.to_string(),
                 ]);
             }
             if let Some(pf) = opts.pix_fmt.as_deref() {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);
             }
-        },
+        }
         "av1" => {
             let crf = opts.crf.unwrap_or(30);
             out.extend([
-                "-crf".to_string(), crf.to_string(),
-                "-b:v".to_string(), "0".to_string(),
+                "-crf".to_string(),
+                crf.to_string(),
+                "-b:v".to_string(),
+                "0".to_string(),
             ]);
             if let Some(s) = opts.av1_speed {
                 out.extend(["-cpu-used".to_string(), s.to_string()]);
@@ -233,8 +248,8 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             if let Some(pf) = opts.pix_fmt.as_deref() {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);
             }
-        },
-        _ => {},
+        }
+        _ => {}
     }
     out
 }
@@ -317,15 +332,344 @@ pub fn resolution_to_scale(res: &str) -> String {
         "1920x1080" => {
             "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
                 .to_string()
-        },
+        }
         "1280x720" => {
             "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
                 .to_string()
-        },
+        }
         "854x480" => {
             "scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2"
                 .to_string()
-        },
+        }
         other => format!("scale={}", other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConvertOptions;
+
+    fn find_pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2).any(|w| w[0] == flag && w[1] == value)
+    }
+
+    fn webm_vp9(mode: &str) -> ConvertOptions {
+        ConvertOptions {
+            output_format: "webm".into(),
+            codec: Some("vp9".into()),
+            webm_bitrate_mode: Some(mode.into()),
+            ..Default::default()
+        }
+    }
+
+    // ── webm CBR matrix ──────────────────────────────────────────────────────
+    #[test]
+    fn video_args_webm_cbr_with_webm_video_bitrate() {
+        let opts = ConvertOptions {
+            webm_video_bitrate: Some(3000),
+            ..webm_vp9("cbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "3000k"));
+        assert!(find_pair(&args, "-minrate", "3000k"));
+        assert!(find_pair(&args, "-maxrate", "3000k"));
+    }
+
+    #[test]
+    fn video_args_webm_cbr_falls_back_to_bitrate() {
+        let opts = ConvertOptions {
+            bitrate: Some(1800),
+            ..webm_vp9("cbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "1800k"));
+        // audio bitrate should be suppressed because bitrate was consumed.
+        assert!(!find_pair(&args, "-b:a", "1800k"));
+    }
+
+    #[test]
+    fn video_args_webm_cbr_both_prefers_webm_video_bitrate_and_keeps_audio() {
+        let opts = ConvertOptions {
+            webm_video_bitrate: Some(5000),
+            bitrate: Some(128),
+            ..webm_vp9("cbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "5000k"));
+        assert!(find_pair(&args, "-b:a", "128k"));
+    }
+
+    #[test]
+    fn video_args_webm_cbr_default_bitrate_when_none() {
+        let opts = webm_vp9("cbr");
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "2000k"));
+        assert!(find_pair(&args, "-minrate", "2000k"));
+        assert!(find_pair(&args, "-maxrate", "2000k"));
+    }
+
+    // ── webm CVBR matrix ─────────────────────────────────────────────────────
+    #[test]
+    fn video_args_webm_cvbr_with_webm_video_bitrate() {
+        let opts = ConvertOptions {
+            webm_video_bitrate: Some(4000),
+            ..webm_vp9("cvbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "4000k"));
+        assert!(find_pair(&args, "-maxrate", "6000k"));
+    }
+
+    #[test]
+    fn video_args_webm_cvbr_falls_back_to_bitrate() {
+        let opts = ConvertOptions {
+            bitrate: Some(1000),
+            ..webm_vp9("cvbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "1000k"));
+        assert!(find_pair(&args, "-maxrate", "1500k"));
+        assert!(!find_pair(&args, "-b:a", "1000k"));
+    }
+
+    #[test]
+    fn video_args_webm_cvbr_default_bitrate_when_none() {
+        let opts = webm_vp9("cvbr");
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "2000k"));
+        assert!(find_pair(&args, "-maxrate", "3000k"));
+    }
+
+    // ── webm CRF (VBR) mode ─────────────────────────────────────────────────
+    #[test]
+    fn video_args_webm_crf_uses_b_v_zero_and_default_crf() {
+        let opts = webm_vp9("crf");
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "0"));
+        assert!(find_pair(&args, "-crf", "33"));
+    }
+
+    #[test]
+    fn video_args_webm_crf_honors_explicit_crf() {
+        let opts = ConvertOptions {
+            crf: Some(24),
+            ..webm_vp9("crf")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-crf", "24"));
+    }
+
+    // ── Audio suppression guard ─────────────────────────────────────────────
+    #[test]
+    fn video_args_webm_cbr_suppresses_audio_bitrate_when_consumed_for_video() {
+        // No webm_video_bitrate + bitrate set → bitrate consumed as video kbps,
+        // must NOT appear as -b:a.
+        let opts = ConvertOptions {
+            bitrate: Some(2500),
+            ..webm_vp9("cbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(!args.windows(2).any(|w| w[0] == "-b:a"));
+    }
+
+    #[test]
+    fn video_args_webm_crf_does_not_suppress_audio_bitrate() {
+        // CRF mode does not consume `bitrate` — audio flag must survive.
+        let opts = ConvertOptions {
+            bitrate: Some(192),
+            ..webm_vp9("crf")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:a", "192k"));
+    }
+
+    // ── Non-webm output formats ─────────────────────────────────────────────
+    #[test]
+    fn video_args_mp4_h264_emits_codec_and_preset_defaults() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            crf: Some(20),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(find_pair(&args, "-vcodec", "libx264"));
+        assert!(find_pair(&args, "-crf", "20"));
+        assert!(find_pair(&args, "-preset", "medium"));
+    }
+
+    #[test]
+    fn video_args_mp4_h265_uses_libx265() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h265".into()),
+            preset: Some("slow".into()),
+            h264_profile: Some("main".into()),
+            tune: Some("film".into()),
+            pix_fmt: Some("yuv420p".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(find_pair(&args, "-vcodec", "libx265"));
+        assert!(find_pair(&args, "-preset", "slow"));
+        assert!(find_pair(&args, "-profile:v", "main"));
+        assert!(find_pair(&args, "-tune", "film"));
+        assert!(find_pair(&args, "-pix_fmt", "yuv420p"));
+    }
+
+    #[test]
+    fn video_args_mp4_tune_none_is_skipped() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            tune: Some("none".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(!args.contains(&"-tune".to_string()));
+    }
+
+    #[test]
+    fn video_args_mov_copy_codec_uses_c_copy() {
+        let opts = ConvertOptions {
+            output_format: "mov".into(),
+            codec: Some("copy".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mov", &opts);
+        assert!(find_pair(&args, "-c", "copy"));
+        assert!(!args.contains(&"-crf".to_string()));
+    }
+
+    #[test]
+    fn video_args_avi_video_bitrate_override() {
+        let opts = ConvertOptions {
+            output_format: "avi".into(),
+            codec: Some("h264".into()),
+            avi_video_bitrate: Some(4500),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.avi", &opts);
+        assert!(find_pair(&args, "-b:v", "4500k"));
+    }
+
+    #[test]
+    fn video_args_mp4_vp9_non_webm_path_emits_b_v_zero() {
+        // vp9 inside an mp4/mkv container takes the non-webm default path.
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("vp9".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-crf", "33"));
+        assert!(find_pair(&args, "-b:v", "0"));
+    }
+
+    #[test]
+    fn video_args_av1_default_crf_is_30() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("av1".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-crf", "30"));
+        assert!(find_pair(&args, "-b:v", "0"));
+    }
+
+    #[test]
+    fn video_args_remove_audio_emits_an() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            remove_audio: Some(true),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"-an".to_string()));
+        assert!(find_pair(&args, "-vcodec", "libx264"));
+    }
+
+    #[test]
+    fn video_args_extract_audio_emits_vn_and_skips_video_flags() {
+        let opts = ConvertOptions {
+            output_format: "mp3".into(),
+            codec: Some("h264".into()),
+            extract_audio: Some(true),
+            bitrate: Some(192),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp3", &opts);
+        assert!(args.contains(&"-vn".to_string()));
+        assert!(!args.contains(&"-crf".to_string()));
+        assert!(find_pair(&args, "-b:a", "192k"));
+    }
+
+    #[test]
+    fn video_args_preserve_metadata_false_strips() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            preserve_metadata: Some(false),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-map_metadata", "-1"));
+    }
+
+    #[test]
+    fn video_args_mkv_subtitle_burn_adds_filter() {
+        let opts = ConvertOptions {
+            output_format: "mkv".into(),
+            codec: Some("h264".into()),
+            mkv_subtitle: Some("burn".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mkv", "out.mkv", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        assert!(args[vf_idx + 1].contains("subtitles=in.mkv"));
+    }
+
+    #[test]
+    fn video_args_mkv_subtitle_none_emits_sn() {
+        let opts = ConvertOptions {
+            output_format: "mkv".into(),
+            codec: Some("h264".into()),
+            mkv_subtitle: Some("none".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mkv", "out.mkv", &opts);
+        assert!(args.contains(&"-sn".to_string()));
+    }
+
+    #[test]
+    fn video_args_resolution_1080p_adds_scale_pad() {
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            resolution: Some("1920x1080".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        assert!(args[vf_idx + 1].contains("scale=1920:1080"));
+    }
+
+    #[test]
+    fn video_args_gif_dispatches_to_gif_pipeline() {
+        // output_format=gif without extract_audio should route to build_gif_args,
+        // which emits palettegen/paletteuse and -an but no codec flags.
+        let opts = ConvertOptions {
+            output_format: "gif".into(),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.gif", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        assert!(args[vf_idx + 1].contains("palettegen"));
+        assert!(args[vf_idx + 1].contains("paletteuse"));
+        assert!(args.contains(&"-an".to_string()));
+        assert!(!args.contains(&"-vcodec".to_string()));
     }
 }
