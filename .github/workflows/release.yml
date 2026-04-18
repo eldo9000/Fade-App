@@ -77,6 +77,23 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Configure git auth for private cargo deps
+        # Fade depends on `librewin-common` from the private repo
+        # eldo9000/Libre-Apps. CI's default GITHUB_TOKEN can only read the
+        # current repo, so we rewrite https://github.com/ to include a PAT
+        # with `Contents: Read` on Libre-Apps. Secret: LIBRE_APPS_TOKEN.
+        env:
+          LIBRE_APPS_TOKEN: ${{ secrets.LIBRE_APPS_TOKEN }}
+        run: |
+          if [ -z "$LIBRE_APPS_TOKEN" ]; then
+            echo "::error::LIBRE_APPS_TOKEN secret is not set. Create a fine-grained PAT with Contents:Read on eldo9000/Libre-Apps and add it as a repo secret."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${LIBRE_APPS_TOKEN}@github.com/".insteadOf "https://github.com/"
+          # Tell cargo to shell out to the git CLI (which now has our rewrite)
+          # instead of using libgit2's built-in auth, which ignores url.insteadOf.
+          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
+
       - name: Cache cargo registry + target
         uses: actions/cache@v4
         with:
