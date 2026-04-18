@@ -28,15 +28,41 @@ jobs:
       contents: write
 
     env:
-      # Used by `tauri build` to auto-sign the updater bundle.
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Raw secrets — sanitized into TAURI_SIGNING_* below before use.
+      _RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      _RAW_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Sanitize signing secrets
+        # GitHub's secret UI sometimes appends newlines / whitespace on paste,
+        # which corrupts the base64 key when tauri's signer decodes it.
+        # Strip all whitespace and export clean values for later steps.
+        run: |
+          if [ -z "${_RAW_TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set."
+            exit 1
+          fi
+          CLEAN_KEY=$(printf '%s' "$_RAW_TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')
+          CLEAN_PW=$(printf '%s' "${_RAW_TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" | tr -d '\r\n')
+          # Length sanity check: warn (don't fail) if anything was stripped.
+          RAW_LEN=${#_RAW_TAURI_SIGNING_PRIVATE_KEY}
+          CLEAN_LEN=${#CLEAN_KEY}
+          if [ "$RAW_LEN" != "$CLEAN_LEN" ]; then
+            echo "::warning::Stripped $((RAW_LEN - CLEAN_LEN)) whitespace char(s) from TAURI_SIGNING_PRIVATE_KEY (raw=$RAW_LEN, clean=$CLEAN_LEN)."
+          fi
+          # Mask before exporting so logs don't leak the value.
+          echo "::add-mask::$CLEAN_KEY"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
+            echo "$CLEAN_KEY"
+            echo "EOF"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$CLEAN_PW"
+          } >> "$GITHUB_ENV"
 
       - name: Resolve tag
         id: tag
