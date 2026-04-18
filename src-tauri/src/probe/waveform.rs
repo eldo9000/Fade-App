@@ -32,7 +32,10 @@ pub fn get_waveform(path: String, draft: bool) -> Result<WaveformData, String> {
         .map_err(|e| format!("ffmpeg not found: {e}"))?;
 
     if output.stdout.is_empty() {
-        return Ok(WaveformData { amplitudes: vec![], hues: vec![] });
+        return Ok(WaveformData {
+            amplitudes: vec![],
+            hues: vec![],
+        });
     }
 
     let samples: Vec<f32> = output
@@ -67,4 +70,53 @@ pub fn get_waveform(path: String, draft: bool) -> Result<WaveformData, String> {
     }
 
     Ok(WaveformData { amplitudes, hues })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zcr_to_hue_low_maps_to_red() {
+        assert_eq!(zcr_to_hue(0.0), 0);
+    }
+
+    #[test]
+    fn zcr_to_hue_mid_maps_to_green() {
+        assert_eq!(zcr_to_hue(0.5), 120);
+    }
+
+    #[test]
+    fn zcr_to_hue_high_maps_to_blue() {
+        assert_eq!(zcr_to_hue(1.0), 240);
+    }
+
+    #[test]
+    fn zcr_to_hue_clamps_out_of_range_inputs() {
+        assert_eq!(zcr_to_hue(-1.0), 0, "negative clamps to 0 -> red");
+        assert_eq!(zcr_to_hue(2.0), 240, "above 1.0 clamps to blue");
+        assert_eq!(zcr_to_hue(f32::NAN), 0, "NaN clamps via clamp semantics");
+    }
+
+    #[test]
+    fn zcr_to_hue_never_exceeds_240() {
+        for i in 0..=100 {
+            let z = i as f32 / 100.0;
+            let h = zcr_to_hue(z);
+            assert!(h <= 240, "zcr={z} produced hue {h}");
+        }
+    }
+
+    #[test]
+    fn waveform_data_serializes_as_expected_shape() {
+        let w = WaveformData {
+            amplitudes: vec![0.1, 0.5, 1.0],
+            hues: vec![0, 120, 240],
+        };
+        let v: serde_json::Value = serde_json::to_value(&w).unwrap();
+        assert!(v["amplitudes"].is_array());
+        assert!(v["hues"].is_array());
+        assert_eq!(v["amplitudes"].as_array().unwrap().len(), 3);
+        assert_eq!(v["hues"][1].as_u64(), Some(120));
+    }
 }

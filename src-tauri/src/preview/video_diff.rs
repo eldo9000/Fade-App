@@ -110,15 +110,24 @@ pub fn preview_diff(
 
     let diff_args: Vec<String> = vec![
         "-y".to_string(),
-        "-ss".to_string(), format!("{pre_seek:.3}"),
-        "-i".to_string(), path.clone(),
-        "-i".to_string(), encoded.to_string_lossy().to_string(),
-        "-filter_complex".to_string(), filter,
-        "-map".to_string(), "[o]".to_string(),
-        "-c:v".to_string(), "libx264".to_string(),
-        "-preset".to_string(), "ultrafast".to_string(),
-        "-crf".to_string(), "16".to_string(),
-        "-pix_fmt".to_string(), "yuv420p".to_string(),
+        "-ss".to_string(),
+        format!("{pre_seek:.3}"),
+        "-i".to_string(),
+        path.clone(),
+        "-i".to_string(),
+        encoded.to_string_lossy().to_string(),
+        "-filter_complex".to_string(),
+        filter,
+        "-map".to_string(),
+        "[o]".to_string(),
+        "-c:v".to_string(),
+        "libx264".to_string(),
+        "-preset".to_string(),
+        "ultrafast".to_string(),
+        "-crf".to_string(),
+        "16".to_string(),
+        "-pix_fmt".to_string(),
+        "yuv420p".to_string(),
         "-an".to_string(),
         diff.to_string_lossy().to_string(),
     ];
@@ -142,4 +151,43 @@ pub fn preview_diff(
         path: diff.to_string_lossy().to_string(),
         note: format!("codec={codec} handles={handle:.1}s amp={amp:.0}×"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn errors_when_file_missing() {
+        let missing = std::env::temp_dir().join(format!(
+            "fade-diff-missing-{}-{}.mp4",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let res = preview_diff(
+            missing.to_string_lossy().to_string(),
+            "h264".to_string(),
+            None,
+            5.0,
+            Some(1.0),
+            Some(3.0),
+            Some(8.0),
+        );
+        let err = match res {
+            Err(e) => e,
+            Ok(_) => panic!("expected Err"),
+        };
+        assert!(err.starts_with("File not found"), "got: {err}");
+    }
+
+    #[test]
+    fn diff_preview_serializes() {
+        let d = DiffPreview {
+            path: "/tmp/out.mp4".to_string(),
+            note: "codec=h264 handles=3.0s amp=8×".to_string(),
+        };
+        let v: serde_json::Value = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["path"], "/tmp/out.mp4");
+        assert!(v["note"].as_str().unwrap().contains("codec=h264"));
+    }
 }
