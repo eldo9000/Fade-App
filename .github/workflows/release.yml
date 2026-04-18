@@ -85,13 +85,34 @@ jobs:
         env:
           LIBRE_APPS_TOKEN: ${{ secrets.LIBRE_APPS_TOKEN }}
         run: |
-          if [ -z "$LIBRE_APPS_TOKEN" ]; then
+          set -euo pipefail
+          if [ -z "${LIBRE_APPS_TOKEN:-}" ]; then
             echo "::error::LIBRE_APPS_TOKEN secret is not set. Create a fine-grained PAT with Contents:Read on eldo9000/Libre-Apps and add it as a repo secret."
             exit 1
           fi
-          git config --global url."https://x-access-token:${LIBRE_APPS_TOKEN}@github.com/".insteadOf "https://github.com/"
-          # Tell cargo to shell out to the git CLI (which now has our rewrite)
-          # instead of using libgit2's built-in auth, which ignores url.insteadOf.
+
+          # Probe the token against the API so a misconfigured PAT fails
+          # here with a clear message rather than inside cargo.
+          code=$(curl -sS -o /tmp/probe.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${LIBRE_APPS_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/eldo9000/Libre-Apps)
+          if [ "$code" != "200" ]; then
+            echo "::error::LIBRE_APPS_TOKEN cannot read eldo9000/Libre-Apps (HTTP $code)."
+            echo "Fine-grained PAT requirements:"
+            echo "  - Resource owner: eldo9000"
+            echo "  - Repository access: eldo9000/Libre-Apps"
+            echo "  - Permissions: Contents=Read AND Metadata=Read"
+            cat /tmp/probe.json
+            exit 1
+          fi
+
+          # `oauth2:TOKEN@github.com/` works for both classic and fine-grained PATs.
+          git config --global \
+            "url.https://oauth2:${LIBRE_APPS_TOKEN}@github.com/.insteadOf" \
+            "https://github.com/"
+          # Make cargo shell out to the git CLI so it honors url.insteadOf
+          # (libgit2's built-in auth ignores the rewrite).
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry + target
