@@ -1,11 +1,16 @@
 name: Release
 
-# Builds, signs, and publishes a Fade release for macOS aarch64 (Apple Silicon).
+# Builds, signs, and publishes a Fade release for macOS (aarch64), Linux
+# (x86_64), and Windows (x86_64).
 #
-# Distribution is unsigned (no Apple Developer ID). The .app is ad-hoc signed
-# with `codesign --sign -` and has its quarantine xattr stripped before being
-# packed. The updater bundle (Fade.app.tar.gz) is then re-signed with the
+# macOS distribution is unsigned (no Apple Developer ID). The .app is ad-hoc
+# signed with `codesign --sign -` and has its quarantine xattr stripped before
+# being packed. The updater bundle (Fade.app.tar.gz) is then re-signed with the
 # Tauri minisign key so the embedded public key in tauri.conf.json verifies it.
+#
+# Linux (AppImage) and Windows (NSIS) updater bundles + sigs are produced
+# directly by `tauri build` when TAURI_SIGNING_PRIVATE_KEY is set — no
+# re-sign step is needed on those platforms.
 #
 # See docs/RELEASE.md for the full contract.
 
@@ -21,16 +26,40 @@ on:
         type: string
 
 jobs:
-  release:
-    name: Build and release (macOS aarch64)
-    runs-on: macos-14
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
     permissions:
-      contents: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    defaults:
+      run:
+        # Git Bash ships on the Windows runner, so `bash` works on all three
+        # platforms. Lets us keep a single shell dialect across `run:` blocks.
+        shell: bash
 
     env:
       # Raw secrets — sanitized into TAURI_SIGNING_* below before use.
       _RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       _RAW_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: Checkout
@@ -46,6 +75,10 @@ jobs:
         # keyfile content Tauri expects, regardless of whitespace/BOMs/invisible
         # characters that GitHub's secret UI may introduce (base64 tolerates
         # them). We write the decoded bytes to a file and hand Tauri the path.
+        #
+        # `base64 --decode` is the cross-platform spelling: GNU coreutils
+        # (Linux, Windows Git Bash) and BSD base64 (macOS) both accept it,
+        # whereas `-D` is BSD-only and `-d` is GNU-only.
         run: |
           set -euo pipefail
           if [ -z "${_RAW_TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
@@ -53,8 +86,7 @@ jobs:
             exit 1
           fi
           KEY_FILE="$RUNNER_TEMP/fade-signing.key"
-          # `base64 -D` tolerates any whitespace/newlines GitHub might inject.
-          if ! printf '%s' "$_RAW_TAURI_SIGNING_PRIVATE_KEY" | base64 -D > "$KEY_FILE" 2>/tmp/b64err; then
+          if ! printf '%s' "$_RAW_TAURI_SIGNING_PRIVATE_KEY" | base64 --decode > "$KEY_FILE" 2>/tmp/b64err; then
             echo "::error::Could not base64-decode TAURI_SIGNING_PRIVATE_KEY. The secret must be the output of: base64 -i ~/.tauri/fade.key | tr -d '\\n'"
             cat /tmp/b64err
             exit 1
@@ -110,7 +142,20 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            file
 
       - name: Configure git auth for private cargo deps
         # Fade depends on `librewin-common` from the private repo
@@ -157,18 +202,21 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-aarch64-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-aarch64-
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
 
       - name: Install npm deps
         run: npm ci
 
-      - name: Build Tauri app (aarch64)
-        run: npm run tauri build -- --target aarch64-apple-darwin
+      - name: Build Tauri app
+        run: npm run tauri build -- --target ${{ matrix.target }}
 
-      - name: Locate build output
-        id: artifacts
+      # ---- macOS-only: ad-hoc sign + repack + re-sign updater tarball ----
+
+      - name: Locate macOS build output
+        id: mac_artifacts
+        if: matrix.platform == 'darwin-aarch64'
         run: |
           set -euo pipefail
           BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle"
@@ -191,9 +239,10 @@ jobs:
           echo "bundle_dir=$BUNDLE_DIR"   >> "$GITHUB_OUTPUT"
 
       - name: Ad-hoc codesign and strip quarantine
+        if: matrix.platform == 'darwin-aarch64'
         run: |
           set -euo pipefail
-          APP='${{ steps.artifacts.outputs.app_path }}'
+          APP='${{ steps.mac_artifacts.outputs.app_path }}'
           xattr -cr "$APP"
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP" || true
@@ -203,10 +252,11 @@ jobs:
         # .app. Overwrite it by re-tarring the now-signed .app so the tarball
         # users download matches the DMG contents. We then regenerate the .sig
         # below using the Tauri minisign key.
+        if: matrix.platform == 'darwin-aarch64'
         run: |
           set -euo pipefail
-          APP='${{ steps.artifacts.outputs.app_path }}'
-          TARBALL='${{ steps.artifacts.outputs.tarball }}'
+          APP='${{ steps.mac_artifacts.outputs.app_path }}'
+          TARBALL='${{ steps.mac_artifacts.outputs.tarball }}'
           APP_DIR=$(dirname "$APP")
           APP_NAME=$(basename "$APP")
           rm -f "$TARBALL"
@@ -215,10 +265,11 @@ jobs:
           ls -la "$TARBALL"
 
       - name: Re-sign updater tarball with Tauri minisign key
+        if: matrix.platform == 'darwin-aarch64'
         run: |
           set -euo pipefail
-          TARBALL='${{ steps.artifacts.outputs.tarball }}'
-          SIG='${{ steps.artifacts.outputs.sig }}'
+          TARBALL='${{ steps.mac_artifacts.outputs.tarball }}'
+          SIG='${{ steps.mac_artifacts.outputs.sig }}'
           rm -f "$SIG"
           # The signer reads TAURI_SIGNING_PRIVATE_KEY implicitly as
           # --private-key, which clashes with our -f flag. Unset for this
@@ -235,13 +286,119 @@ jobs:
           echo "re-signed tarball:"
           ls -la "$TARBALL" "$SIG"
 
-      - name: Generate latest.json
-        id: manifest
+      # ---- Collect per-platform artifacts into a staging dir ----
+
+      - name: Stage artifacts for upload
+        id: stage
         run: |
           set -euo pipefail
-          TAG='${{ steps.tag.outputs.tag }}'
+          STAGE="$RUNNER_TEMP/fade-stage"
+          mkdir -p "$STAGE"
           VERSION='${{ steps.tag.outputs.version }}'
-          SIG_FILE='${{ steps.artifacts.outputs.sig }}'
+
+          case "${{ matrix.platform }}" in
+            darwin-aarch64)
+              BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
+              cp "$BUNDLE"/dmg/Fade_${VERSION}_aarch64.dmg "$STAGE/"
+              cp "$BUNDLE"/macos/Fade.app.tar.gz            "$STAGE/"
+              cp "$BUNDLE"/macos/Fade.app.tar.gz.sig        "$STAGE/"
+              SIG_FILE="$STAGE/Fade.app.tar.gz.sig"
+              ;;
+            linux-x86_64)
+              BUNDLE="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle"
+              cp "$BUNDLE"/deb/fade_${VERSION}_amd64.deb                    "$STAGE/"
+              cp "$BUNDLE"/appimage/fade_${VERSION}_amd64.AppImage          "$STAGE/"
+              cp "$BUNDLE"/appimage/fade_${VERSION}_amd64.AppImage.tar.gz   "$STAGE/"
+              cp "$BUNDLE"/appimage/fade_${VERSION}_amd64.AppImage.tar.gz.sig "$STAGE/"
+              SIG_FILE="$STAGE/fade_${VERSION}_amd64.AppImage.tar.gz.sig"
+              ;;
+            windows-x86_64)
+              BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+              cp "$BUNDLE"/msi/Fade_${VERSION}_x64_en-US.msi              "$STAGE/"
+              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.exe             "$STAGE/" || true
+              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.nsis.zip        "$STAGE/"
+              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.nsis.zip.sig    "$STAGE/"
+              SIG_FILE="$STAGE/Fade_${VERSION}_x64-setup.nsis.zip.sig"
+              ;;
+          esac
+
+          echo "--- staged files ---"
+          ls -la "$STAGE"
+          echo "stage=$STAGE"        >> "$GITHUB_OUTPUT"
+          echo "sig_file=$SIG_FILE"  >> "$GITHUB_OUTPUT"
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fade-${{ matrix.platform }}
+          path: ${{ steps.stage.outputs.stage }}/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload signature (for finalize job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fade-sig-${{ matrix.platform }}
+          path: ${{ steps.stage.outputs.sig_file }}
+          if-no-files-found: error
+          retention-days: 7
+
+  finalize:
+    name: Assemble latest.json and publish release
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all platform bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: fade-*
+          merge-multiple: false
+
+      - name: Flatten release files
+        id: files
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="$RUNNER_TEMP/fade-release"
+          mkdir -p "$RELEASE_DIR"
+          # Only the bundle artifact dirs (not the sig-only helper artifacts).
+          for d in dist/fade-darwin-aarch64 dist/fade-linux-x86_64 dist/fade-windows-x86_64; do
+            if [ -d "$d" ]; then
+              cp -v "$d"/* "$RELEASE_DIR"/
+            fi
+          done
+          echo "--- release files ---"
+          ls -la "$RELEASE_DIR"
+          echo "dir=$RELEASE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Generate latest.json
+        id: manifest
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # Prefer the annotated tag body for release notes; fall back to a stub.
@@ -250,32 +407,48 @@ jobs:
             NOTES="See GitHub release notes."
           fi
 
-          export NOTES PUB_DATE
+          DARWIN_SIG_FILE="dist/fade-sig-darwin-aarch64/Fade.app.tar.gz.sig"
+          LINUX_SIG_FILE="dist/fade-sig-linux-x86_64/fade_${VERSION}_amd64.AppImage.tar.gz.sig"
+          WINDOWS_SIG_FILE="dist/fade-sig-windows-x86_64/Fade_${VERSION}_x64-setup.nsis.zip.sig"
+
+          for f in "$DARWIN_SIG_FILE" "$LINUX_SIG_FILE" "$WINDOWS_SIG_FILE"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::missing signature file: $f"
+              exit 1
+            fi
+          done
+
+          export NOTES PUB_DATE DARWIN_SIG_FILE LINUX_SIG_FILE WINDOWS_SIG_FILE
           MANIFEST="latest.json"
           node - <<'NODE_EOF' > "$MANIFEST"
           const fs = require('fs');
-          const sig = fs.readFileSync(process.env.SIG_FILE, 'utf8');
+          const base = 'https://github.com/eldo9000/Fade-App/releases/download/' + process.env.TAG + '/';
+          const v = process.env.VERSION;
           const manifest = {
-            version: process.env.VERSION,
+            version: v,
             notes: process.env.NOTES,
             pub_date: process.env.PUB_DATE,
             platforms: {
               'darwin-aarch64': {
-                signature: sig,
-                url: 'https://github.com/eldo9000/Fade-App/releases/download/' + process.env.TAG + '/Fade.app.tar.gz',
+                signature: fs.readFileSync(process.env.DARWIN_SIG_FILE, 'utf8'),
+                url: base + 'Fade.app.tar.gz',
+              },
+              'linux-x86_64': {
+                signature: fs.readFileSync(process.env.LINUX_SIG_FILE, 'utf8'),
+                url: base + 'fade_' + v + '_amd64.AppImage.tar.gz',
+              },
+              'windows-x86_64': {
+                signature: fs.readFileSync(process.env.WINDOWS_SIG_FILE, 'utf8'),
+                url: base + 'Fade_' + v + '_x64-setup.nsis.zip',
               },
             },
           };
           process.stdout.write(JSON.stringify(manifest, null, 2) + '\n');
           NODE_EOF
 
+          cp "$MANIFEST" "${{ steps.files.outputs.dir }}/$MANIFEST"
           echo "--- latest.json ---"
-          cat "$MANIFEST"
-          echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-          VERSION: ${{ steps.tag.outputs.version }}
-          SIG_FILE: ${{ steps.artifacts.outputs.sig }}
+          cat "${{ steps.files.outputs.dir }}/$MANIFEST"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -286,21 +459,24 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            ${{ steps.artifacts.outputs.dmg }}
-            ${{ steps.artifacts.outputs.tarball }}
-            ${{ steps.artifacts.outputs.sig }}
-            ${{ steps.manifest.outputs.manifest }}
+            ${{ steps.files.outputs.dir }}/*
           body: |
             ## Fade ${{ steps.tag.outputs.tag }}
 
-            Apple Silicon (aarch64) build. Distribution is unsigned (ad-hoc codesign only).
+            Builds for macOS (Apple Silicon), Linux (x86_64), and Windows (x86_64).
+            Distribution is unsigned on macOS (ad-hoc codesign only).
 
-            **First install:** open the DMG and drag `Fade.app` to `/Applications`.
+            **macOS:** open the DMG and drag `Fade.app` to `/Applications`.
             If Gatekeeper blocks launch, run:
 
             ```
             xattr -cr /Applications/Fade.app
             ```
+
+            **Linux:** install the `.deb` (Debian/Ubuntu) or run the AppImage.
+            Requires `ffmpeg` and `imagemagick` on the host.
+
+            **Windows:** run the `.msi` installer.
 
             **Existing users:** the in-app updater will pick this release up
             automatically within a few seconds of next launch.
