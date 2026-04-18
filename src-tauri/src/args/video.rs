@@ -69,9 +69,11 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
             let crf = opts.crf.unwrap_or(33);
             match mode {
                 "cbr" => {
-                    // Reinterpret `bitrate` (audio field) as target kbps for CBR video.
-                    // TODO(spec): consider a dedicated `webm_video_bitrate` field.
-                    let br = opts.bitrate.unwrap_or(2000);
+                    // Prefer dedicated webm_video_bitrate; fall back to shared
+                    // `bitrate` (legacy behavior) so older FE payloads still work.
+                    let br = opts.webm_video_bitrate
+                        .or(opts.bitrate)
+                        .unwrap_or(2000);
                     args.extend([
                         "-b:v".to_string(), format!("{}k", br),
                         "-minrate".to_string(), format!("{}k", br),
@@ -80,7 +82,9 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
                     format_override_applied = true;
                 },
                 "cvbr" => {
-                    let br = opts.bitrate.unwrap_or(2000);
+                    let br = opts.webm_video_bitrate
+                        .or(opts.bitrate)
+                        .unwrap_or(2000);
                     let maxr = (br as f64 * 1.5).round() as u32;
                     args.extend([
                         "-b:v".to_string(), format!("{}k", br),
@@ -135,9 +139,12 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
     // ── Audio flags ──
     if opts.remove_audio != Some(true) {
         if let Some(br) = opts.bitrate {
-            // Skip if we consumed bitrate for webm CBR/CVBR video above
+            // Skip if we consumed `bitrate` as video kbps for webm CBR/CVBR.
+            // When webm_video_bitrate is supplied the audio `bitrate` stays
+            // available, so only suppress audio when we fell back to it.
             let consumed_for_video = opts.output_format == "webm"
-                && matches!(opts.webm_bitrate_mode.as_deref(), Some("cbr") | Some("cvbr"));
+                && matches!(opts.webm_bitrate_mode.as_deref(), Some("cbr") | Some("cvbr"))
+                && opts.webm_video_bitrate.is_none();
             if !consumed_for_video {
                 args.extend(["-b:a".to_string(), format!("{}k", br)]);
             }

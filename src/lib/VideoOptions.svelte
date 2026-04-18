@@ -277,6 +277,17 @@
         {/each}
       </div>
     </fieldset>
+
+    {#if options.webm_bitrate_mode === 'cbr' || options.webm_bitrate_mode === 'cvbr'}
+      <fieldset data-tooltip="Target video bitrate for CBR (fixed) or CVBR (capped). Independent of audio bitrate.">
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Video Bitrate — kbps</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each [1000, 2000, 4000, 8000] as b, i}
+            <button onclick={() => options.webm_video_bitrate = b} class={seg(options.webm_video_bitrate === b, i, 4)}>{b}</button>
+          {/each}
+        </div>
+      </fieldset>
+    {/if}
   {/if}
 
   {#if options.output_format === 'mkv'}

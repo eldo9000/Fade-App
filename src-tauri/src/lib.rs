@@ -135,6 +135,7 @@ pub struct ConvertOptions {
     pub tune: Option<String>,               // "none" | "film" | "animation" | "grain"
     pub frame_rate: Option<String>,         // "original" | "24" | "25" | "30" | "60"
     pub webm_bitrate_mode: Option<String>,  // "crf" | "cbr" | "cvbr"
+    pub webm_video_bitrate: Option<u32>,    // kbps, cbr/cvbr only
     pub vp9_speed: Option<u32>,             // 0-5
     pub av1_speed: Option<u32>,             // 0-10
     pub mkv_subtitle: Option<String>,       // "none" | "copy" | "burn"
@@ -224,6 +225,7 @@ impl Default for ConvertOptions {
             tune: None,
             frame_rate: None,
             webm_bitrate_mode: None,
+            webm_video_bitrate: None,
             vp9_speed: None,
             av1_speed: None,
             mkv_subtitle: None,
@@ -715,7 +717,8 @@ mod tests {
     // ── build_image_magick_args ───────────────────────────────────────────────
 
     #[test]
-    fn image_args_basic_quality_strip() {
+    fn image_args_basic_quality_no_strip_by_default() {
+        // Default preserve_metadata=None → metadata kept (no -strip).
         let opts = ConvertOptions {
             quality: Some(85),
             ..Default::default()
@@ -725,6 +728,17 @@ mod tests {
         assert_eq!(args.last().unwrap(), "out.webp");
         assert!(args.contains(&"-quality".to_string()));
         assert!(args.contains(&"85".to_string()));
+        assert!(!args.contains(&"-strip".to_string()));
+    }
+
+    #[test]
+    fn image_args_strip_when_preserve_metadata_false() {
+        let opts = ConvertOptions {
+            quality: Some(85),
+            preserve_metadata: Some(false),
+            ..Default::default()
+        };
+        let args = build_image_magick_args("in.jpg", "out.webp", &opts);
         assert!(args.contains(&"-strip".to_string()));
     }
 
@@ -1185,6 +1199,24 @@ mod tests {
         let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
         assert!(find_pair(&args, "-b:v", "2000k"));
         assert!(find_pair(&args, "-maxrate", "3000k"));
+    }
+
+    #[test]
+    fn video_args_webm_video_bitrate_overrides_audio_bitrate() {
+        // webm_video_bitrate should drive -b:v; `bitrate` should remain as -b:a.
+        let opts = ConvertOptions {
+            output_format: "webm".into(),
+            codec: Some("vp9".into()),
+            webm_bitrate_mode: Some("cbr".into()),
+            webm_video_bitrate: Some(4000),
+            bitrate: Some(192),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.webm", &opts);
+        assert!(find_pair(&args, "-b:v", "4000k"));
+        assert!(find_pair(&args, "-minrate", "4000k"));
+        assert!(find_pair(&args, "-maxrate", "4000k"));
+        assert!(find_pair(&args, "-b:a", "192k"));
     }
 
     #[test]
