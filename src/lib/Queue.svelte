@@ -120,8 +120,13 @@
         {/if}
 
         {#if compact}
-          <!-- Compact: filename only -->
-          <p class="flex-1 min-w-0 text-[12px] text-white truncate leading-tight" title={item.path}>{item.name}</p>
+          <!-- Compact: ext in gray on left, then filename without ext in white -->
+          <div class="flex-1 min-w-0 flex items-center gap-1.5 text-[12px] overflow-hidden">
+            {#if item.ext}
+              <span class="shrink-0 text-[var(--text-secondary)] font-mono">.{item.ext}</span>
+            {/if}
+            <p class="min-w-0 text-white truncate leading-tight" title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
+          </div>
           <button
             onclick={(e) => { e.stopPropagation(); onremove?.(item.id); }}
             class="w-5 h-5 flex items-center justify-center rounded shrink-0
@@ -165,7 +170,10 @@
 
           <div class="flex-1 min-w-0">
             <p class="text-[15px] font-medium text-[var(--text-primary)] truncate leading-tight"
-               title={item.path}>{item.name}</p>
+               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
+            {#if item.ext}
+              <p class="text-[11px] text-[var(--text-secondary)] leading-tight">.{item.ext}</p>
+            {/if}
 
             {#if item.status === 'error'}
               <div class="mt-0.5">
