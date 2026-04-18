@@ -37,7 +37,13 @@ Fade handles it. Drop the file, pick the format, move on.
 
 ## Download
 
-> macOS 13+ · Apple Silicon & Intel
+Fade runs on macOS, Windows, and Linux.
+
+| Platform | Requirement |
+|----------|-------------|
+| macOS | 13+ · Apple Silicon & Intel |
+| Windows | 10 / 11 · x64 |
+| Linux | x64 · `.deb` or `.AppImage` |
 
 Releases coming soon.
 

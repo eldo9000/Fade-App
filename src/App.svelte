@@ -1811,12 +1811,12 @@
            onblur={() => tooltipText = ''}>
 
       <!-- ── Panel header: Output picker + Presets ────────────────────────────── -->
-      <div class="flex items-center gap-1 px-3 py-2 border-b border-[var(--border)] shrink-0 relative">
+      <div class="flex items-center gap-2 px-3 py-2.5 border-b border-[var(--border)] shrink-0 relative">
 
         <!-- Output format button — shows selected format or "Output"; click to reset/pick -->
         <button
           onclick={() => { globalOutputFormat = null; }}
-          class="px-2.5 py-1 rounded text-[12px] font-medium border transition-colors flex items-center gap-1.5
+          class="px-3 py-1.5 rounded text-[13px] font-semibold border transition-colors flex items-center gap-1.5 shrink-0
                  {globalOutputFormat
                    ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
@@ -1833,66 +1833,74 @@
           </svg>
         </button>
 
-        <!-- Presets selector -->
-        {#if activeOutputCategory && ['image','video','audio'].includes(activeOutputCategory)}
-          {#if headerAdding}
-            <div class="flex gap-1 ml-auto">
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                type="text"
-                bind:value={headerPresetName}
-                placeholder="Name…"
-                autofocus
-                onkeydown={(e) => { if (e.key === 'Enter') saveHeaderPreset(); if (e.key === 'Escape') { headerAdding = false; headerPresetName = ''; } }}
-                class="w-24 px-2 py-1 rounded-l text-[12px] border border-[var(--border)]
-                       bg-[var(--surface)] text-[var(--text-primary)] outline-none
-                       focus:border-[var(--accent)] transition-colors"
-              />
-              <button onclick={saveHeaderPreset}
-                      class="px-2 py-1 text-[12px] border -ml-px border-[var(--accent)]
-                             bg-[var(--accent)] text-white rounded-r hover:opacity-90 transition-opacity">
-                Save
-              </button>
-              <button onclick={() => { headerAdding = false; headerPresetName = ''; }}
-                      class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
-                             text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
-                ✕
-              </button>
-            </div>
-          {:else}
-            <div class="flex gap-1 ml-auto">
-              <select
-                bind:value={headerPresetId}
-                onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
-                class="px-2 py-1 rounded text-[12px] border border-[var(--border)]
-                       bg-[var(--surface)] outline-none transition-colors cursor-pointer
-                       {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
-              >
-                <option value="">Presets</option>
+        <!-- Presets selector — always visible; filtered to active category when one is selected -->
+        {#if headerAdding}
+          <div class="flex gap-1 ml-auto">
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="text"
+              bind:value={headerPresetName}
+              placeholder="Name…"
+              autofocus
+              onkeydown={(e) => { if (e.key === 'Enter') saveHeaderPreset(); if (e.key === 'Escape') { headerAdding = false; headerPresetName = ''; } }}
+              class="w-24 px-2 py-1.5 rounded-l text-[12px] border border-[var(--border)]
+                     bg-[var(--surface)] text-[var(--text-primary)] outline-none
+                     focus:border-[var(--accent)] transition-colors"
+            />
+            <button onclick={saveHeaderPreset}
+                    class="px-2 py-1.5 text-[12px] border -ml-px border-[var(--accent)]
+                           bg-[var(--accent)] text-white rounded-r hover:opacity-90 transition-opacity">
+              Save
+            </button>
+            <button onclick={() => { headerAdding = false; headerPresetName = ''; }}
+                    class="px-2 py-1.5 text-[12px] border border-[var(--border)] rounded
+                           text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+              ✕
+            </button>
+          </div>
+        {:else}
+          <div class="flex gap-1 ml-auto">
+            <select
+              bind:value={headerPresetId}
+              onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
+              class="px-2 py-1.5 rounded text-[12px] border border-[var(--border)]
+                     bg-[var(--surface)] outline-none transition-colors cursor-pointer
+                     {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
+            >
+              <option value="">Presets</option>
+              {#if activeOutputCategory}
                 {#each (BUILTIN_PRESETS[activeOutputCategory] ?? []) as p (p.id)}
                   <option value={p.id}>{p.name}</option>
                 {/each}
                 {#each presets.filter(p => p.media_type === activeOutputCategory) as p (p.id)}
                   <option value={p.id}>{p.name}</option>
                 {/each}
-              </select>
-              <button
-                onclick={() => { headerAdding = true; headerPresetName = ''; }}
-                title="Save current settings as preset"
-                class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
-                       text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
-                       transition-colors leading-none"
-              >+</button>
-              <button
-                onclick={() => deletePreset(headerPresetId)}
-                disabled={!headerPresetId || headerPresetId.startsWith('__b_')}
-                title="Delete this preset"
-                class="px-2 py-1 text-[12px] border border-[var(--border)] rounded
-                       text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
-                       transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
-              >−</button>
-            </div>
-          {/if}
+              {:else}
+                {#each ALL_BUILTINS as p (p.id)}
+                  <option value={p.id}>{p.name}</option>
+                {/each}
+                {#each presets as p (p.id)}
+                  <option value={p.id}>{p.name}</option>
+                {/each}
+              {/if}
+            </select>
+            <button
+              onclick={() => { headerAdding = true; headerPresetName = ''; }}
+              disabled={!activeOutputCategory || !['image','video','audio'].includes(activeOutputCategory)}
+              title="Save current settings as preset"
+              class="px-2 py-1.5 text-[13px] border border-[var(--border)] rounded
+                     text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
+                     transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
+            >+</button>
+            <button
+              onclick={() => deletePreset(headerPresetId)}
+              disabled={!headerPresetId || headerPresetId.startsWith('__b_')}
+              title="Delete this preset"
+              class="px-2 py-1.5 text-[13px] border border-[var(--border)] rounded
+                     text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
+                     transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
+            >−</button>
+          </div>
         {/if}
       </div>
 
