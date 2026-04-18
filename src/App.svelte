@@ -2,7 +2,6 @@
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
-  import { fade } from 'svelte/transition';
   import { initTheme } from '@libre/ui/src/theme.js';
   import { ProgressBar } from '@libre/ui';
   import Queue from './lib/Queue.svelte';
@@ -15,6 +14,8 @@
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
   import { mediaTypeFor, validateOptions } from './lib/utils.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
+  import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { createSettings } from './lib/stores/settings.svelte.js';
 
   const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
@@ -448,6 +449,7 @@
     avif_speed: 6,
     avif_chroma: '420',
     bmp_bit_depth: 24,
+    preserve_metadata: true,
     output_dir: null,
   });
 
@@ -479,6 +481,7 @@
     gif_loop: 'infinite',
     gif_palette_size: 256,
     gif_dither: 'floyd',
+    preserve_metadata: true,
     output_dir: null,
   });
 
@@ -510,6 +513,7 @@
     wma_mode: 'standard',
     ac3_bitrate: 448,
     dts_bitrate: 1510,
+    preserve_metadata: true,
     output_dir: null,
   });
 
@@ -1020,10 +1024,34 @@
   }
 
   // ── Tooltip bar ────────────────────────────────────────────────────────────
-  let tooltipText = $state('');
   function onPanelMouseOver(e) {
     const el = e.target.closest('[data-tooltip]');
-    tooltipText = el?.dataset.tooltip ?? '';
+    setHint(el?.dataset.tooltip ?? '');
+  }
+
+  // ── Zoom: after clicking ± or reset, warp cursor back to the button
+  //    centre so rapid repeat-clicks still land on target (the button's
+  //    pixel position shifts because document.documentElement.style.zoom
+  //    rescales the whole UI). Uses a Tauri Rust command because browsers
+  //    deny JS cursor warping. Swallows failures silently.
+  async function recenterCursor(buttonEl) {
+    try {
+      const r = buttonEl.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top  + r.height / 2;
+      const win   = getCurrentWindow();
+      const inner = await win.innerPosition();
+      const scale = await win.scaleFactor();
+      // CSS px → physical screen px (zoom already baked into getBoundingClientRect)
+      const sx = Math.round(inner.x + cx * scale);
+      const sy = Math.round(inner.y + cy * scale);
+      await invoke('set_cursor_position', { x: sx, y: sy });
+    } catch { /* non-fatal */ }
+  }
+  function zoomClick(fn, e) {
+    fn();
+    // Defer one frame so zoom's style write has reflowed before we measure.
+    requestAnimationFrame(() => recenterCursor(e.currentTarget));
   }
 
   // ── Output format state ────────────────────────────────────────────────────
@@ -1920,45 +1948,6 @@
         <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={!settings.previewHighQuality} />
       {/if}
 
-      <!-- Tooltip bar — crossfade: 50ms in, 150ms out, overlapping spans -->
-      <div class="shrink-0 border-t border-[var(--border)] relative overflow-hidden"
-           style="height:24px; background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
-        {#key tooltipText}
-          {#if tooltipText}
-            <span class="absolute inset-0 flex items-center px-3 text-[11px] truncate pr-24"
-                  style="color:rgba(255,255,255,0.5)"
-                  in:fade={{ duration: 50 }}
-                  out:fade={{ duration: 150 }}>
-              {tooltipText}
-            </span>
-          {/if}
-        {/key}
-        <!-- Zoom controls -->
-        <div class="absolute right-1 inset-y-0 flex items-center gap-0.5">
-          <button
-            onclick={zoom.stepOut}
-            title="Zoom out (⌘-)"
-            disabled={zoom.level === ZOOM_STEPS[0]}
-            class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
-                   bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
-            style="color:rgba(255,255,255,0.45)">−</button>
-          <button
-            onclick={zoom.reset}
-            title="Reset zoom (⌘0)"
-            class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
-                   bg-white/5 hover:bg-white/10
-                   {zoom.level !== 1.0 ? 'text-[var(--accent)]' : ''}"
-            style={zoom.level === 1.0 ? 'color:rgba(255,255,255,0.35)' : ''}>
-            {Math.round(zoom.level * 100)}%</button>
-          <button
-            onclick={zoom.stepIn}
-            title="Zoom in (⌘+)"
-            disabled={zoom.level === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
-            class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
-                   bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
-            style="color:rgba(255,255,255,0.45)">+</button>
-        </div>
-      </div>
     </div>
 
     <!-- ── RIGHT: Options panel (333px) ─────────────────────────────────────── -->
@@ -1967,8 +1956,8 @@
            role="region" aria-label="Conversion options"
            onmouseover={onPanelMouseOver}
            onfocus={onPanelMouseOver}
-           onmouseleave={() => { tooltipText = ''; }}
-           onblur={() => tooltipText = ''}>
+           onmouseleave={() => setHint('')}
+           onblur={() => setHint('')}>
 
       <!-- ── Panel header: Output picker + Presets — the "control plane"
            for the options panel. Always docked (shrink-0 + no scroll wrapper).
@@ -2123,6 +2112,53 @@
             <p class="text-[11px] text-green-500">Coming soon</p>
           </div>
         {/if}
+      </div>
+
+      <!-- ── Bottom footer: hint text + zoom controls ────────────────────── -->
+      <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
+           style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+
+        <!-- Hint text — opacity + transition driven by shared tooltip store
+             (see tooltip.svelte.js). Handles 100ms in, 2s hold + 2s out,
+             and 100ms crossfade on interrupt. -->
+        <div class="relative min-h-[2.5rem]">
+          <p class="text-[11px] leading-relaxed"
+             style="color:rgba(255,255,255,0.5);
+                    opacity:{tooltip.opacity};
+                    transition:opacity {tooltip.duration}ms linear {tooltip.delay}ms">
+            {tooltip.text}
+          </p>
+        </div>
+
+        <!-- Version + zoom -->
+        <div class="flex items-center justify-between gap-0.5">
+          <span class="text-[10px] font-medium select-none"
+                style="color:rgba(255,255,255,0.2)">Fade v0.1.0</span>
+          <div class="flex items-center gap-0.5">
+          <button
+            onclick={(e) => zoomClick(zoom.stepOut, e)}
+            title="Zoom out (⌘-)"
+            disabled={zoom.level === ZOOM_STEPS[0]}
+            class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
+                   bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
+            style="color:rgba(255,255,255,0.45)">−</button>
+          <button
+            onclick={(e) => zoomClick(zoom.reset, e)}
+            title="Reset zoom (⌘0)"
+            class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
+                   bg-white/5 hover:bg-white/10
+                   {zoom.level !== 1.0 ? 'text-[var(--accent)]' : ''}"
+            style={zoom.level === 1.0 ? 'color:rgba(255,255,255,0.35)' : ''}>
+            {Math.round(zoom.level * 100)}%</button>
+          <button
+            onclick={(e) => zoomClick(zoom.stepIn, e)}
+            title="Zoom in (⌘+)"
+            disabled={zoom.level === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+            class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
+                   bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
+            style="color:rgba(255,255,255,0.45)">+</button>
+          </div>
+        </div>
       </div>
 
     </aside>

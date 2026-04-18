@@ -375,4 +375,10 @@
     </fieldset>
   {/if}
 
+  <label class="flex items-center gap-2 cursor-pointer"
+         data-tooltip="Keep title, encoder, GPS, and other container tags in the output. Uncheck to strip (removes location from phone-recorded video).">
+    <input type="checkbox" bind:checked={options.preserve_metadata} class="accent-[var(--accent)]" />
+    <span class="text-[12px] text-[var(--text-primary)]">Preserve metadata</span>
+  </label>
+
 </div>

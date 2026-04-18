@@ -1,6 +1,7 @@
 <script>
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { setHint } from './stores/tooltip.svelte.js';
 
   let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false } = $props();
 
@@ -1110,8 +1111,8 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="absolute z-25 cursor-move"
            style="left:{fadeInFrac * 100}%; top:0; transform:translateX(-50%)"
-           onmouseenter={() => fadeInHovered = true}
-           onmouseleave={() => fadeInHovered = false}
+           onmouseenter={() => { fadeInHovered = true; if ((options?.fade_in ?? 0) > 0) setHint('← drag → length  ·  ↕ curve  ·  right-click reset'); }}
+           onmouseleave={() => { fadeInHovered = false; setHint(''); }}
            onmousedown={(e) => { e.stopPropagation(); _dragStartY = e.clientY; _dragStartCurve = options?.fade_in_curve ?? 0; dragging = 'fade_in'; }}
            oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (options) options.fade_in_curve = 0; }}>
         <svg width="14" height="10" viewBox="0 0 14 10" xmlns="http://www.w3.org/2000/svg">
@@ -1123,8 +1124,8 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="absolute z-25 cursor-move"
            style="left:{fadeOutFrac * 100}%; top:0; transform:translateX(-50%)"
-           onmouseenter={() => fadeOutHovered = true}
-           onmouseleave={() => fadeOutHovered = false}
+           onmouseenter={() => { fadeOutHovered = true; if ((options?.fade_out ?? 0) > 0) setHint('← drag → length  ·  ↕ curve  ·  right-click reset'); }}
+           onmouseleave={() => { fadeOutHovered = false; setHint(''); }}
            onmousedown={(e) => { e.stopPropagation(); _dragStartY = e.clientY; _dragStartCurve = options?.fade_out_curve ?? 0; dragging = 'fade_out'; }}
            oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (options) options.fade_out_curve = 0; }}>
         <svg width="14" height="10" viewBox="0 0 14 10" xmlns="http://www.w3.org/2000/svg">
@@ -1235,13 +1236,7 @@
       </button>
     </div>
 
-    <!-- Fade handle hint — centre, only when a fade handle is hovered -->
-    {#if (fadeInHovered && (options?.fade_in ?? 0) > 0) || (fadeOutHovered && (options?.fade_out ?? 0) > 0)}
-      <div class="absolute inset-0 flex items-center justify-center pointer-events-none"
-           style="font-size:11px; font-family:monospace; color:rgba(255,255,255,0.42)">
-        ← drag → length &nbsp;·&nbsp; ↕ curve &nbsp;·&nbsp; right-click reset
-      </div>
-    {/if}
+    <!-- Fade handle hint moved to global hint box (right sidebar footer). -->
     <!-- Timecodes — right, vertically centred -->
     <div class="absolute right-3 inset-y-0 flex items-center gap-4 font-mono tabular-nums" style="font-size:11px">
       <span>

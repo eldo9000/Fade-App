@@ -107,6 +107,9 @@ pub struct ConvertOptions {
     pub archive_compression: Option<u32>, // 0-9, zip/gz/7z level
     // Output naming
     pub output_suffix: Option<String>,
+    // Metadata — when false, strip EXIF/tags/etc. None or true = preserve.
+    // Applies to image (ImageMagick -strip) and video/audio (ffmpeg -map_metadata -1).
+    pub preserve_metadata: Option<bool>,
 
     // ── Format-specific audio controls (see docs/FORMAT-CONTROLS.md §2) ──
     pub channels: Option<String>,           // "source" | "mono" | "stereo" | "joint" | "5.1"
@@ -197,6 +200,7 @@ impl Default for ConvertOptions {
             archive_operation: None,
             archive_compression: None,
             output_suffix: None,
+            preserve_metadata: None,
 
             channels: None,
             bit_depth: None,
@@ -568,6 +572,16 @@ fn check_tools() -> serde_json::Value {
     })
 }
 
+/// Warp the OS cursor to screen coordinates (physical pixels).
+/// Used after zoom button clicks so the cursor stays on target
+/// after the button's pixel position shifts due to UI rescale.
+#[command]
+fn set_cursor_position(window: Window, x: i32, y: i32) -> Result<(), String> {
+    window
+        .set_cursor_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
+}
+
 
 
 
@@ -597,6 +611,7 @@ pub fn run() {
             delete_preset,
             scan_dir,
             file_exists,
+            set_cursor_position,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

@@ -516,4 +516,10 @@
 
   </fieldset>
 
+  <label class="flex items-center gap-2 cursor-pointer"
+         data-tooltip="Keep ID3/Vorbis tags and cover art in the output. Uncheck to strip (removes title, artist, album, embedded artwork).">
+    <input type="checkbox" bind:checked={options.preserve_metadata} class="accent-[var(--accent)]" />
+    <span class="text-[12px] text-[var(--text-primary)]">Preserve metadata</span>
+  </label>
+
 </div>

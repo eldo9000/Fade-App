@@ -201,6 +201,11 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         args.extend(["-t".to_string(), end.to_string()]);
     }
 
+    // Strip ID3/Vorbis tags + cover art when user opts out. Default preserves.
+    if opts.preserve_metadata == Some(false) {
+        args.extend(["-map_metadata".to_string(), "-1".to_string()]);
+    }
+
     args.push("-vn".to_string());
 
     let (codec_args, suppress_base_bitrate) = build_codec_args(opts);

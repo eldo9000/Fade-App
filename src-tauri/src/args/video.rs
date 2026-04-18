@@ -26,6 +26,11 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
         args.extend(["-t".to_string(), end.to_string()]);
     }
 
+    // Strip container + stream metadata when user opts out. Default preserves.
+    if opts.preserve_metadata == Some(false) {
+        args.extend(["-map_metadata".to_string(), "-1".to_string()]);
+    }
+
     // ── Encoder selection ──
     let codec = opts.codec.as_deref().unwrap_or("copy");
     let is_copy = codec == "copy";
@@ -246,6 +251,10 @@ fn build_gif_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<Strin
             t
         };
         args.extend(["-t".to_string(), end.to_string()]);
+    }
+
+    if opts.preserve_metadata == Some(false) {
+        args.extend(["-map_metadata".to_string(), "-1".to_string()]);
     }
 
     // Build the filtergraph.

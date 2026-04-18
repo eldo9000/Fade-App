@@ -59,7 +59,11 @@ pub fn build_image_magick_args(input: &str, output: &str, opts: &ConvertOptions)
         args.push(q.to_string());
     }
 
-    args.push("-strip".to_string());
+    // Strip EXIF / ICC / comments when user opts out of preserve-metadata.
+    // Default (None) preserves — matches user expectation for most conversions.
+    if opts.preserve_metadata == Some(false) {
+        args.push("-strip".to_string());
+    }
 
     args.extend(format_specific_args(opts));
 

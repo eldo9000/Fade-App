@@ -294,6 +294,11 @@
       <input type="checkbox" bind:checked={options.auto_rotate} class="accent-[var(--accent)]" />
       <span class="text-[12px] text-[var(--text-primary)]">Auto-rotate from EXIF</span>
     </label>
+    <label class="flex items-center gap-2 mt-2 cursor-pointer"
+           data-tooltip="Keep EXIF, ICC profile, and other metadata in the output. Uncheck to strip (removes GPS, camera info, timestamps).">
+      <input type="checkbox" bind:checked={options.preserve_metadata} class="accent-[var(--accent)]" />
+      <span class="text-[12px] text-[var(--text-primary)]">Preserve metadata</span>
+    </label>
   </fieldset>
 
 </div>
