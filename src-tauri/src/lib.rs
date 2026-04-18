@@ -19,15 +19,15 @@ pub use args::{
     build_ffmpeg_audio_args, build_ffmpeg_video_args, build_image_magick_args,
     ffmpeg_video_codec_args, resolution_to_scale,
 };
+use convert::{
+    run_archive_convert, run_audio_convert, run_data_convert, run_document_convert,
+    run_image_convert, run_video_convert,
+};
 pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
 pub use preview::{preview_diff, preview_image_quality};
 pub use probe::{get_file_info, get_filmstrip, get_spectrogram, get_waveform};
 pub use theme::{get_accent, get_theme};
-use convert::{
-    run_archive_convert, run_audio_convert, run_data_convert, run_document_convert,
-    run_image_convert, run_video_convert,
-};
 
 // ── AppState ───────────────────────────────────────────────────────────────────
 
@@ -92,13 +92,13 @@ pub struct ConvertOptions {
     pub bitrate: Option<u32>,
     pub sample_rate: Option<u32>,
     pub normalize_loudness: Option<bool>,
-    pub normalize_lufs:     Option<f64>, // LUFS target (e.g. -16.0), None = default -16.0
+    pub normalize_lufs: Option<f64>, // LUFS target (e.g. -16.0), None = default -16.0
     pub normalize_true_peak: Option<f64>, // dBTP ceiling (e.g. -1.0), None = default -1.0
     // DSP
-    pub dsp_highpass_freq:  Option<f64>, // Hz — Butterworth 2-pole highpass, None = off
-    pub dsp_lowpass_freq:   Option<f64>, // Hz — Butterworth 2-pole lowpass,  None = off
-    pub dsp_stereo_width:   Option<f64>, // −100=mono  0=no change  +100=wide, None = off
-    pub dsp_limiter_db:     Option<f64>, // dBFS ceiling (e.g. -1.0),          None = off
+    pub dsp_highpass_freq: Option<f64>, // Hz — Butterworth 2-pole highpass, None = off
+    pub dsp_lowpass_freq: Option<f64>,  // Hz — Butterworth 2-pole lowpass,  None = off
+    pub dsp_stereo_width: Option<f64>,  // −100=mono  0=no change  +100=wide, None = off
+    pub dsp_limiter_db: Option<f64>,    // dBFS ceiling (e.g. -1.0),          None = off
     // Data
     pub pretty_print: Option<bool>,
     pub csv_delimiter: Option<String>,
@@ -112,54 +112,54 @@ pub struct ConvertOptions {
     pub preserve_metadata: Option<bool>,
 
     // ── Format-specific audio controls (see docs/FORMAT-CONTROLS.md §2) ──
-    pub channels: Option<String>,           // "source" | "mono" | "stereo" | "joint" | "5.1"
-    pub bit_depth: Option<u32>,             // 16 | 24 | 32
-    pub mp3_bitrate_mode: Option<String>,   // "cbr" | "vbr"
-    pub mp3_vbr_quality: Option<u32>,       // 0-9
-    pub flac_compression: Option<u32>,      // 0-8
-    pub ogg_bitrate_mode: Option<String>,   // "vbr" | "cbr" | "abr"
-    pub ogg_vbr_quality: Option<i32>,       // -1..=10
-    pub aac_profile: Option<String>,        // "lc" | "he" | "hev2"
-    pub opus_application: Option<String>,   // "audio" | "voip" | "lowdelay"
+    pub channels: Option<String>, // "source" | "mono" | "stereo" | "joint" | "5.1"
+    pub bit_depth: Option<u32>,   // 16 | 24 | 32
+    pub mp3_bitrate_mode: Option<String>, // "cbr" | "vbr"
+    pub mp3_vbr_quality: Option<u32>, // 0-9
+    pub flac_compression: Option<u32>, // 0-8
+    pub ogg_bitrate_mode: Option<String>, // "vbr" | "cbr" | "abr"
+    pub ogg_vbr_quality: Option<i32>, // -1..=10
+    pub aac_profile: Option<String>, // "lc" | "he" | "hev2"
+    pub opus_application: Option<String>, // "audio" | "voip" | "lowdelay"
     pub opus_vbr: Option<bool>,
-    pub m4a_subcodec: Option<String>,       // "aac" | "alac"
-    pub wma_mode: Option<String>,           // "standard" | "pro" | "lossless"
-    pub ac3_bitrate: Option<u32>,           // 192 | 384 | 448 | 640 (kbps)
-    pub dts_bitrate: Option<u32>,           // 754 | 1510 (kbps)
+    pub m4a_subcodec: Option<String>, // "aac" | "alac"
+    pub wma_mode: Option<String>,     // "standard" | "pro" | "lossless"
+    pub ac3_bitrate: Option<u32>,     // 192 | 384 | 448 | 640 (kbps)
+    pub dts_bitrate: Option<u32>,     // 754 | 1510 (kbps)
 
     // ── Format-specific video controls ──
-    pub crf: Option<u32>,                   // 0-51
-    pub preset: Option<String>,             // "ultrafast" | "fast" | "medium" | "slow" | "veryslow"
-    pub h264_profile: Option<String>,       // "baseline" | "main" | "high"
-    pub pix_fmt: Option<String>,            // "yuv420p" | "yuv422p" | "yuv444p"
-    pub tune: Option<String>,               // "none" | "film" | "animation" | "grain"
-    pub frame_rate: Option<String>,         // "original" | "24" | "25" | "30" | "60"
-    pub webm_bitrate_mode: Option<String>,  // "crf" | "cbr" | "cvbr"
-    pub webm_video_bitrate: Option<u32>,    // kbps, cbr/cvbr only
-    pub vp9_speed: Option<u32>,             // 0-5
-    pub av1_speed: Option<u32>,             // 0-10
-    pub mkv_subtitle: Option<String>,       // "none" | "copy" | "burn"
-    pub avi_video_bitrate: Option<u32>,     // kbps
-    pub gif_width: Option<String>,          // "original" | "320" | "480" | "640"
-    pub gif_fps: Option<String>,            // "original" | "5" | "10" | "15"
-    pub gif_loop: Option<String>,           // "infinite" | "once" | "none"
-    pub gif_palette_size: Option<u32>,      // 32 | 64 | 128 | 256
-    pub gif_dither: Option<String>,         // "none" | "bayer" | "floyd"
+    pub crf: Option<u32>,                  // 0-51
+    pub preset: Option<String>,            // "ultrafast" | "fast" | "medium" | "slow" | "veryslow"
+    pub h264_profile: Option<String>,      // "baseline" | "main" | "high"
+    pub pix_fmt: Option<String>,           // "yuv420p" | "yuv422p" | "yuv444p"
+    pub tune: Option<String>,              // "none" | "film" | "animation" | "grain"
+    pub frame_rate: Option<String>,        // "original" | "24" | "25" | "30" | "60"
+    pub webm_bitrate_mode: Option<String>, // "crf" | "cbr" | "cvbr"
+    pub webm_video_bitrate: Option<u32>,   // kbps, cbr/cvbr only
+    pub vp9_speed: Option<u32>,            // 0-5
+    pub av1_speed: Option<u32>,            // 0-10
+    pub mkv_subtitle: Option<String>,      // "none" | "copy" | "burn"
+    pub avi_video_bitrate: Option<u32>,    // kbps
+    pub gif_width: Option<String>,         // "original" | "320" | "480" | "640"
+    pub gif_fps: Option<String>,           // "original" | "5" | "10" | "15"
+    pub gif_loop: Option<String>,          // "infinite" | "once" | "none"
+    pub gif_palette_size: Option<u32>,     // 32 | 64 | 128 | 256
+    pub gif_dither: Option<String>,        // "none" | "bayer" | "floyd"
 
     // ── Format-specific image controls ──
-    pub jpeg_chroma: Option<String>,        // "420" | "422" | "444"
+    pub jpeg_chroma: Option<String>, // "420" | "422" | "444"
     pub jpeg_progressive: Option<bool>,
-    pub png_compression: Option<u32>,       // 0-9
-    pub png_color_mode: Option<String>,     // "rgb" | "rgba" | "gray" | "graya" | "palette"
+    pub png_compression: Option<u32>,   // 0-9
+    pub png_color_mode: Option<String>, // "rgb" | "rgba" | "gray" | "graya" | "palette"
     pub png_interlaced: Option<bool>,
-    pub tiff_compression: Option<String>,   // "none" | "lzw" | "deflate" | "packbits"
-    pub tiff_bit_depth: Option<u32>,        // 8 | 16 | 32
-    pub tiff_color_mode: Option<String>,    // "rgb" | "cmyk" | "gray"
+    pub tiff_compression: Option<String>, // "none" | "lzw" | "deflate" | "packbits"
+    pub tiff_bit_depth: Option<u32>,      // 8 | 16 | 32
+    pub tiff_color_mode: Option<String>,  // "rgb" | "cmyk" | "gray"
     pub webp_lossless: Option<bool>,
-    pub webp_method: Option<u32>,           // 0-6
-    pub avif_speed: Option<u32>,            // 0-10
-    pub avif_chroma: Option<String>,        // "420" | "422" | "444"
-    pub bmp_bit_depth: Option<u32>,         // 8 | 16 | 24 | 32
+    pub webp_method: Option<u32>,    // 0-6
+    pub avif_speed: Option<u32>,     // 0-10
+    pub avif_chroma: Option<String>, // "420" | "422" | "444"
+    pub bmp_bit_depth: Option<u32>,  // 8 | 16 | 24 | 32
 }
 
 impl Default for ConvertOptions {
@@ -317,14 +317,14 @@ pub(crate) fn parse_out_time_ms(line: &str) -> Option<f64> {
 /// Classify a file extension into a media type, covering all types Fade supports.
 pub(crate) fn classify_ext(ext: &str) -> &'static str {
     match ext {
-        "jpg"|"jpeg"|"png"|"webp"|"tiff"|"tif"|"bmp"|"gif"|"avif"|
-        "heic"|"heif"|"psd"|"svg"|"ico"|"raw"|"cr2"|"nef"|"arw"|"dng" => "image",
-        "mp4"|"mkv"|"webm"|"avi"|"mov"|"m4v"|"flv"|"wmv"|"ts"|
-        "mpg"|"mpeg"|"3gp"|"ogv" => "video",
-        "mp3"|"wav"|"flac"|"ogg"|"aac"|"opus"|"m4a"|"wma"|"aiff" => "audio",
-        "csv"|"json"|"xml"|"yaml"|"yml"|"toml"|"tsv"|"ndjson"|"jsonl" => "data",
-        "md"|"markdown"|"html"|"htm"|"txt" => "document",
-        "zip"|"7z"|"tar"|"gz"|"bz2"|"xz"|"tgz"|"rar" => "archive",
+        "jpg" | "jpeg" | "png" | "webp" | "tiff" | "tif" | "bmp" | "gif" | "avif" | "heic"
+        | "heif" | "psd" | "svg" | "ico" | "raw" | "cr2" | "nef" | "arw" | "dng" => "image",
+        "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "flv" | "wmv" | "ts" | "mpg" | "mpeg"
+        | "3gp" | "ogv" => "video",
+        "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" => "audio",
+        "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
+        "md" | "markdown" | "html" | "htm" | "txt" => "document",
+        "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" => "archive",
         _ => "unknown",
     }
 }
@@ -369,9 +369,7 @@ pub(crate) fn truncate_stderr(s: &str) -> String {
     }
 }
 
-
 // ── Commands ──────────────────────────────────────────────────────────────────
-
 
 /// Convert a media file. Runs in a background thread and emits progress events.
 /// Events emitted: job-progress, job-done, job-error, job-cancelled.
@@ -462,20 +460,10 @@ fn convert_file(
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             ),
-            "data" => run_data_convert(
-                &window,
-                &job_id,
-                &input_path,
-                &output_path,
-                &options,
-            ),
-            "document" => run_document_convert(
-                &window,
-                &job_id,
-                &input_path,
-                &output_path,
-                &options,
-            ),
+            "data" => run_data_convert(&window, &job_id, &input_path, &output_path, &options),
+            "document" => {
+                run_document_convert(&window, &job_id, &input_path, &output_path, &options)
+            }
             "archive" => run_archive_convert(
                 &window,
                 &job_id,
@@ -510,16 +498,16 @@ fn convert_file(
                         output_path,
                     },
                 );
-            },
+            }
             Err(msg) if msg == "CANCELLED" => {
                 let _ = std::fs::remove_file(&output_path_clone);
                 write_fade_log(&format_log_entry(&job_id, &input_path, "cancelled", ""));
                 let _ = window.emit("job-cancelled", JobCancelled { job_id });
-            },
+            }
             Err(msg) if msg == "__DONE__" => {
                 // job-done was emitted directly (e.g. archive extract with folder path)
                 write_fade_log(&format_log_entry(&job_id, &input_path, "done", ""));
-            },
+            }
             Err(msg) => {
                 let first_line = msg.lines().next().unwrap_or("").to_string();
                 write_fade_log(&format_log_entry(
@@ -535,7 +523,7 @@ fn convert_file(
                         message: msg,
                     },
                 );
-            },
+            }
         }
     });
 
@@ -583,9 +571,6 @@ fn set_cursor_position(window: Window, x: i32, y: i32) -> Result<(), String> {
         .set_cursor_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())
 }
-
-
-
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -1409,10 +1394,15 @@ mod tests {
             ..Default::default()
         };
         let args = build_ffmpeg_audio_args("in.wav", "out.mp3", &opts);
-        assert!(!args.contains(&"-b:a".to_string()), "VBR must not emit -b:a");
+        assert!(
+            !args.contains(&"-b:a".to_string()),
+            "VBR must not emit -b:a"
+        );
         let q_idx = args.iter().position(|a| a == "-q:a").expect("-q:a missing");
         assert_eq!(args[q_idx + 1], "3");
-        assert!(args.windows(2).any(|w| w[0] == "-c:a" && w[1] == "libmp3lame"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "-c:a" && w[1] == "libmp3lame"));
     }
 
     #[test]
