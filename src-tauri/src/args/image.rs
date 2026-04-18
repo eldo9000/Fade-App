@@ -22,7 +22,7 @@ pub fn build_image_magick_args(input: &str, output: &str, opts: &ConvertOptions)
             let pct = opts.resize_percent.unwrap_or(100);
             args.push("-resize".to_string());
             args.push(format!("{}%", pct));
-        },
+        }
         Some("pixels") => {
             let w = opts.resize_width.unwrap_or(0);
             let h = opts.resize_height.unwrap_or(0);
@@ -36,8 +36,8 @@ pub fn build_image_magick_args(input: &str, output: &str, opts: &ConvertOptions)
                 args.push("-resize".to_string());
                 args.push(format!("x{}", h));
             }
-        },
-        _ => {},
+        }
+        _ => {}
     }
 
     if let Some(deg) = opts.rotation {
@@ -188,4 +188,221 @@ fn format_specific_args(opts: &ConvertOptions) -> Vec<String> {
     }
 
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConvertOptions;
+
+    fn find_pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2).any(|w| w[0] == flag && w[1] == value)
+    }
+
+    fn opts_for(fmt: &str) -> ConvertOptions {
+        ConvertOptions {
+            output_format: fmt.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn image_args_default_has_no_optional_flags() {
+        let opts = opts_for("png");
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert_eq!(args.first().unwrap(), "in.png");
+        assert_eq!(args.last().unwrap(), "out.png");
+        assert!(!args.contains(&"-quality".to_string()));
+        assert!(!args.contains(&"-strip".to_string()));
+        assert!(!args.contains(&"-auto-orient".to_string()));
+        assert!(!args.contains(&"-rotate".to_string()));
+        assert!(!args.contains(&"-resize".to_string()));
+    }
+
+    #[test]
+    fn image_args_quality_propagates() {
+        let opts = ConvertOptions {
+            quality: Some(85),
+            ..opts_for("jpg")
+        };
+        let args = build_image_magick_args("in.jpg", "out.jpg", &opts);
+        assert!(find_pair(&args, "-quality", "85"));
+    }
+
+    #[test]
+    fn image_args_strip_metadata_when_preserve_false() {
+        let opts = ConvertOptions {
+            preserve_metadata: Some(false),
+            ..opts_for("jpg")
+        };
+        let args = build_image_magick_args("in.jpg", "out.jpg", &opts);
+        assert!(args.contains(&"-strip".to_string()));
+    }
+
+    #[test]
+    fn image_args_no_strip_when_preserve_true() {
+        let opts = ConvertOptions {
+            preserve_metadata: Some(true),
+            ..opts_for("jpg")
+        };
+        let args = build_image_magick_args("in.jpg", "out.jpg", &opts);
+        assert!(!args.contains(&"-strip".to_string()));
+    }
+
+    #[test]
+    fn image_args_no_strip_when_preserve_none() {
+        let opts = opts_for("jpg");
+        let args = build_image_magick_args("in.jpg", "out.jpg", &opts);
+        assert!(!args.contains(&"-strip".to_string()));
+    }
+
+    #[test]
+    fn image_args_webp_lossless_emits_define() {
+        let opts = ConvertOptions {
+            webp_lossless: Some(true),
+            webp_method: Some(4),
+            ..opts_for("webp")
+        };
+        let args = build_image_magick_args("in.png", "out.webp", &opts);
+        assert!(find_pair(&args, "-define", "webp:lossless=true"));
+        assert!(find_pair(&args, "-define", "webp:method=4"));
+    }
+
+    #[test]
+    fn image_args_webp_no_flags_without_opts() {
+        let opts = opts_for("webp");
+        let args = build_image_magick_args("in.png", "out.webp", &opts);
+        assert!(!args.iter().any(|a| a == "webp:lossless=true"));
+    }
+
+    #[test]
+    fn image_args_png_compression_and_color_mode() {
+        let opts = ConvertOptions {
+            png_compression: Some(9),
+            png_color_mode: Some("rgba".into()),
+            png_interlaced: Some(true),
+            ..opts_for("png")
+        };
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert!(find_pair(&args, "-define", "png:compression-level=9"));
+        assert!(find_pair(&args, "-define", "png:color-type=6"));
+        assert!(find_pair(&args, "-interlace", "Plane"));
+    }
+
+    #[test]
+    fn image_args_png_color_mode_unknown_is_ignored() {
+        let opts = ConvertOptions {
+            png_color_mode: Some("bogus".into()),
+            ..opts_for("png")
+        };
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert!(!args.iter().any(|a| a.starts_with("png:color-type=")));
+    }
+
+    #[test]
+    fn image_args_jpeg_progressive_emits_interlace() {
+        let opts = ConvertOptions {
+            jpeg_progressive: Some(true),
+            jpeg_chroma: Some("420".into()),
+            ..opts_for("jpeg")
+        };
+        let args = build_image_magick_args("in.jpg", "out.jpg", &opts);
+        assert!(find_pair(&args, "-interlace", "Plane"));
+        assert!(find_pair(&args, "-sampling-factor", "4:2:0"));
+    }
+
+    #[test]
+    fn image_args_tiff_flags_matrix() {
+        let cases = [
+            ("none", "None"),
+            ("lzw", "LZW"),
+            ("deflate", "Zip"),
+            ("packbits", "RLE"),
+        ];
+        for (input, expected) in cases {
+            let opts = ConvertOptions {
+                tiff_compression: Some(input.into()),
+                ..opts_for("tiff")
+            };
+            let args = build_image_magick_args("in.tif", "out.tif", &opts);
+            assert!(
+                find_pair(&args, "-compress", expected),
+                "tiff compression {} -> {}",
+                input,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn image_args_tiff_bit_depth_32_adds_floating_point() {
+        let opts = ConvertOptions {
+            tiff_bit_depth: Some(32),
+            ..opts_for("tiff")
+        };
+        let args = build_image_magick_args("in.tif", "out.tif", &opts);
+        assert!(find_pair(&args, "-depth", "32"));
+        assert!(find_pair(&args, "-define", "quantum:format=floating-point"));
+    }
+
+    #[test]
+    fn image_args_avif_speed_and_chroma() {
+        let opts = ConvertOptions {
+            avif_speed: Some(6),
+            avif_chroma: Some("422".into()),
+            ..opts_for("avif")
+        };
+        let args = build_image_magick_args("in.png", "out.avif", &opts);
+        assert!(find_pair(&args, "-define", "heic:speed=6"));
+        assert!(find_pair(&args, "-sampling-factor", "4:2:2"));
+    }
+
+    #[test]
+    fn image_args_bmp_bit_depth() {
+        let opts = ConvertOptions {
+            bmp_bit_depth: Some(24),
+            ..opts_for("bmp")
+        };
+        let args = build_image_magick_args("in.png", "out.bmp", &opts);
+        assert!(find_pair(&args, "-depth", "24"));
+    }
+
+    #[test]
+    fn image_args_resize_percent() {
+        let opts = ConvertOptions {
+            resize_mode: Some("percent".into()),
+            resize_percent: Some(50),
+            ..opts_for("png")
+        };
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert!(find_pair(&args, "-resize", "50%"));
+    }
+
+    #[test]
+    fn image_args_resize_pixels_width_only() {
+        let opts = ConvertOptions {
+            resize_mode: Some("pixels".into()),
+            resize_width: Some(800),
+            ..opts_for("png")
+        };
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert!(find_pair(&args, "-resize", "800x"));
+    }
+
+    #[test]
+    fn image_args_rotation_only_accepts_cardinals() {
+        let opts = ConvertOptions {
+            rotation: Some(45),
+            ..opts_for("png")
+        };
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert!(!args.contains(&"-rotate".to_string()));
+
+        let opts = ConvertOptions {
+            rotation: Some(90),
+            ..opts_for("png")
+        };
+        let args = build_image_magick_args("in.png", "out.png", &opts);
+        assert!(find_pair(&args, "-rotate", "90"));
+    }
 }
