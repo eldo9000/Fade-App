@@ -139,3 +139,85 @@ Notes:
    + generated `latest.json`.
 4. Users running an older Fade see the update banner within 2s of
    next launch.
+
+---
+
+## CI workflow
+
+The release pipeline lives at `.github/workflows/release.yml`. It runs
+on `macos-14` (Apple Silicon) and produces the full set of artifacts
+required by the updater contract above. Currently macOS aarch64 is the
+only target — adding x86_64 or other platforms is a small matrix
+extension.
+
+### What it does
+
+1. **Trigger.** Fires on any pushed tag matching `v*` (e.g. `v0.2.0`),
+   or via manual `workflow_dispatch` with a tag input.
+2. **Version sanity check.** Compares the tag (minus the `v`) against
+   the `version` field in `src-tauri/tauri.conf.json`. Mismatches fail
+   the job before any build work happens, which prevents shipping a
+   release whose `latest.json` advertises a version the installed
+   binary doesn't report.
+3. **Toolchain setup.** Node 20 (with npm cache), Rust stable with
+   the `aarch64-apple-darwin` target, and a cargo registry + target
+   cache keyed on `src-tauri/Cargo.lock`.
+4. **Build.** `npm ci` then
+   `npm run tauri build -- --target aarch64-apple-darwin`, with
+   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+   exported from repo secrets so Tauri signs the updater bundle
+   inline.
+5. **Ad-hoc codesign.** Runs `xattr -cr Fade.app` and
+   `codesign --force --deep --sign - Fade.app` to strip the quarantine
+   xattr and apply an ad-hoc signature. No Apple Developer ID is used.
+6. **Re-pack + re-sign the updater tarball.** Tauri emits
+   `Fade.app.tar.gz` *during* `tauri build`, which means the tarball
+   produced by the build contains the **unsigned** `.app`. The
+   workflow therefore deletes that tarball, re-tars the freshly
+   signed `.app`, and re-invokes `tauri signer sign` against the new
+   tarball so the `.sig` matches. The result: the DMG and the updater
+   tarball both contain the ad-hoc signed `.app`, and the `.sig`
+   verifies against the pubkey embedded in `tauri.conf.json`.
+7. **Generate `latest.json`.** A small inline Node script reads the
+   `.sig` file, assembles the manifest in the format documented above,
+   uses `date -u` for `pub_date`, and pulls release notes from the
+   annotated tag's body (falling back to
+   `"See GitHub release notes."`).
+8. **Create GitHub Release.** Uses
+   `softprops/action-gh-release@v2` to publish a non-draft,
+   non-prerelease release under the pushed tag, attaching:
+   - `Fade_<version>_aarch64.dmg`
+   - `Fade.app.tar.gz`
+   - `Fade.app.tar.gz.sig`
+   - `latest.json`
+
+### Required repo configuration
+
+- Secrets: `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (see the previous section).
+- Permissions: the job declares `contents: write`, which is all
+  `softprops/action-gh-release` needs to create a release and upload
+  assets via the ambient `GITHUB_TOKEN`.
+
+### Cutting a release
+
+1. Bump `version` in `src-tauri/tauri.conf.json`,
+   `src-tauri/Cargo.toml`, and `package.json` (all three must match).
+2. Commit.
+3. Tag with the `v`-prefix form and push:
+   ```sh
+   git tag -a v0.2.0 -m "Fade v0.2.0"
+   git push origin main --follow-tags
+   ```
+4. Watch the "Release" workflow in the GitHub Actions tab. On
+   success, the release is live at
+   `https://github.com/eldo9000/Fade-App/releases/tag/v0.2.0` and the
+   `latest.json` endpoint starts serving it immediately.
+
+### Testing the workflow manually
+
+Use `workflow_dispatch` from the Actions tab (or
+`gh workflow run release.yml -f tag=v0.2.0`) to re-run the release
+against an existing tag without pushing a new one. The version sanity
+check still applies — the tag version must match
+`src-tauri/tauri.conf.json` or the job fails fast.
