@@ -197,10 +197,20 @@ pub fn run(
         }
     }
 
-    // Step 2: repack
+    // Step 2: repack. 7z's `-mx=<0..9>` sets compression level for all supported
+    // output formats (zip, 7z, gz, etc.). Omit when the user hasn't set one so
+    // the binary uses its own default (typically 5).
     {
+        let mut repack_args: Vec<String> = vec![
+            "a".to_string(),
+            output_path.to_string(),
+            format!("{}/*", tmp_dir),
+        ];
+        if let Some(level) = opts.archive_compression {
+            repack_args.push(format!("-mx={}", level.min(9)));
+        }
         let mut child = Command::new(seven_zip_bin())
-            .args(["a", output_path, &format!("{}/*", tmp_dir)])
+            .args(&repack_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

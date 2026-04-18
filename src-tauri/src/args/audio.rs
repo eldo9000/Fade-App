@@ -1,5 +1,188 @@
 use crate::ConvertOptions;
 
+/// Build codec-specific args (encoder, bitrate/quality, sample_fmt, channels,
+/// and any format-specific extras) for the given `opts`.
+///
+/// Returns `(codec_args, suppress_base_bitrate)`. When `suppress_base_bitrate`
+/// is true the caller must NOT emit the base `-b:a <bitrate>k` flag (lossless
+/// or VBR-driven formats handle bitrate themselves, or it doesn't apply).
+fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
+    let fmt = opts.output_format.to_lowercase();
+    let mut args: Vec<String> = Vec::new();
+    let mut suppress_base_bitrate = false;
+
+    // ── encoder + bitrate/quality dispatch ──
+    match fmt.as_str() {
+        "mp3" => {
+            args.extend(["-c:a".to_string(), "libmp3lame".to_string()]);
+            if opts.mp3_bitrate_mode.as_deref() == Some("vbr") {
+                suppress_base_bitrate = true;
+                let q = opts.mp3_vbr_quality.unwrap_or(2);
+                args.extend(["-q:a".to_string(), q.to_string()]);
+            }
+        }
+        "flac" => {
+            args.extend(["-c:a".to_string(), "flac".to_string()]);
+            suppress_base_bitrate = true; // lossless
+            if let Some(level) = opts.flac_compression {
+                args.extend(["-compression_level".to_string(), level.to_string()]);
+            }
+        }
+        "ogg" => {
+            args.extend(["-c:a".to_string(), "libvorbis".to_string()]);
+            match opts.ogg_bitrate_mode.as_deref() {
+                Some("vbr") => {
+                    suppress_base_bitrate = true;
+                    let q = opts.ogg_vbr_quality.unwrap_or(5);
+                    args.extend(["-q:a".to_string(), q.to_string()]);
+                }
+                Some("cbr") => {
+                    // keep base -b:a, plus min/max rate pinning
+                    if let Some(br) = opts.bitrate {
+                        let v = format!("{}k", br);
+                        args.extend(["-minrate".to_string(), v.clone()]);
+                        args.extend(["-maxrate".to_string(), v]);
+                    }
+                }
+                Some("abr") | None => {
+                    // just -b:a (base behavior)
+                }
+                _ => {}
+            }
+        }
+        "aac" => {
+            args.extend(["-c:a".to_string(), "aac".to_string()]);
+            if let Some(profile) = opts.aac_profile.as_deref() {
+                let p = match profile {
+                    "lc" => Some("aac_low"),
+                    "he" => Some("aac_he"),
+                    "hev2" => Some("aac_he_v2"),
+                    _ => None,
+                };
+                if let Some(p) = p {
+                    args.extend(["-profile:a".to_string(), p.to_string()]);
+                }
+            }
+        }
+        "opus" => {
+            args.extend(["-c:a".to_string(), "libopus".to_string()]);
+            if let Some(app) = opts.opus_application.as_deref() {
+                if matches!(app, "audio" | "voip" | "lowdelay") {
+                    args.extend(["-application".to_string(), app.to_string()]);
+                }
+            }
+            if let Some(vbr) = opts.opus_vbr {
+                args.extend([
+                    "-vbr".to_string(),
+                    if vbr { "on" } else { "off" }.to_string(),
+                ]);
+            }
+        }
+        "m4a" => match opts.m4a_subcodec.as_deref() {
+            Some("alac") => {
+                args.extend(["-c:a".to_string(), "alac".to_string()]);
+                suppress_base_bitrate = true;
+            }
+            _ => {
+                args.extend(["-c:a".to_string(), "aac".to_string()]);
+            }
+        },
+        "wma" => match opts.wma_mode.as_deref() {
+            Some("pro") => {
+                args.extend(["-c:a".to_string(), "wmapro".to_string()]);
+            }
+            Some("lossless") => {
+                args.extend(["-c:a".to_string(), "wmalossless".to_string()]);
+                suppress_base_bitrate = true;
+            }
+            _ => {
+                args.extend(["-c:a".to_string(), "wmav2".to_string()]);
+            }
+        },
+        "aiff" => {
+            // default PCM encoder; no explicit -c:a, no bitrate
+            suppress_base_bitrate = true;
+        }
+        "alac" => {
+            args.extend(["-c:a".to_string(), "alac".to_string()]);
+            suppress_base_bitrate = true;
+        }
+        "ac3" => {
+            args.extend(["-c:a".to_string(), "ac3".to_string()]);
+            if let Some(br) = opts.ac3_bitrate {
+                suppress_base_bitrate = true;
+                args.extend(["-b:a".to_string(), format!("{}k", br)]);
+            }
+        }
+        "dts" => {
+            args.extend(["-c:a".to_string(), "dca".to_string()]);
+            args.extend(["-strict".to_string(), "-2".to_string()]);
+            if let Some(br) = opts.dts_bitrate {
+                suppress_base_bitrate = true;
+                args.extend(["-b:a".to_string(), format!("{}k", br)]);
+            }
+        }
+        "wav" => {
+            // default PCM encoder; no bitrate
+            suppress_base_bitrate = true;
+        }
+        _ => {
+            // unknown audio format — let ffmpeg's container defaults handle it
+        }
+    }
+
+    // ── bit_depth → -sample_fmt (format-gated) ──
+    if let Some(depth) = opts.bit_depth {
+        let sample_fmt = match fmt.as_str() {
+            "wav" | "aiff" => match depth {
+                16 => Some("s16"),
+                24 => Some("s24"),
+                32 => Some("s32"),
+                _ => None,
+            },
+            "flac" => match depth {
+                16 => Some("s16"),
+                24 | 32 => Some("s32"),
+                _ => None,
+            },
+            "alac" => match depth {
+                16 => Some("s16p"),
+                24 => Some("s24p"),
+                32 => Some("s32p"),
+                _ => None,
+            },
+            "m4a" if opts.m4a_subcodec.as_deref() == Some("alac") => match depth {
+                16 => Some("s16p"),
+                24 => Some("s24p"),
+                32 => Some("s32p"),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(sf) = sample_fmt {
+            args.extend(["-sample_fmt".to_string(), sf.to_string()]);
+        }
+    }
+
+    // ── channels → -ac (+ mp3 -joint_stereo) ──
+    if let Some(ch) = opts.channels.as_deref() {
+        match ch {
+            "mono" => args.extend(["-ac".to_string(), "1".to_string()]),
+            "stereo" => args.extend(["-ac".to_string(), "2".to_string()]),
+            "joint" => {
+                args.extend(["-ac".to_string(), "2".to_string()]);
+                if fmt == "mp3" {
+                    args.extend(["-joint_stereo".to_string(), "1".to_string()]);
+                }
+            }
+            "5.1" => args.extend(["-ac".to_string(), "6".to_string()]),
+            _ => {} // "source" or unknown → omit
+        }
+    }
+
+    (args, suppress_base_bitrate)
+}
+
 pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<String> {
     let mut args: Vec<String> = vec!["-y".to_string()];
 
@@ -20,8 +203,13 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
 
     args.push("-vn".to_string());
 
-    if let Some(br) = opts.bitrate {
-        args.extend(["-b:a".to_string(), format!("{}k", br)]);
+    let (codec_args, suppress_base_bitrate) = build_codec_args(opts);
+    args.extend(codec_args);
+
+    if !suppress_base_bitrate {
+        if let Some(br) = opts.bitrate {
+            args.extend(["-b:a".to_string(), format!("{}k", br)]);
+        }
     }
     if let Some(sr) = opts.sample_rate {
         args.extend(["-ar".to_string(), sr.to_string()]);

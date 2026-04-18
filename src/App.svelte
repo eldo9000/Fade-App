@@ -12,6 +12,7 @@
   import AudioOptions from './lib/AudioOptions.svelte';
   import DataOptions from './lib/DataOptions.svelte';
   import FormatPicker from './lib/FormatPicker.svelte';
+  import ArchiveOptions from './lib/ArchiveOptions.svelte';
   import { mediaTypeFor, validateOptions } from './lib/utils.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { createSettings } from './lib/stores/settings.svelte.js';
@@ -433,6 +434,20 @@
     flip_h: false,
     flip_v: false,
     auto_rotate: true,
+    // ── Format-specific ──
+    jpeg_chroma: '420',
+    jpeg_progressive: false,
+    png_compression: 6,
+    png_color_mode: 'rgba',
+    png_interlaced: false,
+    tiff_compression: 'lzw',
+    tiff_bit_depth: 8,
+    tiff_color_mode: 'rgb',
+    webp_lossless: false,
+    webp_method: 4,
+    avif_speed: 6,
+    avif_chroma: '420',
+    bmp_bit_depth: 24,
     output_dir: null,
   });
 
@@ -447,6 +462,23 @@
     audio_format: 'mp3',
     bitrate: 192,
     sample_rate: 48000,
+    // ── Format-specific ──
+    crf: 23,
+    preset: 'medium',
+    h264_profile: 'high',
+    pix_fmt: 'yuv420p',
+    tune: 'none',
+    frame_rate: 'original',
+    webm_bitrate_mode: 'crf',
+    av1_speed: 8,
+    vp9_speed: 1,
+    mkv_subtitle: 'copy',
+    avi_video_bitrate: 4000,
+    gif_width: 480,
+    gif_fps: 10,
+    gif_loop: 'infinite',
+    gif_palette_size: 256,
+    gif_dither: 'floyd',
     output_dir: null,
   });
 
@@ -463,6 +495,21 @@
     dsp_lowpass_freq: null,
     dsp_stereo_width: null,
     dsp_limiter_db: null,
+    // ── Format-specific ──
+    channels: 'source',
+    bit_depth: 16,
+    mp3_bitrate_mode: 'cbr',
+    mp3_vbr_quality: 2,
+    flac_compression: 5,
+    ogg_bitrate_mode: 'vbr',
+    ogg_vbr_quality: 5,
+    aac_profile: 'lc',
+    opus_application: 'audio',
+    opus_vbr: true,
+    m4a_subcodec: 'aac',
+    wma_mode: 'standard',
+    ac3_bitrate: 448,
+    dts_bitrate: 1510,
     output_dir: null,
   });
 
@@ -481,6 +528,7 @@
   let archiveOptions = $state({
     output_format: 'zip',
     archive_operation: 'convert',
+    archive_compression: 5,
     output_dir: null,
   });
 
@@ -1197,7 +1245,7 @@
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
-    <aside class="{queueCompact ? 'w-[280px]' : 'w-[390px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
+    <aside class="{queueCompact ? 'w-[260px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights.
@@ -1206,41 +1254,27 @@
            "control planes" read as a unified band at the top of the app.
            shrink-0 + outer aside's flex-col means the list below scrolls
            underneath it. -->
-      <div class="flex items-center pl-20 pr-3 py-1.5 shrink-0"
+      <div class="flex items-center pl-[64px] pr-0 py-1.5 shrink-0"
            data-tauri-drag-region
            style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
                   border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
-        <div class="ml-auto flex items-stretch rounded overflow-hidden border border-[var(--border)] divide-x divide-[var(--border)]">
+        <div class="flex items-stretch rounded overflow-hidden border border-[var(--border)] divide-x divide-[var(--border)]">
           <button
             onclick={onBrowse}
-            class="px-3 py-1 text-[13px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity shrink-0"
+            class="px-2 py-1 text-[13px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity shrink-0"
           >Browse…</button>
           {#if queue.length > 0}
             <button
               onclick={clearQueue}
-              class="px-3 py-1 text-[13px] font-semibold text-[var(--text-secondary)]
+              class="px-2 py-1 text-[13px] font-semibold text-[var(--text-secondary)]
                      hover:text-red-400 hover:bg-red-900/20 transition-colors shrink-0"
             >Clear</button>
           {/if}
-          <!-- Expanded view -->
-          <button
-            onclick={() => queueCompact = false}
-            title="Expanded list"
-            class="w-9 flex items-center justify-center transition-colors shrink-0
-                   {!queueCompact
-                     ? 'text-[var(--accent)] bg-[var(--accent)]/10'
-                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
-          >
-            <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
-              <rect y="0"   width="13" height="3" rx="0.75"/>
-              <rect y="8"   width="13" height="3" rx="0.75"/>
-            </svg>
-          </button>
           <!-- Compact view -->
           <button
             onclick={() => queueCompact = true}
             title="Compact list"
-            class="w-9 flex items-center justify-center transition-colors shrink-0
+            class="w-8 flex items-center justify-center transition-colors shrink-0
                    {queueCompact
                      ? 'text-[var(--accent)] bg-[var(--accent)]/10'
                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
@@ -1250,6 +1284,20 @@
               <rect y="3.67" width="13" height="2" rx="0.5"/>
               <rect y="7.33" width="13" height="2" rx="0.5"/>
               <rect y="11"   width="13" height="2" rx="0.5"/>
+            </svg>
+          </button>
+          <!-- Expanded view -->
+          <button
+            onclick={() => queueCompact = false}
+            title="Expanded list"
+            class="w-8 flex items-center justify-center transition-colors shrink-0
+                   {!queueCompact
+                     ? 'text-[var(--accent)] bg-[var(--accent)]/10'
+                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
+          >
+            <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
+              <rect y="0"   width="13" height="3" rx="0.75"/>
+              <rect y="8"   width="13" height="3" rx="0.75"/>
             </svg>
           </button>
         </div>
@@ -2069,7 +2117,7 @@
         {:else if activeOutputCategory === 'document'}
           <FormatPicker bind:options={documentOptions} formats={DOCUMENT_FORMATS} ariaLabel="Document conversion options" />
         {:else if activeOutputCategory === 'archive'}
-          <FormatPicker bind:options={archiveOptions} formats={ARCHIVE_FORMATS} ariaLabel="Archive conversion options" upperCase={false} />
+          <ArchiveOptions bind:options={archiveOptions} />
         {:else}
           <div class="flex flex-col items-center justify-center h-full text-center gap-2">
             <p class="text-[11px] text-green-500">Coming soon</p>

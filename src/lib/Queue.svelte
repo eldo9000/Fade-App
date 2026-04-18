@@ -1,4 +1,6 @@
 <script>
+  import { convertFileSrc } from '@tauri-apps/api/core';
+
   let { queue, selectedId, onselect, onremove, oncancel, compatibleTypes = [], compact = false, showExtColumn = true } = $props();
 
   /** Traffic-light colour per status. Every item always shows a dot — the
@@ -82,6 +84,52 @@
   }
 </script>
 
+{#snippet errorBlock(item)}
+  <div class="mt-0.5">
+    <div class="flex items-center gap-1">
+      <p class="text-[11px] text-red-500 truncate flex-1">
+        {item.error?.split('\n')[0] ?? 'Conversion failed'}
+      </p>
+      {#if item.error && item.error.includes('\n')}
+        <button
+          onclick={(e) => { e.stopPropagation(); toggleError(item.id); }}
+          class="shrink-0 text-[10px] text-red-400 hover:text-red-600 transition-colors"
+        >{expandedErrors.has(item.id) ? '▾ Hide' : '▸ Details'}</button>
+      {/if}
+    </div>
+    {#if expandedErrors.has(item.id)}
+      <pre class="mt-1 text-[11px] text-red-400 font-mono overflow-y-auto
+                   max-h-[200px] bg-[var(--surface)] rounded p-1.5 whitespace-pre-wrap
+                   break-all">{item.error}</pre>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet hoverActions(item, overlay = false)}
+  <div class="absolute inset-0 flex items-center justify-{overlay ? 'center' : 'end'} gap-0.5
+              opacity-0 group-hover:opacity-100 transition-opacity
+              {overlay ? 'bg-black/60' : ''}">
+    {#if item.status === 'converting'}
+      <button
+        onclick={(e) => { e.stopPropagation(); oncancel?.(item.id); }}
+        class="w-5 h-5 flex items-center justify-center rounded
+               {overlay ? 'text-white/80' : 'text-[var(--text-secondary)]'}
+               hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20
+               transition-all text-[13px]"
+        aria-label="Cancel"
+      >⊘</button>
+    {/if}
+    <button
+      onclick={(e) => { e.stopPropagation(); onremove?.(item.id); }}
+      class="w-5 h-5 flex items-center justify-center rounded
+             {overlay ? 'text-white/80' : 'text-[var(--text-secondary)]'}
+             hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500
+             transition-all text-[14px]"
+      aria-label="Remove"
+    >×</button>
+  </div>
+{/snippet}
+
 <!-- File list -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -124,76 +172,84 @@
           </div>
         {/if}
 
-        <!-- 3-column layout: [status icon] [filename →] [← .ext]
-             Action buttons (cancel / remove) overlay the .ext column on hover.
-             No vertical dividers between columns — spacing only. -->
-
-        <!-- Col 1: status dot — always present, colour-coded like traffic lights -->
+        <!-- Col 1 (both modes): status dot, traffic-light coloured -->
         <div class="shrink-0 w-5 flex items-center justify-center">
           <span class="w-2 h-2 rounded-full {_incompat ? 'bg-white/10' : dotColor(item.status)}
                        {item.status === 'converting' ? 'animate-pulse' : ''}"></span>
         </div>
 
-        <!-- Col 2: filename. When the ext column is hidden via settings,
-             the extension is merged back into the filename (as gray .ext). -->
-        <div class="flex-1 min-w-0">
-          <p class="{compact ? 'text-[12px]' : 'text-[14px]'} font-medium truncate leading-tight
-                    {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
-             title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="text-[var(--text-secondary)]">.{item.ext}</span>{/if}</p>
-
-          {#if item.status === 'error'}
-            <div class="mt-0.5">
-              <div class="flex items-center gap-1">
-                <p class="text-[11px] text-red-500 truncate flex-1">
-                  {item.error?.split('\n')[0] ?? 'Conversion failed'}
-                </p>
-                {#if item.error && item.error.includes('\n')}
-                  <button
-                    onclick={(e) => { e.stopPropagation(); toggleError(item.id); }}
-                    class="shrink-0 text-[10px] text-red-400 hover:text-red-600 transition-colors"
-                  >{expandedErrors.has(item.id) ? '▾ Hide' : '▸ Details'}</button>
-                {/if}
-              </div>
-              {#if expandedErrors.has(item.id)}
-                <pre class="mt-1 text-[11px] text-red-400 font-mono overflow-y-auto
-                             max-h-[200px] bg-[var(--surface)] rounded p-1.5 whitespace-pre-wrap
-                             break-all">{item.error}</pre>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
-        <!-- Col 3: extension (right) + hover actions overlay.
-             When the ext-column setting is off, the extension is already
-             merged into the filename above — we suppress the text here but
-             keep the column width so hover actions still have a home. -->
-        <div class="relative shrink-0 min-w-[32px] flex items-center justify-end">
-          {#if item.ext && showExtColumn}
-            <span class="text-[11px] leading-tight text-[var(--text-secondary)]
-                         group-hover:opacity-0 transition-opacity">{item.ext}</span>
-          {/if}
-          <div class="absolute inset-0 flex items-center justify-end gap-0.5
-                      opacity-0 group-hover:opacity-100 transition-opacity">
-            {#if item.status === 'converting'}
-              <button
-                onclick={(e) => { e.stopPropagation(); oncancel?.(item.id); }}
-                class="w-5 h-5 flex items-center justify-center rounded
-                       text-[var(--text-secondary)] hover:text-orange-500
-                       hover:bg-orange-50 dark:hover:bg-orange-900/20
-                       transition-all text-[13px]"
-                aria-label="Cancel"
-              >⊘</button>
+        {#if compact}
+          <!-- Compact: single row, ext in its own column (or merged, per setting). -->
+          <div class="flex-1 min-w-0">
+            <p class="text-[12px] font-medium truncate leading-tight
+                      {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
+               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="text-[var(--text-secondary)]">.{item.ext}</span>{/if}</p>
+            {#if item.status === 'error'}
+              {@render errorBlock(item)}
             {/if}
-            <button
-              onclick={(e) => { e.stopPropagation(); onremove?.(item.id); }}
-              class="w-5 h-5 flex items-center justify-center rounded
-                     text-[var(--text-secondary)]
-                     hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500
-                     transition-all text-[14px]"
-              aria-label="Remove"
-            >×</button>
           </div>
-        </div>
+          <!-- Col 3 compact: ext (right) + hover actions overlay. -->
+          <div class="relative shrink-0 min-w-[32px] flex items-center justify-end">
+            {#if item.ext && showExtColumn}
+              <span class="text-[11px] leading-tight text-[var(--text-secondary)]
+                           group-hover:opacity-0 transition-opacity">{item.ext}</span>
+            {/if}
+            {@render hoverActions(item)}
+          </div>
+        {:else}
+          <!-- Expanded: two-line text on the left (filename + ext), 16:9 thumbnail
+               on the right. The "File type column" setting does not apply here —
+               ext always renders on its own second line so the thumbnail column
+               can carry the visual weight on the right. -->
+          <div class="flex-1 min-w-0">
+            <p class="text-[16px] font-medium truncate leading-tight
+                      {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
+               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
+            {#if item.ext}
+              <p class="text-[13px] leading-tight text-[var(--text-secondary)] truncate">{item.ext}</p>
+            {/if}
+            {#if item.status === 'error'}
+              {@render errorBlock(item)}
+            {/if}
+          </div>
+          <!-- Col 3 expanded: 16:9 thumbnail with hover actions overlay. -->
+          <div class="relative shrink-0 rounded overflow-hidden flex items-center justify-center
+                      bg-[var(--surface)] text-[var(--text-secondary)]"
+               style="width:64px; aspect-ratio:16/9">
+            {#if item.mediaType === 'image'}
+              <img src={convertFileSrc(item.path)} alt="" class="w-full h-full object-cover" />
+            {:else if item.mediaType === 'video'}
+              <!-- Browser decodes just enough to paint the first frame (preload
+                   metadata). Muted + playsinline keeps it inert. -->
+              <video src={convertFileSrc(item.path)} preload="metadata" muted playsinline
+                     class="w-full h-full object-cover pointer-events-none"></video>
+            {:else if item.mediaType === 'audio'}
+              <!-- speaker / volume icon -->
+              <svg width="20" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              </svg>
+            {:else if item.mediaType === 'archive'}
+              <!-- package / box icon -->
+              <svg width="20" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+            {:else}
+              <!-- generic file icon (document / data / fallback) -->
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            {/if}
+            {@render hoverActions(item, true)}
+          </div>
+        {/if}
       </div>
     {/each}
   {/if}
