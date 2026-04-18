@@ -1590,8 +1590,8 @@ fn run_data_convert(
                 other => vec![other.clone()],
             };
             let mut wtr = csv::WriterBuilder::new().delimiter(delim_byte).from_writer(Vec::new());
-            if let Some(first) = rows.first() {
-                if let serde_json::Value::Object(obj) = first {
+            if let Some(serde_json::Value::Object(obj)) = rows.first() {
+                {
                     let headers: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
                     wtr.write_record(&headers).map_err(|e| e.to_string())?;
                     for row in &rows {
@@ -1959,7 +1959,7 @@ fn run_archive_convert(
     std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
 
     // Step 1: extract
-    let extract_result = {
+    {
         let mut child = Command::new("7z")
             .args(["x", input_path, &format!("-o{}", tmp_dir), "-y"])
             .stdout(Stdio::piped())
@@ -2012,11 +2012,10 @@ fn run_archive_convert(
                 "7z extraction failed".to_string()
             } else { truncate_stderr(&error_output) });
         }
-    };
-    let _ = extract_result;
+    }
 
     // Step 2: repack
-    let repack_result = {
+    {
         let mut child = Command::new("7z")
             .args(["a", output_path, &format!("{}/*", tmp_dir)])
             .stdout(Stdio::piped())
@@ -2069,8 +2068,7 @@ fn run_archive_convert(
                 "7z repack failed".to_string()
             } else { truncate_stderr(&error_output) });
         }
-    };
-    let _ = repack_result;
+    }
 
     Ok(())
 }
