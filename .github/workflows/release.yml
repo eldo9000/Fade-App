@@ -220,6 +220,10 @@ jobs:
           TARBALL='${{ steps.artifacts.outputs.tarball }}'
           SIG='${{ steps.artifacts.outputs.sig }}'
           rm -f "$SIG"
+          # The signer reads TAURI_SIGNING_PRIVATE_KEY implicitly as
+          # --private-key, which clashes with our -f flag. Unset for this
+          # invocation only.
+          unset TAURI_SIGNING_PRIVATE_KEY
           npx --yes @tauri-apps/cli signer sign \
             -f "$FADE_SIGNING_KEY_FILE" \
             -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
