@@ -61,6 +61,10 @@
   let operationsMode = $state(false);
   let selectedOperation = $state(null);
   let cutMode = $state('cut');   // 'cut' = keep range between handles · 'extract' = remove range between handles
+  // Subtitling page tabs — one unified page surfaced from three sidebar categories
+  // (Intact Video, AI Tools, Analysis). Tabs keep each workflow separate while
+  // preventing the back-and-forth-clicking confusion of parallel pages.
+  let subtitlingTab = $state('embed'); // 'embed' | 'generate' | 'analyze'
   let replaceAudioPath = $state(null); // path of replacement audio (Replace Audio op)
   let replaceAudioOffsetMs = $state(0); // audio offset in ms (negative = earlier)
   let replaceAudioFitLength = $state(false); // true = time-stretch replacement to match video length
@@ -1409,6 +1413,12 @@
       { id: 'vorbis', label: 'Vorbis', todo: true },
       { id: 'ddp', label: 'Dolby Digital+', todo: true },
       { id: 'truehd', label: 'Dolby TrueHD', todo: true },
+      // Tracker / MIDI — placeholder scaffolding.
+      { id: 'mid',  label: 'MIDI', todo: true, preview: true },
+      { id: 'mod',  label: 'MOD',  todo: true, preview: true },
+      { id: 'xm',   label: 'XM',   todo: true, preview: true },
+      { id: 'it',   label: 'IT',   todo: true, preview: true },
+      { id: 'sf2',  label: 'SF2',  todo: true, preview: true },
     ]},
     { label: 'Video', cat: 'video', fmts: [
       { id: 'mp4' }, { id: 'mov' }, { id: 'webm' }, { id: 'mkv' }, { id: 'avi' }, { id: 'gif' },
@@ -1463,16 +1473,32 @@
       { id: '3ds' }, { id: 'x3d' },
       // FBX write is ASCII-only via assimp (binary FBX needs Autodesk SDK).
       { id: 'fbx', label: 'FBX (ASCII)' },
+      // Pro animation / CAD — placeholder scaffolding.
+      { id: 'usd',   label: 'USD',       todo: true, preview: true },
+      { id: 'usdz',  label: 'USDZ',      todo: true, preview: true },
+      { id: 'abc',   label: 'Alembic',   todo: true, preview: true },
+      { id: 'blend', label: 'Blender',   todo: true, preview: true },
+      { id: 'step',  label: 'STEP',      todo: true, preview: true },
+      { id: 'iges',  label: 'IGES',      todo: true, preview: true },
     ]},
-    { label: 'Operations', cat: 'ops', fmts: [
+    // Intact Video Operations — mechanical operations that stream-copy the
+    // video track (no re-encode). Fast, lossless, metadata/container-level.
+    // Subtitling lives here because soft-subs don't touch the video; the
+    // operation page itself exposes soft vs hard as a mode toggle and is
+    // also surfaced from Analysis, both routes land on the same page.
+    { label: 'Intact Video Operations', cat: 'intact', fmts: [
       { id: 'cut-noenc', label: 'Cut/Extract', todo: true },
       { id: 'replace-audio', label: 'Replace Audio', todo: true },
       { id: 'rewrap', label: 'Rewrap', todo: true },
-      { id: 'conform', label: 'Conform', todo: true },
       { id: 'merge', label: 'Merge', todo: true },
       { id: 'extract', label: 'Extract', todo: true },
-      { id: 'silence-remove', label: 'Silence Remover', todo: true },
       { id: 'subtitling', label: 'Subtitling', todo: true },
+    ]},
+    // Processing — operations that must re-encode the video track (filter
+    // chain, fps/res change, pixel alteration, timeline mutation).
+    { label: 'Processing', cat: 'processing', fmts: [
+      { id: 'conform', label: 'Conform', todo: true },
+      { id: 'silence-remove', label: 'Silence Remover', todo: true },
       { id: 'video-inserts', label: 'Video Inserts', todo: true },
     ]},
     // Chroma Key — three tiers of background removal / keying.
@@ -1490,6 +1516,10 @@
       { id: 'ai-translate', label: 'Translate', todo: true },
       { id: 'ai-colorize', label: 'Colorize', todo: true },
       { id: 'ai-bgremove', label: 'BG Remover', todo: true },
+      // Cross-category shortcut — same target page as Intact → Subtitling.
+      // `ops: true` marks this as an operation-launching entry even though
+      // it lives in a non-ops category.
+      { id: 'subtitling', label: 'Subtitling', todo: true, ops: true },
     ]},
     { label: 'Analysis', cat: 'analysis', fmts: [
       { id: 'loudness', label: 'Loudness & TP', todo: true },
@@ -1498,6 +1528,9 @@
       { id: 'black-detect', label: 'Black Detection', todo: true },
       { id: 'vmaf', label: 'VMAF', todo: true },
       { id: 'framemd5', label: 'FrameMD5', todo: true },
+      // Same unified Subtitling page — surfaces from Analysis so users who
+      // look for "subtitle lint / diff / detect" find it where they expect.
+      { id: 'subtitling', label: 'Subtitling', todo: true, ops: true },
     ]},
     { label: 'Burn & Rip', cat: 'burn', fmts: [
       { id: 'dvd', label: 'DVD', todo: true },
@@ -1512,12 +1545,81 @@
     // keeps working unchanged.
     { label: 'Data', cat: 'data', fmts: [
       { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
+      // Dev / data-nerd formats — placeholder scaffolding.
+      { id: 'sqlite',  label: 'SQLite',  todo: true, preview: true },
+      { id: 'parquet', label: 'Parquet', todo: true, preview: true },
+      { id: 'ipynb',   label: 'Jupyter', todo: true, preview: true },
     ]},
     { label: 'Document', cat: 'document', fmts: [
       { id: 'html' }, { id: 'pdf' }, { id: 'txt' }, { id: 'md' },
     ]},
+    // Office — LibreOffice managed-install lane. `.pptx/.docx/.xlsx/.key/
+    // .pages/.numbers` are all ZIP containers, so Media Extract (pull all
+    // embedded images/videos/audio out to a folder) can ship without the
+    // LibreOffice install. Full format conversion (→ PDF, images, HTML,
+    // MP4 slideshow) needs LibreOffice headless (~300 MB install).
+    { label: 'Office', cat: 'office', fmts: [
+      { id: 'pptx',    label: 'PPTX',    todo: true, preview: true },
+      { id: 'ppt',     label: 'PPT',     todo: true, preview: true },
+      { id: 'docx',    label: 'DOCX',    todo: true, preview: true },
+      { id: 'doc',     label: 'DOC',     todo: true, preview: true },
+      { id: 'xlsx',    label: 'XLSX',    todo: true, preview: true },
+      { id: 'xls',     label: 'XLS',     todo: true, preview: true },
+      { id: 'odt',     label: 'ODT',     todo: true, preview: true },
+      { id: 'odp',     label: 'ODP',     todo: true, preview: true },
+      { id: 'ods',     label: 'ODS',     todo: true, preview: true },
+      { id: 'rtf',     label: 'RTF',     todo: true, preview: true },
+      { id: 'key',     label: 'Keynote', todo: true, preview: true },
+      { id: 'pages',   label: 'Pages',   todo: true, preview: true },
+      { id: 'numbers', label: 'Numbers', todo: true, preview: true },
+    ]},
+    // Ebooks — Calibre managed install provides ebook-convert across all
+    // these formats plus PDF/EPUB conversion.
+    { label: 'Ebook', cat: 'ebook', fmts: [
+      { id: 'epub',  label: 'EPUB',  todo: true, preview: true },
+      { id: 'mobi',  label: 'MOBI',  todo: true, preview: true },
+      { id: 'azw3',  label: 'AZW3',  todo: true, preview: true },
+      { id: 'fb2',   label: 'FB2',   todo: true, preview: true },
+      { id: 'lit',   label: 'LIT',   todo: true, preview: true },
+    ]},
+    // Subtitle file-format conversion (distinct from the Subtitling
+    // operation — this is SRT-to-VTT style plumbing, not video embed/burn).
+    { label: 'Subtitle', cat: 'subtitle', fmts: [
+      { id: 'srt',  label: 'SRT',  todo: true, preview: true },
+      { id: 'vtt',  label: 'VTT',  todo: true, preview: true },
+      { id: 'ass',  label: 'ASS',  todo: true, preview: true },
+      { id: 'ssa',  label: 'SSA',  todo: true, preview: true },
+      { id: 'sbv',  label: 'SBV',  todo: true, preview: true },
+      { id: 'ttml', label: 'TTML', todo: true, preview: true },
+    ]},
+    // Timeline / edit decision lists — pro workflow interop (Premiere,
+    // Resolve, FCP, Avid). OpenTimelineIO is the Rosetta stone format.
+    { label: 'Timeline', cat: 'timeline', fmts: [
+      { id: 'edl',    label: 'EDL',     todo: true, preview: true },
+      { id: 'fcpxml', label: 'FCPXML',  todo: true, preview: true },
+      { id: 'xml',    label: 'Premiere XML', todo: true, preview: true },
+      { id: 'otio',   label: 'OTIO',    todo: true, preview: true },
+      { id: 'aaf',    label: 'AAF',     todo: true, preview: true },
+    ]},
     { label: 'Archive', cat: 'archive', fmts: [
       { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
+      // Disc / comic-book images — scaffolding.
+      { id: 'iso', label: 'ISO',  todo: true, preview: true },
+      { id: 'dmg', label: 'DMG',  todo: true, preview: true },
+      { id: 'cbr', label: 'CBR',  todo: true, preview: true },
+      { id: 'cbz', label: 'CBZ',  todo: true, preview: true },
+      { id: 'rar', label: 'RAR',  todo: true, preview: true },
+    ]},
+    { label: 'Font', cat: 'font', fmts: [
+      { id: 'ttf',   label: 'TTF',   todo: true, preview: true },
+      { id: 'otf',   label: 'OTF',   todo: true, preview: true },
+      { id: 'woff',  label: 'WOFF',  todo: true, preview: true },
+      { id: 'woff2', label: 'WOFF2', todo: true, preview: true },
+    ]},
+    { label: 'Email', cat: 'email', fmts: [
+      { id: 'msg',  label: 'MSG',  todo: true, preview: true },
+      { id: 'eml',  label: 'EML',  todo: true, preview: true },
+      { id: 'mbox', label: 'MBOX', todo: true, preview: true },
     ]},
   ];
 
@@ -2301,7 +2403,7 @@
             src={liveSrc ?? undefined}
             preload="auto"
             onloadedmetadata={onVideoMetaLoaded}
-            class="{operationsMode ? 'absolute bottom-4 left-1/2 -translate-x-1/2 w-[560px] h-[316px] rounded-lg shadow-2xl border border-white/10 z-20 object-cover' : 'max-w-full max-h-full object-contain'} {operationsMode ? (!liveSrc ? 'hidden' : '') : ((!liveSrc || diffClipPath) ? 'hidden' : '')}"
+            class="{operationsMode ? 'absolute bottom-4 left-1/2 -translate-x-1/2 w-[560px] h-[316px] rounded-lg shadow-2xl border border-white/10 z-20 object-cover' : 'absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[min(100%-2rem,560px)] max-h-[min(100%-2rem,316px)] w-auto h-auto rounded-lg shadow-2xl border border-white/10 z-10 object-contain'} {operationsMode ? (!liveSrc ? 'hidden' : '') : ((!liveSrc || diffClipPath) ? 'hidden' : '')}"
           ></video>
           {#if !operationsMode}
             {#if diffClipPath}
@@ -2316,7 +2418,7 @@
                 onpause={() => diffPlaying = false}
                 ontimeupdate={(e) => diffCurrentTime = e.currentTarget.currentTime}
                 onloadedmetadata={(e) => diffDuration = e.currentTarget.duration}
-                class="max-w-full max-h-full object-contain"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[min(100%-2rem,560px)] max-h-[min(100%-2rem,316px)] w-auto h-auto rounded-lg shadow-2xl border border-white/10 z-10 object-contain"
               ></video>
 
               <!-- Floating mini scrubber — bottom-centre -->
@@ -2654,11 +2756,52 @@
                   <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">All streams</button>
                   <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Extract</button>
                 {:else if selectedOperation === 'subtitling'}
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Pick subtitle file…</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Burn-in</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Embed</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Style…</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Subtitling</button>
+                  <!-- Unified Subtitling page — tabs for the three workflows
+                       that the sidebar entries route into. -->
+                  <div class="flex flex-col gap-3 w-full">
+                    <!-- Tabs row -->
+                    <div class="flex gap-1 border-b border-[var(--border)] w-full">
+                      {#each [
+                        { id: 'embed',    label: 'Embed / Burn-in' },
+                        { id: 'generate', label: 'Generate (AI)' },
+                        { id: 'analyze',  label: 'Analyze' },
+                      ] as tab}
+                        <button
+                          onclick={() => subtitlingTab = tab.id}
+                          class="px-3 py-1.5 text-[12px] font-medium -mb-px border-b-2 transition-colors
+                                 {subtitlingTab === tab.id
+                                   ? 'border-[var(--accent)] text-white'
+                                   : 'border-transparent text-white/50 hover:text-white/80'}"
+                        >{tab.label}</button>
+                      {/each}
+                    </div>
+
+                    <!-- Tab bodies -->
+                    {#if subtitlingTab === 'embed'}
+                      <div class="flex flex-wrap gap-2">
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Pick subtitle file…</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Burn-in</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Embed (soft)</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Style…</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Subtitling</button>
+                      </div>
+                    {:else if subtitlingTab === 'generate'}
+                      <div class="flex flex-wrap gap-2">
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Transcribe (Whisper)</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Translate SRT…</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Forced Align</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Diarize Speakers</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">OCR Burned Subs</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Restore Punctuation</button>
+                      </div>
+                    {:else if subtitlingTab === 'analyze'}
+                      <div class="flex flex-wrap gap-2">
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Subtitle Lint</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Subtitle Diff…</button>
+                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Caption Detection</button>
+                      </div>
+                    {/if}
+                  </div>
                 {:else if selectedOperation === 'video-inserts'}
                   <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Set insert point</button>
                   <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Pick insert clip…</button>
@@ -3077,23 +3220,34 @@
            style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
                   border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
 
-        <!-- Output format button — shows selected format or "Output"; click to reset/pick -->
-        <button
-          onclick={() => { globalOutputFormat = null; }}
-          data-tooltip="Target output format for every queued file. Click to pick a new format — returns to the format picker grid below."
-          class="btn-bevel px-3 py-1 text-[13px] flex items-center gap-1.5 shrink-0 {globalOutputFormat ? 'is-active' : ''}"
-        >
-          {#if globalOutputFormat}
-            {FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)?.label?.toUpperCase() ?? globalOutputFormat.toUpperCase()}
-          {:else}
+        <!-- Output format control. Two modes:
+             - No format selected → "Output" picker-toggle (drops user into the
+               format picker grid below).
+             - Format selected → "← Back" button mirroring the operations-page
+               Back button; returns user to the picker. The active format's
+               name is surfaced as a large centered page title below the
+               header instead, where it's far more legible. -->
+        {#if globalOutputFormat}
+          <button
+            onclick={() => { globalOutputFormat = null; }}
+            data-tooltip="Back to the format picker grid."
+            class="px-3 py-1.5 rounded text-[11px] font-medium border border-[var(--border)]
+                   text-white hover:border-[var(--accent)] hover:bg-white/5 transition-colors shrink-0"
+          >← Back</button>
+        {:else}
+          <button
+            onclick={() => { globalOutputFormat = null; }}
+            data-tooltip="Target output format for every queued file. Click to pick a new format — returns to the format picker grid below."
+            class="btn-bevel px-3 py-1 text-[13px] flex items-center gap-1.5 shrink-0"
+          >
             Output
-          {/if}
-          <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
-               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-               class="shrink-0 {globalOutputFormat ? 'rotate-180' : ''}">
-            <path d="M1 1l3 3 3-3"/>
-          </svg>
-        </button>
+            <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                 class="shrink-0">
+              <path d="M1 1l3 3 3-3"/>
+            </svg>
+          </button>
+        {/if}
 
         <!-- Presets selector — always visible; filtered to active category when one is selected -->
         {#if headerAdding}
@@ -3171,11 +3325,24 @@
         {/if}
       </div>
 
+      <!-- Active-format page title: large, centered, only when a format is
+           picked. Replaces the cramped extension chip that used to live in
+           the header button — much clearer signal of "which page am I on". -->
+      {#if globalOutputFormat}
+        {@const _fmt = FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)}
+        <div class="flex items-center justify-center px-3 py-3 shrink-0 border-b border-[var(--border)]">
+          <h2 class="text-[20px] font-semibold text-white/85">
+            {_fmt?.label ?? globalOutputFormat.toUpperCase()}
+          </h2>
+        </div>
+      {/if}
+
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
         {#if !globalOutputFormat}
-          {@const TOOL_CATS = ['ops', 'chroma', 'ai', 'analysis', 'burn']}
-          {@const FILE_CATS = ['data', 'document', 'archive']}
+          {@const OPS_CATS  = ['intact', 'processing']}
+          {@const TOOL_CATS = [...OPS_CATS, 'chroma', 'ai', 'analysis', 'burn']}
+          {@const FILE_CATS = ['data', 'document', 'archive', 'office', 'ebook', 'subtitle', 'timeline', 'font', 'email']}
           {@const conversionGroups = sortedFormatGroups.filter(g => !TOOL_CATS.includes(g.cat) && !FILE_CATS.includes(g.cat))}
           {@const toolGroups       = sortedFormatGroups.filter(g =>  TOOL_CATS.includes(g.cat))}
           {@const fileGroups       = sortedFormatGroups.filter(g =>  FILE_CATS.includes(g.cat))}
@@ -3188,7 +3355,7 @@
                 onclick={() => settings.conversionCollapsed = !settings.conversionCollapsed}
                 class="w-full flex items-center gap-2 mb-3 group"
               >
-                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Conversion</span>
+                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Media</span>
                 <div class="flex-1 h-px bg-[var(--border)]"></div>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -3208,7 +3375,7 @@
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
-                        {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
+                        {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV) as f}
                           {@const entryCat = f.cat ?? group.cat}
                           {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(entryCat === 'codec' ? 'video' : entryCat)}
                           <button
@@ -3257,6 +3424,7 @@
               {#if !settings.toolsCollapsed}
                 <div class="space-y-4">
                   {#each toolGroups as group (group.cat)}
+                    {@const isOpsGroup = OPS_CATS.includes(group.cat)}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
@@ -3265,18 +3433,28 @@
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
-                        {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV || group.cat === 'ops') as f}
-                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat) && group.cat !== 'ops'}
+                        {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV || isOpsGroup || f.ops) as f}
+                          {@const isOpsEntry = isOpsGroup || f.ops}
+                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat) && !isOpsEntry}
                           <button
                             onclick={() => {
                               if (incompatible) return;
-                              if (group.cat === 'ops') { enterOperation(f.id); }
-                              else { globalOutputFormat = f.id; }
+                              if (isOpsEntry) {
+                                // Subtitling is cross-surfaced from 3 categories —
+                                // auto-focus the matching tab on the unified page so
+                                // the user lands where they expected.
+                                if (f.id === 'subtitling') {
+                                  subtitlingTab = group.cat === 'ai'       ? 'generate'
+                                               : group.cat === 'analysis' ? 'analyze'
+                                                                          : 'embed';
+                                }
+                                enterOperation(f.id);
+                              } else { globalOutputFormat = f.id; }
                             }}
-                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (group.cat === 'ops' ? `${(f.label ?? f.id)} — open operations mode` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
+                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (isOpsEntry ? `${(f.label ?? f.id)} — open operations mode` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
                                    {incompatible ? 'opacity-25 cursor-default' : ''}
-                                   {f.todo && group.cat !== 'ops'
+                                   {f.todo && !isOpsEntry
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
                                      : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
                           >{f.label ?? f.id}</button>
@@ -3314,7 +3492,7 @@
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
-                        {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
+                        {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV) as f}
                           {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
                           <button
                             onclick={() => { if (!incompatible) globalOutputFormat = f.id; }}
