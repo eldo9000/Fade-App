@@ -14,6 +14,7 @@ pub fn get_streams(input_path: &str) -> Result<Vec<StreamInfo>, String> {
     Ok(parse_streams(&probe))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     window: &Window,
     job_id: &str,

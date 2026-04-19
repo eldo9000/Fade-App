@@ -12,6 +12,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::Window;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     window: &Window,
     job_id: &str,

@@ -224,14 +224,11 @@ pub(crate) fn check_codec_container_compat(
 
     if stream_type == "subtitle" {
         match ext.as_str() {
-            "mp4" | "m4v" => {
-                // MP4 only supports mov_text (tx3g) subtitles
-                if codec_lc != "mov_text" && codec_lc != "tx3g" {
-                    return Some(format!(
-                        "Subtitle codec '{}' cannot be stored in MP4 — use MKV or convert subtitles to mov_text",
-                        codec
-                    ));
-                }
+            "mp4" | "m4v" if codec_lc != "mov_text" && codec_lc != "tx3g" => {
+                return Some(format!(
+                    "Subtitle codec '{}' cannot be stored in MP4 — use MKV or convert subtitles to mov_text",
+                    codec
+                ));
             }
             "avi" => {
                 return Some("AVI does not support subtitle streams — use MKV".to_string());
@@ -241,17 +238,14 @@ pub(crate) fn check_codec_container_compat(
     }
 
     if stream_type == "audio" {
-        match ext.as_str() {
-            "mp4" | "m4v" | "mov" => {
-                // PCM formats are not valid in MP4
-                if codec_lc.starts_with("pcm_") {
-                    return Some(format!(
-                        "Audio codec '{}' is not compatible with MP4 — transcode to AAC or use MKV",
-                        codec
-                    ));
-                }
+        if let "mp4" | "m4v" | "mov" = ext.as_str() {
+            // PCM formats are not valid in MP4
+            if codec_lc.starts_with("pcm_") {
+                return Some(format!(
+                    "Audio codec '{}' is not compatible with MP4 — transcode to AAC or use MKV",
+                    codec
+                ));
             }
-            _ => {}
         }
     }
 
