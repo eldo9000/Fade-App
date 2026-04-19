@@ -1,0 +1,80 @@
+name: Cleanup old releases
+
+# Deletes GitHub releases (and their assets) older than 10 days, so we don't
+# accumulate .dmg/.msi/.deb/.AppImage/.exe bundles across many patch bumps.
+#
+# Safety:
+#   - The *latest* release is ALWAYS kept regardless of age, so the in-app
+#     auto-updater's latest.json URLs never 404.
+#   - Only releases matching `v*` tags are considered.
+#   - The underlying git tag is deleted alongside the release so reusing a
+#     version number (e.g. re-cutting v0.2.1) doesn't collide with a zombie tag.
+#   - Runs weekly on Sunday 09:00 UTC; also exposes workflow_dispatch with a
+#     `dry_run` input so you can preview what would be deleted.
+
+on:
+  schedule:
+    - cron: '0 9 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be deleted without deleting'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MAX_AGE_DAYS: '10'
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Delete releases older than ${{ env.MAX_AGE_DAYS }} days
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+          CUTOFF=$(date -u -d "${MAX_AGE_DAYS} days ago" +%s)
+          echo "Cutoff: $(date -u -d @${CUTOFF}) (${MAX_AGE_DAYS} days ago)"
+          echo "Dry run: ${DRY_RUN}"
+
+          # Fetch releases: tag, publishedAt, isLatest. Filter to v* tags.
+          RELEASES=$(gh release list --repo "$REPO" --limit 200 \
+            --json tagName,publishedAt,isLatest,isDraft,isPrerelease)
+
+          echo "$RELEASES" | jq -r '.[] | select(.tagName | startswith("v")) |
+            [.tagName, .publishedAt, .isLatest, .isDraft, .isPrerelease] | @tsv' \
+          | while IFS=$'\t' read -r TAG PUBLISHED IS_LATEST IS_DRAFT IS_PRERELEASE; do
+              if [ "$IS_LATEST" = "true" ]; then
+                echo "KEEP (latest):    $TAG ($PUBLISHED)"
+                continue
+              fi
+
+              PUB_EPOCH=$(date -u -d "$PUBLISHED" +%s)
+              if [ "$PUB_EPOCH" -ge "$CUTOFF" ]; then
+                AGE_DAYS=$(( (EPOCHSECONDS - PUB_EPOCH) / 86400 ))
+                echo "KEEP (young):     $TAG ($PUBLISHED, ${AGE_DAYS}d old)"
+                continue
+              fi
+
+              AGE_DAYS=$(( (EPOCHSECONDS - PUB_EPOCH) / 86400 ))
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "WOULD DELETE:     $TAG ($PUBLISHED, ${AGE_DAYS}d old)"
+              else
+                echo "DELETE:           $TAG ($PUBLISHED, ${AGE_DAYS}d old)"
+                # --cleanup-tag also removes the underlying git tag so the
+                # version number is fully freed up.
+                gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag
+              fi
+            done
+
+          echo "Done."
