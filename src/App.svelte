@@ -540,6 +540,11 @@
   let queueCompact = $state(false);
   let recurseSubfolders = $state(true);
 
+  // Sidebar filters — typed into the search field at the top of each
+  // sidebar, narrows what's visible below. Case-insensitive substring.
+  let leftSearch = $state('');
+  let rightSearch = $state('');
+
   // ── Settings ───────────────────────────────────────────────────────────────
   const settings   = createSettings();
   let settingsOpen = $state(false);
@@ -2193,12 +2198,23 @@
   // that would otherwise keep getting re-converted each time Fade scans the folder.
   // Used as the source of truth for the queue display AND for Convert All.
   let visibleQueue = $derived.by(() => {
-    if (!settings.hideConverted || !outputSuffix) return queue;
-    const suf = `${outputSeparator}${outputSuffix}`;
-    return queue.filter(q => {
-      const stem = q.ext ? q.name.slice(0, -(q.ext.length + 1)) : q.name;
-      return !stem.endsWith(suf);
-    });
+    let out = queue;
+    if (settings.hideConverted && outputSuffix) {
+      const suf = `${outputSeparator}${outputSuffix}`;
+      out = out.filter(q => {
+        const stem = q.ext ? q.name.slice(0, -(q.ext.length + 1)) : q.name;
+        return !stem.endsWith(suf);
+      });
+    }
+    const q = leftSearch.trim().toLowerCase();
+    if (q) {
+      out = out.filter(item => {
+        const name = (item.name ?? '').toLowerCase();
+        const ext = (item.ext ?? '').toLowerCase();
+        return name.includes(q) || ext.includes(q);
+      });
+    }
+    return out;
   });
 
   function onFolderInputChange(e) {
@@ -2933,6 +2949,35 @@
               <rect y="8"   width="13" height="3" rx="0.75"/>
             </svg>
           </button>
+        </div>
+      </div>
+
+      <!-- Search field — filters the queue by filename / extension -->
+      <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
+           style="background:var(--surface-raised)">
+        <div class="relative">
+          <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
+               width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="7" r="5"/>
+            <path d="M14 14l-3.5-3.5"/>
+          </svg>
+          <input
+            type="text"
+            bind:value={leftSearch}
+            placeholder="Filter files — try mp3, mov, name…"
+            class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
+                   bg-[color:color-mix(in_srgb,#000_35%,var(--surface-raised))]
+                   text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
+                   focus:outline-none focus:border-[var(--accent)]"
+          />
+          {#if leftSearch}
+            <button
+              onclick={() => leftSearch = ''}
+              title="Clear filter"
+              class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[13px] leading-none"
+            >×</button>
+          {/if}
         </div>
       </div>
 
@@ -5364,8 +5409,37 @@
                    hover:opacity-90 transition-opacity shrink-0"
           >← Back</button>
         </div>
+        <!-- Search — narrows the ops list below -->
+        <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
+             style="background:var(--surface-raised)">
+          <div class="relative">
+            <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
+                 width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="7" cy="7" r="5"/>
+              <path d="M14 14l-3.5-3.5"/>
+            </svg>
+            <input
+              type="text"
+              bind:value={rightSearch}
+              placeholder="Filter tools…"
+              class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
+                     bg-[color:color-mix(in_srgb,#000_35%,var(--surface-raised))]
+                     text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
+                     focus:outline-none focus:border-[var(--accent)]"
+            />
+            {#if rightSearch}
+              <button
+                onclick={() => rightSearch = ''}
+                title="Clear filter"
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[13px] leading-none"
+              >×</button>
+            {/if}
+          </div>
+        </div>
+        {@const opSearchQ = rightSearch.trim().toLowerCase()}
         <div class="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5">
-          {#each OPERATIONS as op}
+          {#each OPERATIONS.filter(o => !opSearchQ || o.label.toLowerCase().includes(opSearchQ) || o.id.toLowerCase().includes(opSearchQ)) as op}
             <button
               onclick={() => selectedOperation = op.id}
               class="w-full px-3 py-2 rounded text-[12px] text-left font-medium border transition-colors
@@ -5502,12 +5576,47 @@
         </div>
       {/if}
 
+      <!-- Search — filters the format/tool grid below. Only visible on the
+           picker page (when globalOutputFormat is null) so it doesn't clutter
+           the options pages. -->
+      {#if !globalOutputFormat}
+        <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
+             style="background:var(--surface-raised)">
+          <div class="relative">
+            <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
+                 width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="7" cy="7" r="5"/>
+              <path d="M14 14l-3.5-3.5"/>
+            </svg>
+            <input
+              type="text"
+              bind:value={rightSearch}
+              placeholder="Filter formats & tools — try mp3, prores, conform…"
+              class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
+                     bg-[color:color-mix(in_srgb,#000_35%,var(--surface-raised))]
+                     text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
+                     focus:outline-none focus:border-[var(--accent)]"
+            />
+            {#if rightSearch}
+              <button
+                onclick={() => rightSearch = ''}
+                title="Clear filter"
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[13px] leading-none"
+              >×</button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
         {#if !globalOutputFormat}
           {@const OPS_CATS  = ['intact', 'processing']}
           {@const TOOL_CATS = [...OPS_CATS, 'chroma', 'ai', 'analysis', 'burn']}
           {@const FILE_CATS = ['data', 'document', 'archive', 'office', 'ebook', 'subtitle', 'timeline', 'font', 'email']}
+          {@const searchQ = rightSearch.trim().toLowerCase()}
+          {@const matchesSearch = (f) => !searchQ || (f.label ?? f.id ?? '').toLowerCase().includes(searchQ) || (f.id ?? '').toLowerCase().includes(searchQ)}
           {@const conversionGroups = sortedFormatGroups.filter(g => !TOOL_CATS.includes(g.cat) && !FILE_CATS.includes(g.cat))}
           {@const toolGroups       = sortedFormatGroups.filter(g =>  TOOL_CATS.includes(g.cat))}
           {@const fileGroups       = sortedFormatGroups.filter(g =>  FILE_CATS.includes(g.cat))}
@@ -5532,6 +5641,8 @@
               {#if !settings.conversionCollapsed}
                 <div class="space-y-4">
                   {#each conversionGroups as group (group.cat)}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || f.preview || import.meta.env.DEV) && matchesSearch(f))}
+                    {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
@@ -5540,7 +5651,7 @@
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
-                        {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV) as f}
+                        {#each _fmts as f}
                           {@const entryCat = f.cat ?? group.cat}
                           {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(entryCat === 'codec' ? 'video' : entryCat)}
                           <button
@@ -5575,6 +5686,7 @@
                         {/each}
                       </div>
                     </div>
+                    {/if}
                   {/each}
                 </div>
               {/if}
@@ -5599,6 +5711,8 @@
                 <div class="space-y-4">
                   {#each toolGroups as group (group.cat)}
                     {@const isOpsGroup = OPS_CATS.includes(group.cat)}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || f.preview || import.meta.env.DEV || isOpsGroup || f.ops) && matchesSearch(f))}
+                    {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
@@ -5607,7 +5721,7 @@
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
-                        {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV || isOpsGroup || f.ops) as f}
+                        {#each _fmts as f}
                           {@const isOpsEntry = isOpsGroup || f.ops}
                           {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat) && !isOpsEntry}
                           <button
@@ -5635,6 +5749,7 @@
                         {/each}
                       </div>
                     </div>
+                    {/if}
                   {/each}
                 </div>
               {/if}
@@ -5658,6 +5773,8 @@
               {#if !settings.filesCollapsed}
                 <div class="space-y-4">
                   {#each fileGroups.filter(g => !g.todo || import.meta.env.DEV) as group (group.cat)}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || f.preview || import.meta.env.DEV) && matchesSearch(f))}
+                    {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider
@@ -5667,7 +5784,7 @@
                         <div class="flex-1 h-px {group.todo ? 'bg-green-900' : 'bg-[var(--border)]'}"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
-                        {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV) as f}
+                        {#each _fmts as f}
                           {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
                           <button
                             onclick={() => { if (!incompatible) globalOutputFormat = f.id; }}
@@ -5681,6 +5798,7 @@
                         {/each}
                       </div>
                     </div>
+                    {/if}
                   {/each}
                 </div>
               {/if}

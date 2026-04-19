@@ -82,10 +82,12 @@ html, body, #app {
 }
 /* Inactive half of a segmented pair — visibly grayed out */
 .btn-bevel.is-muted {
-  background: color-mix(in srgb, #fff 3%, var(--surface-raised));
+  background: color-mix(in srgb, #000 55%, var(--surface-raised));
   color: color-mix(in srgb, var(--text-secondary) 65%, transparent);
+  border-color: color-mix(in srgb, #000 40%, var(--border));
 }
 .btn-bevel.is-muted:hover:not(:disabled) {
+  background: color-mix(in srgb, #000 40%, var(--surface-raised));
   color: var(--text-secondary);
 }
 
