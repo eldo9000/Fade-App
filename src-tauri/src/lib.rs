@@ -904,6 +904,35 @@ enum OperationPayload {
         /// "light" | "medium" | "strong"
         preset: String,
     },
+    Thumbnail {
+        input_path: String,
+        output_path: String,
+        time_spec: String,
+        format: String, // jpeg · png · webp
+    },
+    ContactSheet {
+        input_path: String,
+        output_path: String,
+        cols: u32,
+        rows: u32,
+        frames: u32,
+    },
+    FrameExport {
+        input_path: String,
+        output_dir: String,
+        /// "fps" | "interval"
+        mode: String,
+        value: f64,
+        format: String, // jpeg · png · webp
+    },
+    Watermark {
+        input_path: String,
+        output_path: String,
+        watermark_path: String,
+        corner: String,
+        opacity: f64,
+        scale_pct: f64,
+    },
 }
 
 /// Run a mechanical video/audio operation.
@@ -1216,6 +1245,82 @@ fn run_operation(
                 input_path,
                 output_path,
                 preset,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Thumbnail {
+                input_path,
+                output_path,
+                time_spec,
+                format,
+            } => operations::frame_ops::run_thumbnail(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                time_spec,
+                format,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::ContactSheet {
+                input_path,
+                output_path,
+                cols,
+                rows,
+                frames,
+            } => operations::frame_ops::run_contact_sheet(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *cols,
+                *rows,
+                *frames,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::FrameExport {
+                input_path,
+                output_dir,
+                mode,
+                value,
+                format,
+            } => operations::frame_ops::run_frame_export(
+                &window,
+                &job_id,
+                input_path,
+                output_dir,
+                mode,
+                *value,
+                format,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_dir.clone())),
+
+            OperationPayload::Watermark {
+                input_path,
+                output_path,
+                watermark_path,
+                corner,
+                opacity,
+                scale_pct,
+            } => operations::frame_ops::run_watermark(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                watermark_path,
+                corner,
+                *opacity,
+                *scale_pct,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             )

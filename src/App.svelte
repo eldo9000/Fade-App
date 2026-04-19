@@ -1799,6 +1799,97 @@
     });
   }
 
+  async function runThumbnail() {
+    const ext = thumbnailFormat === 'jpeg' ? 'jpg' : thumbnailFormat;
+    const base = selectedItem?.path || '';
+    const lastSlash = base.lastIndexOf('/');
+    const parentDir = lastSlash >= 0 ? base.slice(0, lastSlash) : '.';
+    const stem = selectedItem?.ext
+      ? selectedItem.name.slice(0, -(selectedItem.ext.length + 1))
+      : (selectedItem?.name || 'frame');
+    const dir = outputDir ?? parentDir;
+    const outPath = `${dir}/${stem}${outputSeparator}thumb.${ext}`;
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    selectedItem.status = 'converting'; selectedItem.percent = 0; selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'thumbnail',
+          input_path: selectedItem.path,
+          output_path: outPath,
+          time_spec: String(thumbnailTime || '0'),
+          format: thumbnailFormat,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error'; selectedItem.error = String(err);
+      setStatus(`Thumbnail failed: ${err}`, 'error');
+    }
+  }
+
+  async function runContactSheet() {
+    const c = Math.max(1, Math.min(20, Number(contactGridCols) || 4));
+    const r = Math.max(1, Math.min(20, Number(contactGridRows) || 6));
+    const n = Math.max(c * r, Math.min(500, Number(contactFrames) || c * r));
+    return _runOp({
+      payload: { type: 'contact_sheet', cols: c, rows: r, frames: n },
+      suffix: 'sheet',
+      outExt: 'png',
+      label: 'Contact sheet',
+      requireVideo: true,
+    });
+  }
+
+  async function runFrameExport() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    const base = selectedItem.path;
+    const lastSlash = base.lastIndexOf('/');
+    const parentDir = lastSlash >= 0 ? base.slice(0, lastSlash) : '.';
+    const stem = selectedItem.ext
+      ? selectedItem.name.slice(0, -(selectedItem.ext.length + 1))
+      : selectedItem.name;
+    const dir = outputDir ?? parentDir;
+    const outDir = `${dir}/${stem}_frames`;
+    const value = frameExportMode === 'fps'
+      ? Math.max(0.01, Number(frameExportFps) || 1)
+      : Math.max(0.01, Number(frameExportInterval) || 5);
+    selectedItem.status = 'converting'; selectedItem.percent = 0; selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'frame_export',
+          input_path: selectedItem.path,
+          output_dir: outDir,
+          mode: frameExportMode,
+          value,
+          format: frameExportFormat,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error'; selectedItem.error = String(err);
+      setStatus(`Frame export failed: ${err}`, 'error');
+    }
+  }
+
+  async function runWatermark() {
+    if (!watermarkPath) { setStatus('Pick a watermark PNG first', 'error'); return; }
+    return _runOp({
+      payload: {
+        type: 'watermark',
+        watermark_path: watermarkPath,
+        corner: watermarkCorner,
+        opacity: Number(watermarkOpacity),
+        scale_pct: Number(watermarkScale),
+      },
+      suffix: 'watermarked',
+      outExt: 'mp4',
+      label: 'Watermark',
+      requireVideo: true,
+    });
+  }
+
   // ── Subtitling · analyze tab ──────────────────────────────────────────────
 
   async function runSubLint() {
@@ -3404,6 +3495,18 @@
                 {:else if selectedOperation === 'denoise'}
                   Temporal + spatial noise reduction via <code>hqdn3d</code>. Three presets (light/medium/strong) map to escalating luma/chroma spatial and temporal coefficients.
                   <br/><br/><span class="text-white/35">Stronger = softer image. Watch for detail loss on faces and textures.</span>
+                {:else if selectedOperation === 'thumbnail'}
+                  Seek to a timestamp and write a single frame as JPEG / PNG / WebP. Uses <code>-ss T -frames:v 1</code>.
+                  <br/><br/><span class="text-white/35">Time accepts <code>HH:MM:SS.ms</code> or plain seconds.</span>
+                {:else if selectedOperation === 'contact-sheet'}
+                  Tile N frames into a single PNG grid. Uses <code>select</code> + <code>tile</code>. Handy for quickly previewing a long clip's content.
+                  <br/><br/><span class="text-white/35">Default grid: 4×6 (24 frames). Increase frames to oversample.</span>
+                {:else if selectedOperation === 'frame-export'}
+                  Emit an image sequence to a sibling <code>&lt;name&gt;_frames/</code> folder. Choose a fixed frames-per-second rate or a fixed time interval between frames.
+                  <br/><br/><span class="text-white/35">Output pattern: <code>frame_000001.jpg</code> etc. Be mindful — this can produce thousands of files.</span>
+                {:else if selectedOperation === 'watermark'}
+                  Overlay a PNG watermark at a chosen corner with opacity and size (% of video width). Audio is stream-copied; video re-encodes to H.264.
+                  <br/><br/><span class="text-white/35">Transparent PNGs work best. Use opacity to further tame a logo.</span>
                 {:else if selectedOperation === 'loudness'}
                   Measure <strong class="text-white/80">EBU R128</strong> loudness: integrated LUFS (I), loudness range (LRA), and true-peak (dBTP). Read-only analysis — no file is written. True-peak uses 4× oversampling for accuracy and is slower.
                   <br/><br/><span class="text-white/35">Pick a target preset (broadcast / streaming / Spotify) and Analyze. Results appear below.</span>
@@ -3813,6 +3916,132 @@
                       disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Denoise</button>
+                  </div>
+                {:else if selectedOperation === 'thumbnail'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Time</label>
+                      <input type="text" bind:value={thumbnailTime}
+                             placeholder="00:00:01"
+                             class="w-24 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each ['jpeg','png','webp'] as p, i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => thumbnailFormat = p}
+                          class="px-3 py-1.5 text-[12px] font-semibold uppercase transition-colors
+                                 {thumbnailFormat === p ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{p}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runThumbnail}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Thumbnail</button>
+                  </div>
+                {:else if selectedOperation === 'contact-sheet'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Cols</label>
+                      <input type="number" min="1" max="20" step="1" bind:value={contactGridCols}
+                             class="w-12 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Rows</label>
+                      <input type="number" min="1" max="20" step="1" bind:value={contactGridRows}
+                             class="w-12 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Frames</label>
+                      <input type="number" min="1" max="500" step="1" bind:value={contactFrames}
+                             class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runContactSheet}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Contact Sheet</button>
+                  </div>
+                {:else if selectedOperation === 'frame-export'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each [['fps','FPS'],['interval','Interval (s)']] as [id, label], i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => frameExportMode = id}
+                          class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                                 {frameExportMode === id ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{label}</button>
+                      {/each}
+                    </div>
+                    {#if frameExportMode === 'fps'}
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">FPS</label>
+                        <input type="number" min="0.01" step="0.1" bind:value={frameExportFps}
+                               class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      </div>
+                    {:else}
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Interval</label>
+                        <input type="number" min="0.01" step="0.5" bind:value={frameExportInterval}
+                               class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                        <span class="text-[10px] text-white/30">s</span>
+                      </div>
+                    {/if}
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each ['jpeg','png','webp'] as p, i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => frameExportFormat = p}
+                          class="px-3 py-1.5 text-[12px] font-semibold uppercase transition-colors
+                                 {frameExportFormat === p ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{p}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runFrameExport}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Frame Export</button>
+                  </div>
+                {:else if selectedOperation === 'watermark'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <button
+                      onclick={() => watermarkPath
+                        ? (watermarkPath = null)
+                        : pickAuxFile((p) => watermarkPath = p, 'image/png,image/*')}
+                      class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
+                    >{watermarkPath ? 'Clear watermark' : 'Pick PNG…'}</button>
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Corner</span>
+                      {#each [['tl','TL'],['tr','TR'],['bl','BL'],['br','BR'],['center','Ctr']] as [id, label]}
+                        <div class="w-px h-6 bg-[var(--border)]"></div>
+                        <button onclick={() => watermarkCorner = id}
+                          class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                 {watermarkCorner === id ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{label}</button>
+                      {/each}
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Opacity</label>
+                      <input type="range" min="0" max="1" step="0.05" bind:value={watermarkOpacity}
+                             class="w-24 accent-[var(--accent)]"/>
+                      <span class="text-[11px] text-white/60 font-mono tabular-nums w-10 text-right">{Number(watermarkOpacity).toFixed(2)}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Size</label>
+                      <input type="number" min="1" max="100" step="1" bind:value={watermarkScale}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      <span class="text-[10px] text-white/30">%</span>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runWatermark}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || !watermarkPath || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Watermark</button>
                   </div>
                 {:else if selectedOperation === 'loudness'}
                   <!-- Row 1: target preset + true-peak toggle -->

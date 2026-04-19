@@ -9,6 +9,7 @@ pub mod audio_offset;
 pub mod conform;
 pub mod cut;
 pub mod extract;
+pub mod frame_ops;
 pub mod loop_op;
 pub mod merge;
 pub mod metadata_strip;
