@@ -5,6 +5,7 @@
 //! events used by the existing `convert_file` command.
 
 pub mod analysis;
+pub mod audio_filters;
 pub mod audio_offset;
 pub mod conform;
 pub mod cut;

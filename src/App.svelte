@@ -1890,6 +1890,34 @@
     });
   }
 
+  async function runVolume() {
+    const db = Math.max(-30, Math.min(20, Number(volumeGainDb) || 0));
+    return _runOp({
+      payload: { type: 'volume', gain_db: db },
+      suffix: `gain${db >= 0 ? '+' : ''}${db}dB`,
+      label: 'Volume',
+    });
+  }
+
+  async function runChannelTools() {
+    return _runOp({
+      payload: { type: 'channel_tools', mode: channelToolsMode },
+      suffix: 'ch-' + channelToolsMode,
+      label: 'Channel tools',
+    });
+  }
+
+  async function runPadSilence() {
+    const h = Math.max(0, Math.min(60, Number(padSilenceHead) || 0));
+    const t = Math.max(0, Math.min(60, Number(padSilenceTail) || 0));
+    if (h === 0 && t === 0) { setStatus('Set at least one pad value', 'error'); return; }
+    return _runOp({
+      payload: { type: 'pad_silence', head_s: h, tail_s: t },
+      suffix: 'padded',
+      label: 'Pad silence',
+    });
+  }
+
   // ── Subtitling · analyze tab ──────────────────────────────────────────────
 
   async function runSubLint() {
@@ -3507,6 +3535,15 @@
                 {:else if selectedOperation === 'watermark'}
                   Overlay a PNG watermark at a chosen corner with opacity and size (% of video width). Audio is stream-copied; video re-encodes to H.264.
                   <br/><br/><span class="text-white/35">Transparent PNGs work best. Use opacity to further tame a logo.</span>
+                {:else if selectedOperation === 'volume'}
+                  Apply a fixed gain in dB via <code>volume=NdB</code>. Video is stream-copied; audio re-encodes to AAC 192k.
+                  <br/><br/><span class="text-white/35">Range: -30 dB (much quieter) to +20 dB (much louder). Use the Loudness tool first to measure.</span>
+                {:else if selectedOperation === 'channel-tools'}
+                  Channel manipulations via the <code>pan</code> filter. Downmix stereo to mono, swap L/R, mute a side, or fake stereo from a mono source.
+                  <br/><br/><span class="text-white/35">For true upmix/downmix with proper LFE handling, use a dedicated audio editor.</span>
+                {:else if selectedOperation === 'pad-silence'}
+                  Prepend or append silence. Uses <code>adelay</code> for head padding and <code>apad=pad_dur</code> for tail padding.
+                  <br/><br/><span class="text-white/35">Each side: 0–60 seconds. Output is longer than the input by head + tail.</span>
                 {:else if selectedOperation === 'loudness'}
                   Measure <strong class="text-white/80">EBU R128</strong> loudness: integrated LUFS (I), loudness range (LRA), and true-peak (dBTP). Read-only analysis — no file is written. True-peak uses 4× oversampling for accuracy and is slower.
                   <br/><br/><span class="text-white/35">Pick a target preset (broadcast / streaming / Spotify) and Analyze. Results appear below.</span>
@@ -4042,6 +4079,61 @@
                       disabled={!selectedItem || selectedItem.mediaType !== 'video' || !watermarkPath || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Watermark</button>
+                  </div>
+                {:else if selectedOperation === 'volume'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 flex-1 min-w-[220px]">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0">Gain</label>
+                      <input type="range" min="-30" max="20" step="0.5" bind:value={volumeGainDb}
+                             ondblclick={() => volumeGainDb = 0}
+                             class="flex-1 accent-[var(--accent)]"/>
+                      <input type="number" min="-30" max="20" step="0.5" bind:value={volumeGainDb}
+                             class="w-14 shrink-0 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      <span class="text-[10px] text-white/30 shrink-0">dB</span>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runVolume}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Volume</button>
+                  </div>
+                {:else if selectedOperation === 'channel-tools'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)] flex-wrap">
+                      {#each [['stereo_to_mono','Stereo→Mono'],['swap','Swap L↔R'],['mute_l','Mute L'],['mute_r','Mute R'],['mono_to_stereo','Mono→Stereo']] as [id, label], i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => channelToolsMode = id}
+                          class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                                 {channelToolsMode === id ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{label}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runChannelTools}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Channel Tools</button>
+                  </div>
+                {:else if selectedOperation === 'pad-silence'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Head (s)</label>
+                      <input type="number" min="0" max="60" step="0.1" bind:value={padSilenceHead}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Tail (s)</label>
+                      <input type="number" min="0" max="60" step="0.1" bind:value={padSilenceTail}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runPadSilence}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Pad Silence</button>
                   </div>
                 {:else if selectedOperation === 'loudness'}
                   <!-- Row 1: target preset + true-peak toggle -->

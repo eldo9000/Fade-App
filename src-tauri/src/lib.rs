@@ -933,6 +933,23 @@ enum OperationPayload {
         opacity: f64,
         scale_pct: f64,
     },
+    Volume {
+        input_path: String,
+        output_path: String,
+        gain_db: f64,
+    },
+    ChannelTools {
+        input_path: String,
+        output_path: String,
+        /// stereo_to_mono · swap · mute_l · mute_r · mono_to_stereo
+        mode: String,
+    },
+    PadSilence {
+        input_path: String,
+        output_path: String,
+        head_s: f64,
+        tail_s: f64,
+    },
 }
 
 /// Run a mechanical video/audio operation.
@@ -1321,6 +1338,53 @@ fn run_operation(
                 corner,
                 *opacity,
                 *scale_pct,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Volume {
+                input_path,
+                output_path,
+                gain_db,
+            } => operations::audio_filters::run_volume(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *gain_db,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::ChannelTools {
+                input_path,
+                output_path,
+                mode,
+            } => operations::audio_filters::run_channel_tools(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                mode,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::PadSilence {
+                input_path,
+                output_path,
+                head_s,
+                tail_s,
+            } => operations::audio_filters::run_pad_silence(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *head_s,
+                *tail_s,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             )
