@@ -13,6 +13,7 @@ const DEFAULTS = {
   sendDiagnostics: true,         // opt-in after 1.0; forced-on during beta (see BETA flag).
   conversionCollapsed: false,    // right-sidebar "Conversion" super-section fold state
   toolsCollapsed: false,         // right-sidebar "Tools" super-section fold state
+  filesCollapsed: true,          // right-sidebar "Files" super-section fold state (data / doc / archive)
 };
 
 function load() {

@@ -1457,15 +1457,6 @@
       { id: 'nef',   todo: true }, { id: 'arw',  todo: true }, { id: 'dng',  todo: true },
       { id: 'orf',   todo: true }, { id: 'rw2',  todo: true },
     ]},
-    { label: 'Data', cat: 'data', fmts: [
-      { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
-    ]},
-    { label: 'Document', cat: 'document', fmts: [
-      { id: 'html' }, { id: 'pdf' }, { id: 'txt' }, { id: 'md' },
-    ]},
-    { label: 'Archive', cat: 'archive', fmts: [
-      { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
-    ]},
     { label: '3D Model', cat: 'model', fmts: [
       { id: 'obj' }, { id: 'gltf' }, { id: 'glb' },
       { id: 'stl' }, { id: 'ply' }, { id: 'dae', label: 'COLLADA' },
@@ -1480,8 +1471,18 @@
       { id: 'conform', label: 'Conform', todo: true },
       { id: 'merge', label: 'Merge', todo: true },
       { id: 'extract', label: 'Extract', todo: true },
+      { id: 'silence-remove', label: 'Silence Remover', todo: true },
       { id: 'subtitling', label: 'Subtitling', todo: true },
       { id: 'video-inserts', label: 'Video Inserts', todo: true },
+    ]},
+    // Chroma Key — three tiers of background removal / keying.
+    //   chroma-ffmpeg : built-in, ffmpeg `chromakey` / `colorkey` filter, clean shots only.
+    //   chroma-rvm    : bundled Robust Video Matting (MIT, ~15 MB ONNX), neural matting, no green screen needed.
+    //   chroma-corridor: managed install of CorridorKey (non-commercial, ~3 GB), best for hair/motion-blur on green-screen shots.
+    { label: 'Chroma Key', cat: 'chroma', fmts: [
+      { id: 'chroma-ffmpeg',   label: 'Chroma Key (FFmpeg)', todo: true },
+      { id: 'chroma-rvm',      label: 'Neural Matte (RVM)',  todo: true },
+      { id: 'chroma-corridor', label: 'CorridorKey',         todo: true },
     ]},
     { label: 'AI Tools', cat: 'ai', fmts: [
       { id: 'ai-sep', label: 'Audio Separation', todo: true },
@@ -1504,12 +1505,27 @@
       { id: 'dvd-rip', label: 'DVD Rip', todo: true },
       { id: 'web-video', label: 'Web Video', todo: true },
     ]},
+    // "Files" super-section (rendered at the bottom of the right sidebar as
+    // its own collapsible super-section, alongside Conversion and Tools).
+    // The three groups below stay as independent subcategories with their
+    // own `cat` so all downstream routing (options objects, compat filter)
+    // keeps working unchanged.
+    { label: 'Data', cat: 'data', fmts: [
+      { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
+    ]},
+    { label: 'Document', cat: 'document', fmts: [
+      { id: 'html' }, { id: 'pdf' }, { id: 'txt' }, { id: 'md' },
+    ]},
+    { label: 'Archive', cat: 'archive', fmts: [
+      { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
+    ]},
   ];
 
   function categoryFor(fmt) {
     if (!fmt) return null;
     for (const g of FORMAT_GROUPS) {
-      if (g.fmts.some(f => f.id === fmt)) return g.cat;
+      const hit = g.fmts.find(f => f.id === fmt);
+      if (hit) return hit.cat ?? g.cat;
     }
     return null;
   }
@@ -1534,9 +1550,13 @@
   // fold. Reverts to default order as soon as nothing is selected.
   let sortedFormatGroups = $derived.by(() => {
     if (!compatibleOutputCats) return FORMAT_GROUPS;
+    const groupCats = (g) => {
+      const s = new Set(g.fmts.map(f => f.cat ?? g.cat));
+      return s;
+    };
     return [...FORMAT_GROUPS].sort((a, b) => {
-      const aOk = compatibleOutputCats.includes(a.cat);
-      const bOk = compatibleOutputCats.includes(b.cat);
+      const aOk = [...groupCats(a)].some(c => compatibleOutputCats.includes(c));
+      const bOk = [...groupCats(b)].some(c => compatibleOutputCats.includes(c));
       return aOk === bOk ? 0 : (aOk ? -1 : 1);
     });
   });
@@ -3154,9 +3174,11 @@
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
         {#if !globalOutputFormat}
-          {@const TOOL_CATS = ['ops', 'ai', 'analysis', 'burn']}
-          {@const conversionGroups = sortedFormatGroups.filter(g => !TOOL_CATS.includes(g.cat))}
+          {@const TOOL_CATS = ['ops', 'chroma', 'ai', 'analysis', 'burn']}
+          {@const FILE_CATS = ['data', 'document', 'archive']}
+          {@const conversionGroups = sortedFormatGroups.filter(g => !TOOL_CATS.includes(g.cat) && !FILE_CATS.includes(g.cat))}
           {@const toolGroups       = sortedFormatGroups.filter(g =>  TOOL_CATS.includes(g.cat))}
+          {@const fileGroups       = sortedFormatGroups.filter(g =>  FILE_CATS.includes(g.cat))}
           <!-- ── Format picker: two super-sections (Conversion / Tools) ───── -->
           <div class="flex flex-col gap-5">
 
@@ -3187,7 +3209,8 @@
                       </div>
                       <div class="flex flex-wrap gap-1">
                         {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
-                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat === 'codec' ? 'video' : group.cat)}
+                          {@const entryCat = f.cat ?? group.cat}
+                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(entryCat === 'codec' ? 'video' : entryCat)}
                           <button
                             onclick={() => {
                               if (incompatible) return;
@@ -3254,6 +3277,51 @@
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
                                    {incompatible ? 'opacity-25 cursor-default' : ''}
                                    {f.todo && group.cat !== 'ops'
+                                     ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                          >{f.label ?? f.id}</button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+
+            <!-- ── FILES super-section ──────────────────────────────────── -->
+            <section>
+              <button
+                onclick={() => settings.filesCollapsed = !settings.filesCollapsed}
+                class="w-full flex items-center gap-2 mb-3 group"
+              >
+                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Files</span>
+                <div class="flex-1 h-px bg-[var(--border)]"></div>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                     class="text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-transform duration-150
+                            {settings.filesCollapsed ? '-rotate-90' : ''}">
+                  <path d="M2 4l3 3 3-3"/>
+                </svg>
+              </button>
+              {#if !settings.filesCollapsed}
+                <div class="space-y-4">
+                  {#each fileGroups as group (group.cat)}
+                    <div>
+                      <div class="flex items-center gap-2 mb-1.5">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          {group.label}
+                        </span>
+                        <div class="flex-1 h-px bg-[var(--border)]"></div>
+                      </div>
+                      <div class="flex flex-wrap gap-1">
+                        {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
+                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
+                          <button
+                            onclick={() => { if (!incompatible) globalOutputFormat = f.id; }}
+                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
+                            class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
+                                   {incompatible ? 'opacity-25 cursor-default' : ''}
+                                   {f.todo
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
                                      : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
                           >{f.label ?? f.id}</button>
