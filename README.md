@@ -4,7 +4,7 @@
 
 The multimedia utility knife. 
 
-For when you need to do that one thing to that one file, **without stopping what you're actually doing.**
+For when you need to do that one thing... to that one file... quickly.
 
 ![Fade screenshot](Screenshot.2.jpg)
 
