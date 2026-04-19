@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod audio_filters;
 pub mod audio_offset;
+pub mod chroma_key;
 pub mod conform;
 pub mod cut;
 pub mod extract;

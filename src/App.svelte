@@ -136,6 +136,22 @@
   let channelToolsMode   = $state('stereo_to_mono'); // 'stereo_to_mono' · 'swap' · 'mute_l' · 'mute_r' · 'mono_to_stereo'
   let padSilenceHead     = $state(0);          // seconds
   let padSilenceTail     = $state(0);          // seconds
+  // ── Chroma Key (FFmpeg tier) ───────────────────────────────────────────
+  // Built-in chromakey/colorkey/hsvkey filters + optional despill. Writes
+  // an alpha-capable container. A one-frame preview PNG renders in-panel.
+  let chromaAlgo          = $state('chromakey');  // 'chromakey' · 'colorkey' · 'hsvkey'
+  let chromaColor         = $state('#00ff00');    // HTML color picker (RGB hex)
+  let chromaSimilarity    = $state(0.10);         // 0.01..0.40
+  let chromaBlend         = $state(0.10);         // 0.0..0.5 (soft edge)
+  let chromaDespill       = $state(true);         // toggle — ignored for colorkey
+  let chromaDespillMix    = $state(0.50);         // 0.0..1.0
+  let chromaUpsample      = $state(true);         // prepend format=yuv444p
+  let chromaOutputFormat  = $state('mov_prores4444'); // alpha container
+  let chromaPreviewUrl    = $state(null);         // asset:// URL of last preview
+  let chromaPreviewLoading = $state(false);
+  let chromaPreviewError  = $state(null);
+  let _chromaPreviewTimer = null;
+  let _chromaPreviewKey   = null;                 // last-rendered param hash
   // ── Analysis ops ───────────────────────────────────────────────────────
   // All seven analysis tools share the same pattern: inputs + Run + results panel.
   // Backend wiring lands in Phase 2; for now the Run buttons are inert stubs.
@@ -211,6 +227,8 @@
     { id: 'volume',         label: 'Volume Gain' },
     { id: 'channel-tools',  label: 'Channel Tools' },
     { id: 'pad-silence',    label: 'Pad Silence' },
+    // Chroma key — tier 1 (FFmpeg built-ins).
+    { id: 'chroma-ffmpeg',  label: 'Chroma Key (FFmpeg)' },
     // Analysis ops — reports, no output file.
     { id: 'loudness',       label: 'Loudness & True Peak' },
     { id: 'audio-norm',     label: 'Audio Normalize' },
@@ -417,6 +435,8 @@
   //  Each step checks _generation to bail if a newer click has started.
 
   let selectedDuration    = $state(null);
+  let selectedWidth       = $state(null);
+  let selectedHeight      = $state(null);
   let previewLoading      = $state(false);
   let liveSrc             = $state(null);
   let tlMediaReady        = $state(false);
@@ -461,6 +481,8 @@
         const info = await invoke('get_file_info', { path: newItem.path });
         if (stale()) return;
         selectedDuration = info.duration_secs ?? null;
+        selectedWidth    = info.width         ?? null;
+        selectedHeight   = info.height        ?? null;
       } catch {
         if (stale()) return;
         selectedDuration = null;
@@ -821,6 +843,11 @@
     gif_dither: 'floyd',
     preserve_metadata: true,
     output_dir: null,
+    // ── Professional codec defaults ──
+    hap_format: 'hap',
+    dnxhr_profile: 'dnxhr_sq',
+    dnxhd_bitrate: 185,
+    dv_standard: 'ntsc',
   });
 
   let audioOptions = $state({
@@ -1918,6 +1945,111 @@
     });
   }
 
+  // ── Chroma Key (FFmpeg tier) ──────────────────────────────────────────────
+  // Segmented output selector → (ext, rust target id, suffix). PNG sequence
+  // writes a sibling `<stem>_frames/` directory; ext stays empty in that case.
+  function _chromaOutputMeta() {
+    switch (chromaOutputFormat) {
+      case 'mov_qtrle':        return { ext: 'mov', target: 'mov_qtrle',       suffix: 'keyed' };
+      case 'mov_prores4444':   return { ext: 'mov', target: 'mov_prores4444',  suffix: 'keyed' };
+      case 'webm_vp9':         return { ext: 'webm',target: 'webm_vp9',        suffix: 'keyed' };
+      case 'mkv_ffv1':         return { ext: 'mkv', target: 'mkv_ffv1',        suffix: 'keyed' };
+      case 'png_sequence':     return { ext: '',    target: 'png_sequence',    suffix: 'frames' };
+      default:                 return { ext: 'mov', target: 'mov_prores4444',  suffix: 'keyed' };
+    }
+  }
+
+  async function runChromaKey() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.mediaType !== 'video') { setStatus('Chroma key: video file required', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+
+    const meta = _chromaOutputMeta();
+    // PNG sequence produces a sibling directory rather than a single file.
+    // We reuse expectedOutputPath with a placeholder extension then strip it.
+    let outPath;
+    if (meta.target === 'png_sequence') {
+      const base = expectedOutputPath(selectedItem, 'x', meta.suffix, outputDir, outputSeparator);
+      outPath = base.replace(/\.x$/, '');
+    } else {
+      outPath = expectedOutputPath(selectedItem, meta.ext, meta.suffix, outputDir, outputSeparator);
+    }
+
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'chroma_key',
+          input_path: selectedItem.path,
+          output_path: outPath,
+          algo: chromaAlgo,
+          color_hex: String(chromaColor),
+          similarity: Number(chromaSimilarity),
+          blend: Number(chromaBlend),
+          despill: !!chromaDespill,
+          despill_mix: Number(chromaDespillMix),
+          upsample: !!chromaUpsample,
+          output_target: meta.target,
+          trim_start: videoOptions.trim_start ?? null,
+          trim_end:   videoOptions.trim_end   ?? null,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Chroma key failed: ${err}`, 'error');
+    }
+  }
+
+  // Debounced single-frame preview. Hashes params so rapid slider moves
+  // collapse into one ffmpeg call; cache by hash to avoid re-running when
+  // nothing changed.
+  function _chromaPreviewKeyOf() {
+    return [
+      selectedItem?.path, chromaAlgo, chromaColor,
+      chromaSimilarity, chromaBlend,
+      chromaDespill, chromaDespillMix, chromaUpsample,
+      videoOptions.trim_start ?? 0,
+    ].join('|');
+  }
+
+  async function generateChromaPreview() {
+    if (!selectedItem || selectedItem.mediaType !== 'video') return;
+    const key = _chromaPreviewKeyOf();
+    if (key === _chromaPreviewKey && chromaPreviewUrl) return;
+    if (_chromaPreviewTimer) clearTimeout(_chromaPreviewTimer);
+    _chromaPreviewTimer = setTimeout(async () => {
+      chromaPreviewLoading = true;
+      chromaPreviewError = null;
+      try {
+        const t = Number(videoOptions.trim_start) > 0
+          ? Number(videoOptions.trim_start)
+          : 1.0;
+        const path = await invoke('chroma_key_preview', {
+          inputPath: selectedItem.path,
+          timeS: t,
+          algo: chromaAlgo,
+          colorHex: String(chromaColor),
+          similarity: Number(chromaSimilarity),
+          blend: Number(chromaBlend),
+          despill: !!chromaDespill,
+          despillMix: Number(chromaDespillMix),
+          upsample: !!chromaUpsample,
+        });
+        // Cache-bust so the <img> refreshes when the same path is rewritten.
+        chromaPreviewUrl = convertFileSrc(path) + '?t=' + Date.now();
+        _chromaPreviewKey = key;
+      } catch (err) {
+        chromaPreviewError = String(err);
+      } finally {
+        chromaPreviewLoading = false;
+      }
+    }, 250);
+  }
+
   // ── Subtitling · analyze tab ──────────────────────────────────────────────
 
   async function runSubLint() {
@@ -2273,10 +2405,10 @@
     ]},
     { label: 'Video', cat: 'video', fmts: [
       { id: 'mp4' }, { id: 'mov' }, { id: 'webm' }, { id: 'mkv' }, { id: 'avi' }, { id: 'gif' },
-      { id: 'm4v',   todo: true }, { id: 'flv',   todo: true }, { id: 'mpg',  todo: true },
-      { id: 'ogv',   todo: true }, { id: 'ts',    todo: true }, { id: '3gp',  todo: true },
-      { id: 'divx',  todo: true }, { id: 'rmvb',  todo: true }, { id: 'asf',  todo: true },
-      { id: 'wmv', label: 'WMV', todo: true },
+      { id: 'm4v'  }, { id: 'flv'  }, { id: 'mpg'  },
+      { id: 'ogv'  }, { id: 'ts'   }, { id: '3gp'  },
+      { id: 'divx' }, { id: 'rmvb' }, { id: 'asf'  },
+      { id: 'wmv', label: 'WMV' },
     ]},
     // ── Codecs: quick-picks that set both the common container AND codec.
     // Clicking a codec preset drops you onto the natural container for that
@@ -2287,25 +2419,25 @@
       { id: 'codec-h265',      label: 'H.265 / HEVC',  ext: 'mp4', codec: 'h265'        },
       { id: 'codec-av1',       label: 'AV1',           ext: 'mp4', codec: 'av1'         },
       { id: 'codec-vp9',       label: 'VP9',           ext: 'webm', codec: 'vp9'        },
-      { id: 'codec-prores',    label: 'Apple ProRes',  ext: 'mov', codec: 'prores',     todo: true },
-      { id: 'codec-dnxhd',     label: 'DNxHD',         ext: 'mov', codec: 'dnxhd',      todo: true },
-      { id: 'codec-dnxhr',     label: 'DNxHR',         ext: 'mov', codec: 'dnxhr',      todo: true },
-      { id: 'codec-cineform',  label: 'CineForm',      ext: 'mov', codec: 'cineform',   todo: true },
-      { id: 'codec-qtanim',    label: 'QT Animation',  ext: 'mov', codec: 'qtrle',      todo: true },
-      { id: 'codec-uncomp',    label: 'Uncompressed',  ext: 'mov', codec: 'rawvideo',   todo: true },
-      { id: 'codec-ffv1',      label: 'FFV1',          ext: 'mkv', codec: 'ffv1',       todo: true },
-      { id: 'codec-xdcam422',  label: 'XDCAM HD422',   ext: 'mov', codec: 'mpeg2video', todo: true },
-      { id: 'codec-xdcam35',   label: 'XDCAM HD35',    ext: 'mov', codec: 'mpeg2video', todo: true },
+      { id: 'codec-prores',    label: 'Apple ProRes',  ext: 'mov', codec: 'prores'                   },
+      { id: 'codec-dnxhd',     label: 'DNxHD',         ext: 'mov', codec: 'dnxhd'                   },
+      { id: 'codec-dnxhr',     label: 'DNxHR',         ext: 'mov', codec: 'dnxhr'                   },
+      { id: 'codec-cineform',  label: 'CineForm',      ext: 'mov', codec: 'cineform'                },
+      { id: 'codec-qtanim',    label: 'QT Animation',  ext: 'mov', codec: 'qtrle'                   },
+      { id: 'codec-uncomp',    label: 'Uncompressed',  ext: 'mov', codec: 'rawvideo'                },
+      { id: 'codec-ffv1',      label: 'FFV1',          ext: 'mkv', codec: 'ffv1'                    },
+      { id: 'codec-xdcam422',  label: 'XDCAM HD422',   ext: 'mov', codec: 'xdcam422'               },
+      { id: 'codec-xdcam35',   label: 'XDCAM HD35',    ext: 'mov', codec: 'xdcam35'                },
       { id: 'codec-avcintra',  label: 'AVC-Intra',     ext: 'mov', codec: 'h264',       todo: true },
       { id: 'codec-xavc',      label: 'XAVC',          ext: 'mp4', codec: 'h264',       todo: true },
       { id: 'codec-xavclgop',  label: 'XAVC Long GOP', ext: 'mp4', codec: 'h264',       todo: true },
-      { id: 'codec-hap',       label: 'HAP',           ext: 'mov', codec: 'hap',        todo: true },
-      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv', codec: 'theora',     todo: true },
-      { id: 'codec-mpeg2',     label: 'MPEG-2',        ext: 'mpg', codec: 'mpeg2video', todo: true },
-      { id: 'codec-mjpeg',     label: 'MJPEG',         ext: 'mov', codec: 'mjpeg',      todo: true },
-      { id: 'codec-xvid',      label: 'Xvid',          ext: 'avi', codec: 'mpeg4',      todo: true },
-      { id: 'codec-dv',        label: 'DV',            ext: 'mov', codec: 'dvvideo',    todo: true },
-      { id: 'codec-mpeg1',     label: 'MPEG-1',        ext: 'mpg', codec: 'mpeg1video', todo: true },
+      { id: 'codec-hap',       label: 'HAP',           ext: 'mov', codec: 'hap'                    },
+      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv', codec: 'theora'                  },
+      { id: 'codec-mpeg2',     label: 'MPEG-2',        ext: 'mpg', codec: 'mpeg2video'              },
+      { id: 'codec-mjpeg',     label: 'MJPEG',         ext: 'mov', codec: 'mjpeg'                   },
+      { id: 'codec-xvid',      label: 'Xvid',          ext: 'avi', codec: 'mpeg4'                   },
+      { id: 'codec-dv',        label: 'DV',            ext: 'mov', codec: 'dvvideo'                 },
+      { id: 'codec-mpeg1',     label: 'MPEG-1',        ext: 'mpg', codec: 'mpeg1video'              },
     ]},
     { label: 'Image', cat: 'image', fmts: [
       { id: 'jpeg' }, { id: 'png' }, { id: 'webp' }, { id: 'tiff' }, { id: 'bmp' }, { id: 'avif' },
@@ -2374,7 +2506,7 @@
     //   chroma-rvm    : bundled Robust Video Matting (MIT, ~15 MB ONNX), neural matting, no green screen needed.
     //   chroma-corridor: managed install of CorridorKey (non-commercial, ~3 GB), best for hair/motion-blur on green-screen shots.
     { label: 'Chroma Key', cat: 'chroma', fmts: [
-      { id: 'chroma-ffmpeg',   label: 'Chroma Key (FFmpeg)', todo: true },
+      { id: 'chroma-ffmpeg',   label: 'Chroma Key (FFmpeg)', ops: true },
       { id: 'chroma-rvm',      label: 'Neural Matte (RVM)',  todo: true },
       { id: 'chroma-corridor', label: 'CorridorKey',         todo: true },
     ]},
@@ -2583,6 +2715,8 @@
     'volume':         ['video', 'audio'],
     'channel-tools':  ['video', 'audio'],
     'pad-silence':    ['video', 'audio'],
+    // Chroma key
+    'chroma-ffmpeg':  ['video'],
     // Analysis ops
     'loudness':      ['video', 'audio'],   // needs an audio track
     'audio-norm':    ['video', 'audio'],
@@ -2680,6 +2814,8 @@
     // ── Synchronous batch: clears everything in one Svelte flush ──
     liveSrc            = null;
     selectedDuration   = null;
+    selectedWidth      = null;
+    selectedHeight     = null;
     tlMediaReady       = false;
     tlWaveformReady    = false;
     tlSpectrogramReady = false;
@@ -3553,6 +3689,9 @@
                 {:else if selectedOperation === 'pad-silence'}
                   Prepend or append silence. Uses <code>adelay</code> for head padding and <code>apad=pad_dur</code> for tail padding.
                   <br/><br/><span class="text-white/35">Each side: 0–60 seconds. Output is longer than the input by head + tail.</span>
+                {:else if selectedOperation === 'chroma-ffmpeg'}
+                  Remove a solid background colour using an FFmpeg built-in filter. <strong class="text-white/80">chromakey</strong> (YUV) is the default for green/blue screens; <strong class="text-white/80">colorkey</strong> (RGB) gives hard cuts for flat mattes; <strong class="text-white/80">hsvkey</strong> handles uneven screen lighting. Optional <code>despill</code> removes coloured light bouncing onto the subject. Output is an alpha-capable container — ProRes 4444, VP9+alpha, PNG sequence, QtRLE, or FFV1.
+                  <br/><br/><span class="text-white/35">Pick a colour, tune similarity/blend, scrub to a frame and Preview. Trim handles limit the keyed segment.</span>
                 {:else if selectedOperation === 'loudness'}
                   Measure <strong class="text-white/80">EBU R128</strong> loudness: integrated LUFS (I), loudness range (LRA), and true-peak (dBTP). Read-only analysis — no file is written. True-peak uses 4× oversampling for accuracy and is slower.
                   <br/><br/><span class="text-white/35">Pick a target preset (broadcast / streaming / Spotify) and Analyze. Results appear below.</span>
@@ -4143,6 +4282,147 @@
                       disabled={!selectedItem || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Pad Silence</button>
+                  </div>
+                {:else if selectedOperation === 'chroma-ffmpeg'}
+                  <!-- Row 1: algorithm segmented -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Algo</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => { chromaAlgo = 'chromakey'; generateChromaPreview(); }}
+                              title="YUV-space key. Best for green / blue screens with evenly-lit backdrops."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaAlgo === 'chromakey' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">chromakey</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => { chromaAlgo = 'colorkey'; generateChromaPreview(); }}
+                              title="RGB-space hard cut. Best for solid flat-colour mattes (title cards, generated BG)."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaAlgo === 'colorkey' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">colorkey</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => { chromaAlgo = 'hsvkey'; generateChromaPreview(); }}
+                              title="HSV-space key. Use when lighting on the screen is uneven."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaAlgo === 'hsvkey' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">hsvkey</button>
+                    </div>
+                    <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
+                           title="Key colour. Defaults to pure green. Use the eyedropper-style native picker.">
+                      <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Colour</span>
+                      <input type="color" bind:value={chromaColor}
+                             oninput={generateChromaPreview}
+                             class="w-8 h-6 rounded border border-[var(--border)] bg-transparent cursor-pointer"/>
+                      <span class="text-[11px] text-white/50 font-mono tabular-nums">{chromaColor}</span>
+                    </label>
+                  </div>
+                  <!-- Row 2: similarity slider -->
+                  <div class="flex items-center gap-2 w-full">
+                    <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0 w-20">Similarity</span>
+                    <input type="range" min="0.01" max="0.40" step="0.01"
+                           bind:value={chromaSimilarity}
+                           oninput={generateChromaPreview}
+                           class="flex-1 accent-[var(--accent)]"/>
+                    <span class="text-[11px] text-white/70 font-mono tabular-nums w-10 text-right">{Number(chromaSimilarity).toFixed(2)}</span>
+                  </div>
+                  <!-- Row 3: blend slider -->
+                  <div class="flex items-center gap-2 w-full">
+                    <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0 w-20">Blend</span>
+                    <input type="range" min="0.00" max="0.50" step="0.01"
+                           bind:value={chromaBlend}
+                           oninput={generateChromaPreview}
+                           class="flex-1 accent-[var(--accent)]"/>
+                    <span class="text-[11px] text-white/70 font-mono tabular-nums w-10 text-right">{Number(chromaBlend).toFixed(2)}</span>
+                  </div>
+                  <!-- Row 4: despill -->
+                  <div class="flex items-center gap-2 w-full"
+                       title={chromaAlgo === 'colorkey' ? 'Despill not meaningful for hard colorkey cuts.' : 'Remove coloured light bouncing onto the subject from the screen.'}>
+                    <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer shrink-0"
+                           class:opacity-40={chromaAlgo === 'colorkey'}>
+                      <input type="checkbox" bind:checked={chromaDespill}
+                             disabled={chromaAlgo === 'colorkey'}
+                             onchange={generateChromaPreview}
+                             class="accent-[var(--accent)]"/>
+                      <span class="text-[11px] text-white/70 font-medium">Despill</span>
+                    </label>
+                    <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0 w-8">Mix</span>
+                    <input type="range" min="0.00" max="1.00" step="0.05"
+                           bind:value={chromaDespillMix}
+                           oninput={generateChromaPreview}
+                           disabled={!chromaDespill || chromaAlgo === 'colorkey'}
+                           class="flex-1 accent-[var(--accent)] disabled:opacity-40"/>
+                    <span class="text-[11px] text-white/70 font-mono tabular-nums w-10 text-right">{Number(chromaDespillMix).toFixed(2)}</span>
+                  </div>
+                  <!-- Row 5: upsample toggle -->
+                  <div class="flex items-center gap-2 w-full">
+                    <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
+                           title="Prepend format=yuv444p before the key. Helps noticeably on 4:2:0 sources where the chroma planes are blurry.">
+                      <input type="checkbox" bind:checked={chromaUpsample}
+                             onchange={generateChromaPreview}
+                             class="accent-[var(--accent)]"/>
+                      <span class="text-[11px] text-white/70 font-medium">Upsample chroma (yuv444p)</span>
+                    </label>
+                  </div>
+                  <!-- Row 6: output container segmented -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Output</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => chromaOutputFormat = 'mov_prores4444'}
+                              title="MOV + ProRes 4444 — editorial standard, great alpha, big files."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaOutputFormat === 'mov_prores4444' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">ProRes 4444</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => chromaOutputFormat = 'mov_qtrle'}
+                              title="MOV + QuickTime Animation (RLE) — lossless, huge files, very compatible."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaOutputFormat === 'mov_qtrle' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">QtRLE</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => chromaOutputFormat = 'webm_vp9'}
+                              title="WebM + VP9 with yuva420p — browser-playable alpha video."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaOutputFormat === 'webm_vp9' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">VP9+alpha</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => chromaOutputFormat = 'png_sequence'}
+                              title="PNG sequence — writes a sibling &lt;name&gt;_frames/ directory, one file per frame."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaOutputFormat === 'png_sequence' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">PNG seq</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => chromaOutputFormat = 'mkv_ffv1'}
+                              title="MKV + FFV1 — lossless archival, smaller than QtRLE."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {chromaOutputFormat === 'mkv_ffv1' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">FFV1</button>
+                    </div>
+                  </div>
+                  <!-- Row 7: preview + run -->
+                  <div class="flex items-center gap-2 w-full">
+                    <button
+                      onclick={generateChromaPreview}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold border border-[var(--accent)] text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] transition-colors disabled:opacity-40"
+                    >{chromaPreviewLoading ? 'Previewing…' : 'Preview frame'}</button>
+                    <button
+                      onclick={runChromaKey}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Chroma Key</button>
+                  </div>
+                  <!-- Preview image area with checkerboard backdrop. -->
+                  <div class="w-full rounded border border-[var(--border)] overflow-hidden"
+                       style="background-image:
+                                linear-gradient(45deg, #333 25%, transparent 25%),
+                                linear-gradient(-45deg, #333 25%, transparent 25%),
+                                linear-gradient(45deg, transparent 75%, #333 75%),
+                                linear-gradient(-45deg, transparent 75%, #333 75%);
+                              background-size: 16px 16px;
+                              background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+                              background-color: #1a1a1a;
+                              min-height: 120px;">
+                    {#if chromaPreviewUrl}
+                      <img src={chromaPreviewUrl} alt="Chroma key preview"
+                           class="w-full block"/>
+                    {:else if chromaPreviewError}
+                      <div class="p-3 text-[11px] text-red-400 font-mono">{chromaPreviewError}</div>
+                    {:else}
+                      <div class="p-3 text-[11px] text-white/30">No preview yet — click Preview frame after selecting a video.</div>
+                    {/if}
                   </div>
                 {:else if selectedOperation === 'loudness'}
                   <!-- Row 1: target preset + true-peak toggle -->
@@ -5255,6 +5535,15 @@
                                 videoOptions.codec = f.codec;
                               } else {
                                 globalOutputFormat = f.id;
+                                // Auto-select a compatible codec for containers that
+                                // reject arbitrary codecs or need specific defaults.
+                                const fmt = f.id;
+                                if      (fmt === 'ogv')               videoOptions.codec = 'theora';
+                                else if (fmt === 'mpg')               videoOptions.codec = 'mpeg2video';
+                                else if (fmt === 'wmv' || fmt === 'asf') videoOptions.codec = 'wmv2';
+                                else if (fmt === 'divx')              videoOptions.codec = 'mpeg4';
+                                else if (fmt === 'rmvb')              videoOptions.codec = 'rv20';
+                                else if (fmt === '3gp') { videoOptions.codec = 'h264'; videoOptions.h264_profile = 'baseline'; }
                               }
                             }}
                             data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (group.cat === 'codec' ? `${f.label} — encode as ${f.codec} in ${f.ext.toUpperCase()}` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
@@ -5387,7 +5676,7 @@
             cropAspect={cropAspect}
           />
         {:else if activeOutputCategory === 'video'}
-          <VideoOptions bind:options={videoOptions} errors={validationErrors} />
+          <VideoOptions bind:options={videoOptions} errors={validationErrors} inputWidth={selectedWidth} inputHeight={selectedHeight} />
         {:else if activeOutputCategory === 'audio'}
           <AudioOptions bind:options={audioOptions} errors={validationErrors} />
         {:else if activeOutputCategory === 'data'}

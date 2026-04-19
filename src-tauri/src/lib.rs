@@ -150,6 +150,12 @@ pub struct ConvertOptions {
     pub gif_palette_size: Option<u32>,     // 32 | 64 | 128 | 256
     pub gif_dither: Option<String>,        // "none" | "bayer" | "floyd"
 
+    // ── Professional video codec controls ──
+    pub hap_format: Option<String>, // "hap" | "hap_alpha" | "hap_q" | "hap_q_alpha"
+    pub dnxhr_profile: Option<String>, // "dnxhr_lb" | "dnxhr_sq" | "dnxhr_hq" | "dnxhr_hqx" | "dnxhr_444"
+    pub dnxhd_bitrate: Option<u32>,    // Mbps: 36 | 115 | 120 | 145 | 175 | 185 | 220
+    pub dv_standard: Option<String>,   // "ntsc" | "pal"
+
     // ── Format-specific image controls ──
     pub jpeg_chroma: Option<String>, // "420" | "422" | "444"
     pub jpeg_progressive: Option<bool>,
@@ -244,6 +250,10 @@ impl Default for ConvertOptions {
             gif_loop: None,
             gif_palette_size: None,
             gif_dither: None,
+            hap_format: None,
+            dnxhr_profile: None,
+            dnxhd_bitrate: None,
+            dv_standard: None,
 
             jpeg_chroma: None,
             jpeg_progressive: None,
@@ -356,7 +366,7 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "jpg" | "jpeg" | "png" | "webp" | "tiff" | "tif" | "bmp" | "gif" | "avif" | "heic"
         | "heif" | "psd" | "svg" | "ico" | "raw" | "cr2" | "nef" | "arw" | "dng" => "image",
         "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "flv" | "wmv" | "ts" | "mpg" | "mpeg"
-        | "3gp" | "ogv" => "video",
+        | "3gp" | "ogv" | "divx" | "rmvb" | "asf" => "video",
         "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" => "audio",
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
         "md" | "markdown" | "html" | "htm" | "txt" => "document",
@@ -988,6 +998,20 @@ enum OperationPayload {
         head_s: f64,
         tail_s: f64,
     },
+    ChromaKey {
+        input_path: String,
+        output_path: String,
+        algo: operations::chroma_key::ChromaAlgo,
+        color_hex: String,
+        similarity: f64,
+        blend: f64,
+        despill: bool,
+        despill_mix: f64,
+        upsample: bool,
+        output_target: operations::chroma_key::ChromaOutput,
+        trim_start: Option<f64>,
+        trim_end: Option<f64>,
+    },
 }
 
 /// Run a mechanical video/audio operation.
@@ -1452,6 +1476,39 @@ fn run_operation(
                 Arc::clone(&cancelled),
             )
             .map(|_| Some(output_path.clone())),
+
+            OperationPayload::ChromaKey {
+                input_path,
+                output_path,
+                algo,
+                color_hex,
+                similarity,
+                blend,
+                despill,
+                despill_mix,
+                upsample,
+                output_target,
+                trim_start,
+                trim_end,
+            } => operations::chroma_key::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *algo,
+                color_hex,
+                *similarity,
+                *blend,
+                *despill,
+                *despill_mix,
+                *upsample,
+                *output_target,
+                *trim_start,
+                *trim_end,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
         };
 
         {
@@ -1559,6 +1616,7 @@ pub fn run() {
             operations::subtitling::probe::probe_subtitles,
             operations::subtitling::lint::lint_subtitle,
             operations::subtitling::diff::diff_subtitle,
+            operations::chroma_key::chroma_key_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");
