@@ -6,7 +6,6 @@ const DEFAULTS = {
   autoUpdate: false,
   vizDefault: 'no',
   limiterAuto: false,
-  previewHighQuality: false,
   autoCompact: true,
   hideConverted: true,
   fileTypeColumn: true,

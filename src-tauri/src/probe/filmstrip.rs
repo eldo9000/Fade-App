@@ -14,6 +14,13 @@ struct FilmstripFrameEvent {
 /// Returns immediately — each frame is emitted as a "filmstrip-frame" event
 /// as it finishes, so the UI fills in incrementally without blocking.
 /// Each frame is a separate fast-seek ffmpeg call at nice -n 19 / 1 thread.
+///
+/// `draft` controls per-frame decode width:
+/// - `false` (standard): `scale=60` — roughly half the data of a full decode.
+/// - `true`  (heavy file / draft): `scale=30` — another 75% pixel reduction.
+///
+/// Frame count is caller-driven. Current policy keeps 20 frames in both modes;
+/// the scale reduction alone delivers the heavy-mode speed-up.
 #[command]
 pub fn get_filmstrip(
     window: Window,
@@ -28,9 +35,9 @@ pub fn get_filmstrip(
     }
 
     let scale_filter = if draft {
-        "scale=80:-2:flags=fast_bilinear"
+        "scale=30:-2:flags=fast_bilinear"
     } else {
-        "scale=160:-2:flags=fast_bilinear"
+        "scale=60:-2:flags=fast_bilinear"
     }
     .to_string();
 

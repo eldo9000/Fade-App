@@ -23,6 +23,11 @@ fn zcr_to_hue(zcr: f32) -> u32 {
 /// Extract a 500-point RMS waveform plus per-bar frequency hue.
 /// Uses zero-crossing rate at 8 000 Hz — fast, no extra deps, works well
 /// for distinguishing bass kicks from hi-hats visually.
+///
+/// `draft` drops decode sample rate to 2 000 Hz (4× less decode + pipe data).
+/// RMS envelope is near-identical; only ZCR hue accuracy degrades (Nyquist
+/// falls from 4 kHz to 1 kHz). Only engaged on heavy files — audio-only items
+/// always run at full fidelity.
 #[command]
 pub fn get_waveform(
     path: String,

@@ -733,6 +733,7 @@
     }
 
     const myId = it.id;
+    // Keep 20 frames in both modes — scale reduction alone handles throughput.
     const COUNT = 20;
     // Pre-allocate slots so the strip renders a skeleton immediately
     filmstripFrames = new Array(COUNT).fill(null);

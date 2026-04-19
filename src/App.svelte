@@ -25,6 +25,26 @@
   const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
   const ARCHIVE_FORMATS = ['zip', 'tar.gz', 'tar.xz', '7z'];
 
+  // Fade is a raw utility, not a playback viewer — performance beats fidelity.
+  // Standard preview is already half-resolution. Items flip to draft mode
+  // automatically when EITHER threshold trips:
+  //   - file size  > 500 MB  (catches big video + lossless audio)
+  //   - duration   > 30 min  (catches long recordings regardless of bitrate —
+  //                           decode time scales with runtime, not bytes)
+  // Either condition is enough: a 45-min 256kbps lecture is ~85 MB but its
+  // waveform pass is still a 45-min decode. There is intentionally no manual
+  // override; a "DRAFT" badge surfaces the mode to the user and that's it.
+  const HEAVY_FILE_BYTES = 500 * 1024 * 1024;  // 500 MB
+  const HEAVY_DURATION_SECS = 30 * 60;         // 30 min
+
+  function isHeavyItem(item) {
+    const info = item?.info;
+    if (!info) return false;
+    if ((info.file_size ?? 0) > HEAVY_FILE_BYTES) return true;
+    if ((info.duration_secs ?? 0) > HEAVY_DURATION_SECS) return true;
+    return false;
+  }
+
   // ── State ──────────────────────────────────────────────────────────────────
 
   const zoom = createZoom();
@@ -827,22 +847,25 @@
     const cached = {};
     preloadCache.set(nextItem.id, cached); // mark as in-progress
 
-    // Waveform (blocking — one at a time)
+    // Waveform (blocking — one at a time). Heavy audio *or* video flips draft
+    // (e.g. a 3-hour high-fidelity recording — size or duration either trips).
     try {
-      const data = await invoke('get_waveform', { path: nextItem.path, draft: !settings.previewHighQuality });
+      const data = await invoke('get_waveform', { path: nextItem.path, draft: isHeavyItem(nextItem) });
       cached.waveform = data;
       preloadCache.set(nextItem.id, cached);
     } catch { /* non-fatal */ }
 
-    // Filmstrip (video only) — fire-and-forget; frames arrive via bg listener
+    // Filmstrip (video only) — fire-and-forget; frames arrive via bg listener.
+    // 20 frames either way; heavy flips to scale=30 for a ~75% per-frame cut.
     if (nextItem.mediaType === 'video') {
       const dur = nextItem.info?.duration_secs ?? null;
       if (dur) {
+        const draft = isHeavyItem(nextItem);
         cached.filmstripFrames = new Array(20).fill(null);
         preloadCache.set(nextItem.id, cached);
         invoke('get_filmstrip', {
           path: nextItem.path, id: nextItem.id + '-bg',
-          count: 20, duration: dur, draft: !settings.previewHighQuality
+          count: 20, duration: dur, draft
         }).catch(() => {});
       }
     }
@@ -2142,17 +2165,16 @@
       <!-- Preview area -->
       <div class="flex-1 min-h-0 bg-[#1a1a1a] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
 
-        <!-- HQ toggle — top-left corner, visible for video/audio -->
-        {#if selectedItem && ['video', 'audio'].includes(selectedItem.mediaType)}
-          <button
-            onclick={() => settings.previewHighQuality = !settings.previewHighQuality}
-            title={settings.previewHighQuality ? 'High quality mode on — click to use draft' : 'Draft quality — click for high quality'}
+        <!-- DRAFT badge — surfaces auto-flipped draft mode on heavy media
+             (video or audio). Informational only; Fade prioritises performance
+             over preview fidelity, so there is no toggle back to full quality. -->
+        {#if selectedItem && ['video', 'audio'].includes(selectedItem.mediaType) && isHeavyItem(selectedItem)}
+          <div
+            title="Large file — previews running in draft mode for performance"
             class="absolute top-2 left-2 z-20 px-2 py-0.5 rounded text-[11px] font-mono
-                   border backdrop-blur-sm transition-all select-none
-                   {settings.previewHighQuality
-                     ? 'bg-[var(--accent)]/15 border-[var(--accent)]/50 text-[var(--accent)]'
-                     : 'bg-black/50 border-white/10 text-white/25 hover:text-white/45 hover:border-white/20'}"
-          >HQ</button>
+                   border backdrop-blur-sm select-none pointer-events-none
+                   bg-black/50 border-white/10 text-white/50"
+          >DRAFT</div>
         {/if}
 
         <!-- ── VIDEO: lives outside {#key} so videoEl is NEVER null while a
@@ -2620,9 +2642,9 @@
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={!settings.previewHighQuality} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={isHeavyItem(selectedItem)} />
       {:else if selectedItem?.mediaType === 'audio'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={!settings.previewHighQuality} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={isHeavyItem(selectedItem)} />
       {/if}
 
     </div>
