@@ -2415,9 +2415,12 @@
     // keeps working unchanged.
     { label: 'Data', cat: 'data', fmts: [
       { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
-      // Dev / data-nerd formats — placeholder scaffolding.
-      { id: 'sqlite',  label: 'SQLite',  todo: true, preview: true },
-      { id: 'parquet', label: 'Parquet', todo: true, preview: true },
+      // Data-nerd: sqlite via rusqlite (bundled), parquet via duckdb CLI,
+      // jupyter via `jupyter nbconvert`. See src-tauri/src/convert/data.rs
+      // and src-tauri/src/convert/notebook.rs. These are INPUT format
+      // markers — target codec flows through the standard data pipeline.
+      { id: 'sqlite',  label: 'SQLite'  },
+      { id: 'parquet', label: 'Parquet' },
       { id: 'ipynb',   label: 'Jupyter' },
     ]},
     { label: 'Document', cat: 'document', fmts: [

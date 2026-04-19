@@ -1,5 +1,6 @@
-use crate::{ConvertOptions, JobProgress};
+use crate::{tool_available, truncate_stderr, ConvertOptions, JobProgress};
 use std::path::Path;
+use std::process::{Command, Stdio};
 use tauri::{Emitter, Window};
 
 pub fn run(
@@ -18,7 +19,6 @@ pub fn run(
         },
     );
 
-    let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
     let in_ext = Path::new(input_path)
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -28,10 +28,191 @@ pub fn run(
     let delimiter = opts.csv_delimiter.as_deref().unwrap_or(",");
     let delim_byte = delimiter.as_bytes().first().copied().unwrap_or(b',');
 
+    // Binary data-nerd inputs don't parse as UTF-8 text — they have their
+    // own dedicated dump paths and never go through the serde_json bridge.
+    match in_ext.as_str() {
+        "sqlite" | "sqlite3" | "db" => {
+            return run_sqlite(input_path, output_path, &out_fmt, pretty, delim_byte);
+        }
+        "parquet" => {
+            return run_parquet(input_path, output_path, &out_fmt);
+        }
+        _ => {}
+    }
+
+    let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
     let value: serde_json::Value = parse_input(&in_ext, &raw)?;
     let output = write_output(&out_fmt, &value, pretty, delim_byte)?;
 
     std::fs::write(output_path, output).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Dump a SQLite database to the target data format via the bundled rusqlite
+/// crate (no external install). Default behaviour: dump the first user table.
+/// Multi-table DBs get a warning on stderr so power users know to filter with
+/// a CLI tool if they need a specific table. JSON output uses the shape
+/// `{table_name: [...rows]}` so it's unambiguous even for single-table dumps.
+fn run_sqlite(
+    input_path: &str,
+    output_path: &str,
+    out_fmt: &str,
+    pretty: bool,
+    delim_byte: u8,
+) -> Result<(), String> {
+    let conn = rusqlite::Connection::open_with_flags(
+        input_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .map_err(|e| format!("SQLite open error: {e}"))?;
+
+    // Enumerate user tables — exclude sqlite_* internal tables.
+    let table_names: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master \
+                 WHERE type='table' AND name NOT LIKE 'sqlite_%' \
+                 ORDER BY name",
+            )
+            .map_err(|e| format!("SQLite schema query error: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("SQLite schema read error: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("SQLite schema row error: {e}"))?
+    };
+
+    if table_names.is_empty() {
+        return Err("SQLite database contains no user tables".to_string());
+    }
+    if table_names.len() > 1 {
+        eprintln!(
+            "fade: SQLite DB has {} tables; dumping first ('{}'). \
+             Others: {}",
+            table_names.len(),
+            table_names[0],
+            table_names[1..].join(", ")
+        );
+    }
+    let table = &table_names[0];
+
+    let rows = dump_sqlite_table(&conn, table)?;
+    let value = match out_fmt {
+        // JSON wraps in {table: [...]} for clarity. CSV/TSV/XML flatten.
+        "json" => {
+            let mut obj = serde_json::Map::new();
+            obj.insert(table.clone(), serde_json::Value::Array(rows));
+            serde_json::Value::Object(obj)
+        }
+        _ => serde_json::Value::Array(rows),
+    };
+
+    let output = write_output(out_fmt, &value, pretty, delim_byte)?;
+    std::fs::write(output_path, output).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn dump_sqlite_table(
+    conn: &rusqlite::Connection,
+    table: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    // Quote the table name with double-quotes, doubling embedded quotes — safe
+    // identifier quoting per SQLite syntax. User-supplied table names from the
+    // sqlite_master enumeration should already be benign, but belt-and-braces.
+    let quoted = format!("\"{}\"", table.replace('"', "\"\""));
+    let sql = format!("SELECT * FROM {quoted}");
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("SQLite prepare error: {e}"))?;
+    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+
+    let mut rows_out = Vec::new();
+    let mut rows = stmt
+        .query([])
+        .map_err(|e| format!("SQLite query error: {e}"))?;
+    while let Some(row) = rows.next().map_err(|e| format!("SQLite row error: {e}"))? {
+        let mut obj = serde_json::Map::new();
+        for (i, name) in col_names.iter().enumerate() {
+            let raw: rusqlite::types::Value = row
+                .get(i)
+                .map_err(|e| format!("SQLite cell read error: {e}"))?;
+            obj.insert(name.clone(), sqlite_value_to_json(raw));
+        }
+        rows_out.push(serde_json::Value::Object(obj));
+    }
+    Ok(rows_out)
+}
+
+fn sqlite_value_to_json(v: rusqlite::types::Value) -> serde_json::Value {
+    match v {
+        rusqlite::types::Value::Null => serde_json::Value::Null,
+        rusqlite::types::Value::Integer(i) => serde_json::Value::Number(i.into()),
+        rusqlite::types::Value::Real(f) => serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
+        // BLOB: represent as base64 to keep it JSON-safe.
+        rusqlite::types::Value::Blob(b) => {
+            use base64::Engine as _;
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(&b))
+        }
+    }
+}
+
+/// Parquet → CSV / JSON via the duckdb CLI. We prefer the CLI over a Rust
+/// parquet crate to keep the binary lean — parquet pulls in arrow which is
+/// tens of MB. duckdb's `COPY ... TO ... (FORMAT ...)` hits the disk directly.
+///
+/// JSON shape: duckdb's `FORMAT JSON` emits an array of row objects, matching
+/// the sqlite JSON shape philosophically (rows are objects, wrapped).
+fn run_parquet(input_path: &str, output_path: &str, out_fmt: &str) -> Result<(), String> {
+    if !tool_available("duckdb") {
+        let hint = if cfg!(target_os = "macos") {
+            "brew install duckdb"
+        } else {
+            "apt install duckdb  (Debian/Ubuntu)\n  \
+             or download from https://duckdb.org/docs/installation/"
+        };
+        return Err(format!(
+            "duckdb not found in PATH.\n\nInstall with:\n  {hint}"
+        ));
+    }
+
+    let (format_clause, _kind) = match out_fmt {
+        "csv" => ("(FORMAT CSV, HEADER)", "csv"),
+        "tsv" => ("(FORMAT CSV, HEADER, DELIMITER '\t')", "csv"),
+        "json" => ("(FORMAT JSON, ARRAY true)", "json"),
+        other => {
+            return Err(format!(
+                "Unsupported parquet output format: {other}. \
+                 Allowed: csv, tsv, json"
+            ));
+        }
+    };
+
+    // duckdb escapes single quotes by doubling them in SQL string literals.
+    let sql_in = input_path.replace('\'', "''");
+    let sql_out = output_path.replace('\'', "''");
+    let sql =
+        format!("COPY (SELECT * FROM read_parquet('{sql_in}')) TO '{sql_out}' {format_clause};");
+
+    let output = Command::new("duckdb")
+        .arg(":memory:")
+        .arg("-c")
+        .arg(&sql)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run duckdb: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(if stderr.trim().is_empty() {
+            "duckdb parquet conversion failed".to_string()
+        } else {
+            truncate_stderr(&stderr)
+        });
+    }
     Ok(())
 }
 
