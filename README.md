@@ -10,11 +10,11 @@ For when you need to do that one thing... to that one file... quickly.
 
 ---
 
-You're in the middle of something. A client needs the file in a different format. The clip needs trimming before you send it. The audio needs converting before it'll import.
+You're in the middle of something. A client needs the file in a different format. The audio needs trimming, the clip needs converting before it's all usable.
 
 You don't need to open a full editor. You don't need to look something up. You just need it done.
 
-Fade handles it. Drop the file, pick the format, move on.
+Fade handles it. Drop the file, do the task, move on.
 
 ---
 
