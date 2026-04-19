@@ -19,6 +19,7 @@ pub mod rewrap;
 pub mod silence_remove;
 pub mod split;
 pub mod subtitling;
+pub mod video_filters;
 
 use serde::Serialize;
 use std::collections::HashMap;

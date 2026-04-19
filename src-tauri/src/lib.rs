@@ -871,6 +871,39 @@ enum OperationPayload {
         /// Total playthroughs (2..=50).
         count: u32,
     },
+    RotateFlip {
+        input_path: String,
+        output_path: String,
+        /// "cw90" | "ccw90" | "180" | "hflip" | "vflip"
+        mode: String,
+    },
+    Reverse {
+        input_path: String,
+        output_path: String,
+    },
+    Speed {
+        input_path: String,
+        output_path: String,
+        rate: f64,
+    },
+    Fade {
+        input_path: String,
+        output_path: String,
+        fade_in: f64,
+        fade_out: f64,
+    },
+    Deinterlace {
+        input_path: String,
+        output_path: String,
+        /// "yadif" | "yadif_double" | "bwdif"
+        mode: String,
+    },
+    Denoise {
+        input_path: String,
+        output_path: String,
+        /// "light" | "medium" | "strong"
+        preset: String,
+    },
 }
 
 /// Run a mechanical video/audio operation.
@@ -1093,6 +1126,96 @@ fn run_operation(
                 input_path,
                 output_path,
                 *count,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::RotateFlip {
+                input_path,
+                output_path,
+                mode,
+            } => operations::video_filters::run_rotate_flip(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                mode,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Reverse {
+                input_path,
+                output_path,
+            } => operations::video_filters::run_reverse(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Speed {
+                input_path,
+                output_path,
+                rate,
+            } => operations::video_filters::run_speed(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *rate,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Fade {
+                input_path,
+                output_path,
+                fade_in,
+                fade_out,
+            } => operations::video_filters::run_fade(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *fade_in,
+                *fade_out,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Deinterlace {
+                input_path,
+                output_path,
+                mode,
+            } => operations::video_filters::run_deinterlace(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                mode,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Denoise {
+                input_path,
+                output_path,
+                preset,
+            } => operations::video_filters::run_denoise(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                preset,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             )

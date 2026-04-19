@@ -1736,6 +1736,69 @@
     });
   }
 
+  async function runRotateFlip() {
+    return _runOp({
+      payload: { type: 'rotate_flip', mode: rotateFlipMode },
+      suffix: 'rotated',
+      outExt: 'mp4',
+      label: 'Rotate/Flip',
+      requireVideo: true,
+    });
+  }
+
+  async function runReverse() {
+    return _runOp({
+      payload: { type: 'reverse' },
+      suffix: 'reversed',
+      outExt: 'mp4',
+      label: 'Reverse',
+    });
+  }
+
+  async function runSpeed() {
+    const rate = speedPreset === 'custom'
+      ? Math.max(0.1, Math.min(10.0, Number(speedCustom) || 1.0))
+      : Number(speedPreset);
+    return _runOp({
+      payload: { type: 'speed', rate },
+      suffix: `${rate}x`,
+      outExt: 'mp4',
+      label: 'Speed',
+    });
+  }
+
+  async function runFade() {
+    const fi = Math.max(0, Math.min(10, Number(fadeInS) || 0));
+    const fo = Math.max(0, Math.min(10, Number(fadeOutS) || 0));
+    if (fi === 0 && fo === 0) { setStatus('Set at least one fade value', 'error'); return; }
+    return _runOp({
+      payload: { type: 'fade', fade_in: fi, fade_out: fo },
+      suffix: 'faded',
+      outExt: 'mp4',
+      label: 'Fade',
+    });
+  }
+
+  async function runDeinterlace() {
+    return _runOp({
+      payload: { type: 'deinterlace', mode: deinterlaceMode },
+      suffix: 'deint',
+      outExt: 'mp4',
+      label: 'Deinterlace',
+      requireVideo: true,
+    });
+  }
+
+  async function runDenoise() {
+    return _runOp({
+      payload: { type: 'denoise', preset: denoisePreset },
+      suffix: 'denoised',
+      outExt: 'mp4',
+      label: 'Denoise',
+      requireVideo: true,
+    });
+  }
+
   // ── Subtitling · analyze tab ──────────────────────────────────────────────
 
   async function runSubLint() {
@@ -3323,6 +3386,24 @@
                 {:else if selectedOperation === 'loop'}
                   Repeat the clip <strong class="text-white/80">N</strong> times end-to-end via <code>-stream_loop</code>. Streams are copied — no re-encode — so output file size is roughly N × input.
                   <br/><br/><span class="text-white/35">Allowed range: 2–50 playthroughs.</span>
+                {:else if selectedOperation === 'rotate-flip'}
+                  Rotate 90°/180° or mirror horizontally/vertically. Uses <code>transpose</code>, <code>hflip</code>, or <code>vflip</code> filters and re-encodes to H.264 / AAC.
+                  <br/><br/><span class="text-white/35">Pick a direction and Run. 180° is two transpose=1 passes.</span>
+                {:else if selectedOperation === 'reverse'}
+                  Play the clip backwards. Uses <code>reverse</code> + <code>areverse</code>. <strong class="text-white/80">Memory-heavy</strong> — ffmpeg buffers the full decoded stream; long clips may swap or OOM.
+                  <br/><br/><span class="text-white/35">Trim first for clips longer than a minute or two.</span>
+                {:else if selectedOperation === 'speed'}
+                  Change playback rate with pitch-preserved audio. Uses <code>setpts=PTS/R</code> for video and chained <code>atempo</code> for audio (atempo's 0.5–2.0 range is handled automatically).
+                  <br/><br/><span class="text-white/35">Pick a preset or enter a custom rate (0.1–10×).</span>
+                {:else if selectedOperation === 'fade'}
+                  Add a fade-in from black and/or a fade-out to black at the tail. Uses <code>fade=t=in</code> / <code>fade=t=out</code> plus matching <code>afade</code>.
+                  <br/><br/><span class="text-white/35">Both values default to 0.5s; set either to 0 to skip that side.</span>
+                {:else if selectedOperation === 'deinterlace'}
+                  Convert interlaced footage to progressive. <strong class="text-white/80">yadif</strong> is fast & safe; <strong class="text-white/80">yadif 2×</strong> doubles the framerate using both fields; <strong class="text-white/80">bwdif</strong> is higher-quality at ~2× the CPU cost.
+                  <br/><br/><span class="text-white/35">Use yadif for 1080i broadcast; bwdif when artifacts matter.</span>
+                {:else if selectedOperation === 'denoise'}
+                  Temporal + spatial noise reduction via <code>hqdn3d</code>. Three presets (light/medium/strong) map to escalating luma/chroma spatial and temporal coefficients.
+                  <br/><br/><span class="text-white/35">Stronger = softer image. Watch for detail loss on faces and textures.</span>
                 {:else if selectedOperation === 'loudness'}
                   Measure <strong class="text-white/80">EBU R128</strong> loudness: integrated LUFS (I), loudness range (LRA), and true-peak (dBTP). Read-only analysis — no file is written. True-peak uses 4× oversampling for accuracy and is slower.
                   <br/><br/><span class="text-white/35">Pick a target preset (broadcast / streaming / Spotify) and Analyze. Results appear below.</span>
@@ -3627,6 +3708,111 @@
                       disabled={!selectedItem || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Loop</button>
+                  </div>
+                {:else if selectedOperation === 'rotate-flip'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each [['cw90','90° CW'],['ccw90','90° CCW'],['180','180°'],['hflip','Flip H'],['vflip','Flip V']] as [id, label], i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => rotateFlipMode = id}
+                          class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                                 {rotateFlipMode === id ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{label}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runRotateFlip}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Rotate/Flip</button>
+                  </div>
+                {:else if selectedOperation === 'reverse'}
+                  <div class="w-full">
+                    <button onclick={runReverse}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Reverse</button>
+                  </div>
+                {:else if selectedOperation === 'speed'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each ['0.5','0.75','1','1.25','1.5','2','custom'] as p, i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => speedPreset = p}
+                          class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                 {speedPreset === p ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{p === 'custom' ? 'Custom' : p + 'x'}</button>
+                      {/each}
+                    </div>
+                    {#if speedPreset === 'custom'}
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Rate</label>
+                        <input type="number" min="0.1" max="10" step="0.05" bind:value={speedCustom}
+                               class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      </div>
+                    {/if}
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runSpeed}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Speed</button>
+                  </div>
+                {:else if selectedOperation === 'fade'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">In (s)</label>
+                      <input type="number" min="0" max="10" step="0.1" bind:value={fadeInS}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Out (s)</label>
+                      <input type="number" min="0" max="10" step="0.1" bind:value={fadeOutS}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runFade}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Fade</button>
+                  </div>
+                {:else if selectedOperation === 'deinterlace'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each [['yadif','yadif'],['yadif_double','yadif 2×'],['bwdif','bwdif']] as [id, label], i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => deinterlaceMode = id}
+                          class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                                 {deinterlaceMode === id ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{label}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runDeinterlace}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Deinterlace</button>
+                  </div>
+                {:else if selectedOperation === 'denoise'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      {#each ['light','medium','strong'] as p, i}
+                        {#if i > 0}<div class="w-px h-6 bg-[var(--border)]"></div>{/if}
+                        <button onclick={() => denoisePreset = p}
+                          class="px-3 py-1.5 text-[12px] font-semibold capitalize transition-colors
+                                 {denoisePreset === p ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                        >{p}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button onclick={runDenoise}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Denoise</button>
                   </div>
                 {:else if selectedOperation === 'loudness'}
                   <!-- Row 1: target preset + true-peak toggle -->
