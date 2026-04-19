@@ -9,11 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 3D model conversion via `assimp` CLI. Input + output formats: OBJ, STL,
+  PLY, glTF, GLB, COLLADA (.dae), FBX (ASCII only — binary FBX requires
+  the proprietary Autodesk SDK), 3DS, X3D. Binary variants preferred
+  where available (STL → stlb, PLY → plyb, glTF → glb2). Requires
+  `assimp` on PATH; `.deb`/`.rpm` depends now include `assimp-utils` /
+  `assimp`. macOS/Windows users install via brew/scoop.
+
 ### Changed
 
 ### Fixed
 
 ### Infrastructure
+
+- Auto-cleanup workflow deletes GitHub releases older than 10 days
+  (weekly Sunday 09:00 UTC). Latest release always preserved so the
+  in-app updater never 404s. Artifact retention lowered 7d → 3d.
 
 ## [0.2.1] - 2026-04-18
 

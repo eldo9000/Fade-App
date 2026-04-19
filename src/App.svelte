@@ -606,6 +606,13 @@
     output_dir: null,
   });
 
+  // 3D models are converted via the assimp CLI. No user-tunable options yet —
+  // format-ID selection happens backend-side from `output_format`.
+  let modelOptions = $state({
+    output_format: 'glb',
+    output_dir: null,
+  });
+
   // ── Event listeners ────────────────────────────────────────────────────────
 
   let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled;
@@ -1003,7 +1010,8 @@
              : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             :                                 { ...archiveOptions,   output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
+             : item.mediaType === 'archive'  ? { ...archiveOptions,  output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             :                                 { ...modelOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
 
       invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
         .catch(err => { item.status = 'error'; item.error = String(err); checkAllDone(); });
@@ -1088,6 +1096,7 @@
     else if (cat === 'data')     dataOptions.output_format     = globalOutputFormat;
     else if (cat === 'document') documentOptions.output_format = globalOutputFormat;
     else if (cat === 'archive')  archiveOptions.output_format  = globalOutputFormat;
+    else if (cat === 'model')    modelOptions.output_format    = globalOutputFormat;
   });
 
   // Built-in presets — always available, never persisted to backend
@@ -1252,10 +1261,12 @@
     { label: 'Archive', cat: 'archive', fmts: [
       { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
     ]},
-    { label: '3D Model', cat: '3d', fmts: [
-      { id: 'obj',  todo: true }, { id: 'gltf', todo: true }, { id: 'glb',  todo: true },
-      { id: 'stl',  todo: true }, { id: 'fbx',  todo: true }, { id: 'ply',  todo: true },
-      { id: '3ds',  todo: true },
+    { label: '3D Model', cat: 'model', fmts: [
+      { id: 'obj' }, { id: 'gltf' }, { id: 'glb' },
+      { id: 'stl' }, { id: 'ply' }, { id: 'dae', label: 'COLLADA' },
+      { id: '3ds' }, { id: 'x3d' },
+      // FBX write is ASCII-only via assimp (binary FBX needs Autodesk SDK).
+      { id: 'fbx', label: 'FBX (ASCII)' },
     ]},
     { label: 'Operations', cat: 'ops', fmts: [
       { id: 'cut-noenc', label: 'Cut (no re-encode)', todo: true },
@@ -1307,6 +1318,7 @@
     data:     ['data'],
     document: ['document'],
     archive:  ['archive'],
+    model:    ['model'],
   };
   let compatibleOutputCats = $derived(
     selectedItem ? (OUTPUT_CATS_FOR[selectedItem.mediaType] ?? null) : null
@@ -1334,6 +1346,7 @@
     activeOutputCategory === 'data'  ? ['data'] :
     activeOutputCategory === 'document' ? ['document'] :
     activeOutputCategory === 'archive'  ? ['archive'] :
+    activeOutputCategory === 'model'    ? ['model'] :
     []
   );
 
@@ -2348,7 +2361,7 @@
                     { label: 'Video',           exts: ['mp4','m4v','mkv','webm','mov','avi','flv','wmv','mpg','mpeg','ogv','ts','3gp','divx','rmvb','asf'] },
                     { label: 'Audio',           exts: ['mp3','aac','ogg','wav','flac','m4a','opus','wma','aiff','alac','ac3','dts'] },
                     { label: 'Document',        exts: ['pdf'] },
-                    { label: '3D Model',        exts: ['obj','gltf','glb','stl','fbx','ply','3ds'] },
+                    { label: '3D Model',        exts: ['obj','gltf','glb','stl','fbx','ply','3ds','dae','x3d'] },
                     { label: 'Archive',         exts: ['zip','tar','gz','7z'] },
                     { label: 'Data',            exts: ['json','csv','tsv','xml','yaml'] },
                   ] as g}
@@ -2580,6 +2593,11 @@
           <FormatPicker bind:options={documentOptions} formats={DOCUMENT_FORMATS} ariaLabel="Document conversion options" />
         {:else if activeOutputCategory === 'archive'}
           <ArchiveOptions bind:options={archiveOptions} />
+        {:else if activeOutputCategory === 'model'}
+          <div class="flex flex-col items-center justify-center h-full text-center gap-2 px-4">
+            <p class="text-[12px] opacity-80">3D model conversion uses assimp.</p>
+            <p class="text-[11px] opacity-60">Requires <code>assimp</code> on PATH (brew/apt/scoop install assimp).</p>
+          </div>
         {:else}
           <div class="flex flex-col items-center justify-center h-full text-center gap-2">
             <p class="text-[11px] text-green-500">Coming soon</p>

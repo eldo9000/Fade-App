@@ -50,13 +50,15 @@
       "deb": {
         "depends": [
           "ffmpeg",
-          "imagemagick"
+          "imagemagick",
+          "assimp-utils"
         ]
       },
       "rpm": {
         "depends": [
           "ffmpeg",
-          "ImageMagick"
+          "ImageMagick",
+          "assimp"
         ]
       }
     },

@@ -16,12 +16,12 @@ pub mod preview;
 pub mod probe;
 pub mod theme;
 pub use args::{
-    build_ffmpeg_audio_args, build_ffmpeg_video_args, build_image_magick_args,
-    ffmpeg_video_codec_args, resolution_to_scale,
+    assimp_format_id, build_assimp_args, build_ffmpeg_audio_args, build_ffmpeg_video_args,
+    build_image_magick_args, ffmpeg_video_codec_args, resolution_to_scale,
 };
 use convert::{
     run_archive_convert, run_audio_convert, run_data_convert, run_document_convert,
-    run_image_convert, run_video_convert,
+    run_image_convert, run_model_convert, run_video_convert,
 };
 pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
@@ -358,6 +358,9 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
         "md" | "markdown" | "html" | "htm" | "txt" => "document",
         "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" => "archive",
+        // 3D models — routed through assimp CLI. See args/model.rs for
+        // the full extension→assimp-format-id mapping.
+        "obj" | "stl" | "ply" | "gltf" | "glb" | "dae" | "fbx" | "3ds" | "x3d" => "model",
         _ => "unknown",
     }
 }
@@ -506,6 +509,15 @@ fn convert_file(
                 run_document_convert(&window, &job_id, &input_path, &output_path, &options)
             }
             "archive" => run_archive_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "model" => run_model_convert(
                 &window,
                 &job_id,
                 &input_path,

@@ -6,10 +6,11 @@ const AUDIO_EXTS = ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff'];
 const DATA_EXTS  = ['csv','json','xml','yaml','yml','toml','tsv','ndjson','jsonl'];
 const DOC_EXTS   = ['md','markdown','html','htm','txt'];
 const ARCHIVE_EXTS = ['zip','7z','tar','gz','bz2','xz','tgz','rar'];
+const MODEL_EXTS = ['obj','stl','ply','gltf','glb','dae','fbx','3ds','x3d'];
 
 const PRESET_RESOLUTIONS = ['original', '1920x1080', '1280x720', '854x480'];
 
-/** Classify a lowercase file extension into 'image' | 'video' | 'audio' | 'data' | 'document' | 'archive' | 'unknown'. */
+/** Classify a lowercase file extension into 'image' | 'video' | 'audio' | 'data' | 'document' | 'archive' | 'model' | 'unknown'. */
 export function mediaTypeFor(ext) {
   if (IMAGE_EXTS.includes(ext)) return 'image';
   if (VIDEO_EXTS.includes(ext)) return 'video';
@@ -17,6 +18,7 @@ export function mediaTypeFor(ext) {
   if (DATA_EXTS.includes(ext)) return 'data';
   if (DOC_EXTS.includes(ext)) return 'document';
   if (ARCHIVE_EXTS.includes(ext)) return 'archive';
+  if (MODEL_EXTS.includes(ext)) return 'model';
   return 'unknown';
 }
 
