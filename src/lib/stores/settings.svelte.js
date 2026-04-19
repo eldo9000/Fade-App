@@ -11,6 +11,7 @@ const DEFAULTS = {
   hideConverted: true,
   fileTypeColumn: true,
   lastUpdateCheck: 0,            // epoch ms; 0 = never. Gates the weekly check.
+  sendDiagnostics: true,         // opt-in after 1.0; forced-on during beta (see BETA flag).
 };
 
 function load() {

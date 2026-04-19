@@ -1,0 +1,74 @@
+name: Diagnostic report
+
+# Fired by the Cloudflare Worker (crash-reporter/worker.js) when a Fade
+# client submits diagnostics. The workflow opens an issue containing the
+# payload, labelled so we can triage beta reports separately.
+
+on:
+  repository_dispatch:
+    types: [diag-report]
+
+permissions:
+  issues: write
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create diagnostics issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const p = context.payload.client_payload || {};
+            const entries = Array.isArray(p.entries) ? p.entries : [];
+            const version = p.version || '?';
+            const ua = String(p.userAgent || '').slice(0, 120);
+            const beta = !!p.beta;
+
+            const title = `${beta ? '[beta] ' : ''}Diag v${version} — ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`;
+
+            const header = [
+              `- **Version:** ${version}`,
+              `- **Beta:** ${beta ? 'yes' : 'no'}`,
+              `- **User agent:** \`${ua}\``,
+              `- **Entries:** ${entries.length}`,
+              `- **Received:** ${new Date().toISOString()}`,
+            ].join('\n');
+
+            const logLines = [];
+            for (const e of entries.slice(-200)) {
+              const ts = new Date(Number(e.t) || 0).toISOString();
+              const src = String(e.source || 'unknown');
+              const msg = String(e.message || '').slice(0, 500);
+              logLines.push(`[${ts}] [${src}] ${msg}`);
+              if (e.detail) {
+                const detail = String(e.detail).slice(0, 2000);
+                logLines.push(detail.split('\n').map(l => '  ' + l).join('\n'));
+              }
+            }
+
+            // GH issue bodies cap near 65k chars — trim aggressively if needed.
+            let log = logLines.join('\n');
+            if (log.length > 50000) log = log.slice(-50000) + '\n…(truncated)';
+
+            const body = [
+              header,
+              '',
+              '<details><summary>Log</summary>',
+              '',
+              '```',
+              log || '(no entries)',
+              '```',
+              '</details>',
+            ].join('\n');
+
+            const labels = ['diagnostics'];
+            labels.push(beta ? 'beta' : 'ga');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels,
+            });

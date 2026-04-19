@@ -1,0 +1,8 @@
+name = "fade-crash-reporter"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# Secrets (do NOT put values here — use `wrangler secret put <NAME>`):
+#   GH_TOKEN   — fine-grained PAT, repo-scoped, Contents: read/write
+#   GH_OWNER   — e.g. eldo9000
+#   GH_REPO    — e.g. Fade-App

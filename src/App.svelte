@@ -17,7 +17,7 @@
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { createSettings } from './lib/stores/settings.svelte.js';
-  import { pushError, clearDiagnostics, getEntries as getDiagEntries, snapshotText as diagSnapshot } from './lib/stores/diagnostics.svelte.js';
+  import { pushError, clearDiagnostics, getEntries as getDiagEntries, snapshotText as diagSnapshot, loadPersisted as loadPersistedDiag, uploadDiagnostics, BETA } from './lib/stores/diagnostics.svelte.js';
   import { check as checkUpdate } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
   import { getVersion } from '@tauri-apps/api/app';
@@ -89,11 +89,27 @@
   let _pendingUpdate = null;
 
   async function openReleasesPage() {
+    await _uploadBeforeUpdate();
     try { await invoke('open_url', { url: RELEASES_URL }); }
     catch (e) {
       pushError('updater', 'Could not open the releases page', e);
       setStatus('Could not open the releases page — check your browser', 'error');
     }
+  }
+
+  /** Piggyback diagnostics upload onto the update action. Runs before the
+   *  actual download/open so the user has already consented to this server
+   *  transaction. Never blocks — upload has its own 5s timeout and silent
+   *  failure. During beta the toggle is effectively forced on. */
+  async function _uploadBeforeUpdate() {
+    const enabled = BETA || !!settings.sendDiagnostics;
+    await uploadDiagnostics({
+      enabled,
+      meta: {
+        version: appVersion,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      },
+    });
   }
 
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -133,6 +149,7 @@
 
   async function installUpdate() {
     if (!_pendingUpdate) return;
+    await _uploadBeforeUpdate();
     updateState = 'downloading';
     updateProgress = 0;
     let downloaded = 0;
@@ -685,9 +702,13 @@
   let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled;
 
   onMount(async () => {
+    // Hydrate diagnostics from disk before installing handlers so historical
+    // errors show alongside new ones in the Diagnostics panel.
+    await loadPersistedDiag();
+
     // Global error capture — installed before anything else so early failures
-    // get logged. Errors go to the in-memory diagnostics ring buffer; nothing
-    // leaves the machine. The status bar shows a brief user-facing notice.
+    // get logged. Errors go to the in-memory diagnostics ring buffer (mirrored
+    // to a JSONL file under the app-log dir); nothing leaves the machine.
     window.addEventListener('error', (ev) => {
       pushError('window.onerror', ev.message || 'Uncaught error',
                 ev.error?.stack ?? `${ev.filename ?? '?'}:${ev.lineno ?? '?'}`);
@@ -1873,12 +1894,13 @@
               </div>
 
               <!-- Section: Diagnostics ──────────────────────────────────────
-                   Local-only. No network. Lists errors captured this session
-                   (updater failures, job errors, uncaught JS). "Copy" puts a
-                   plain-text report on the clipboard for pasting into a bug
-                   report. A future opt-in crash uploader can read from the
-                   same buffer — for now everything stays on the user's
-                   machine. -->
+                   Lists errors captured this and prior sessions (updater
+                   failures, job errors, uncaught JS). "Copy" puts a plain
+                   text report on the clipboard for a bug report.
+                   Network: the uploader only fires when the user clicks
+                   Update Now / Download update — no background traffic,
+                   ever. During beta the toggle is forced on with a red
+                   warning; after 1.0 it becomes a normal opt-in. -->
               <div class="px-4 pt-3 pb-3 border-b border-[var(--border)] flex flex-col gap-2">
                 <div class="flex items-center gap-3">
                   <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] shrink-0">Diagnostics</p>
@@ -1925,6 +1947,26 @@
                     <span class="text-[11px] text-[var(--text-secondary)] ml-1">{_diagCopyNote}</span>
                   {/if}
                 </div>
+
+                <!-- Opt-in uploader — piggybacks on update clicks. During
+                     beta the checkbox is forced on with a red frame and
+                     explanatory copy so there's no surprise. -->
+                <label class="flex items-start gap-2 mt-1 {BETA ? 'p-1.5 rounded border border-red-600/70 bg-red-900/10' : ''}">
+                  <input type="checkbox"
+                         checked={BETA || settings.sendDiagnostics}
+                         disabled={BETA}
+                         onchange={(e) => { if (!BETA) settings.sendDiagnostics = e.currentTarget.checked; }}
+                         class="w-3.5 h-3.5 accent-[var(--accent)] mt-0.5" />
+                  <span class="text-[11px] leading-snug {BETA ? 'text-red-200' : 'text-[var(--text-primary)]'}">
+                    {#if BETA}
+                      <strong>Beta build:</strong> diagnostics are submitted when you install an update.
+                      Required during beta testing. Contents are visible above — click "Copy diagnostics" to preview.
+                    {:else}
+                      Submit diagnostics when I install an update. Nothing is sent in the background — only
+                      when you click Update Now.
+                    {/if}
+                  </span>
+                </label>
               </div>
 
               <!-- Section: Output -->

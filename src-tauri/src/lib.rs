@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{command, Emitter, State, Window};
+use tauri::{command, AppHandle, Emitter, Manager, State, Window};
 
 pub mod args;
 pub mod convert;
@@ -625,6 +625,82 @@ fn set_cursor_position(window: Window, x: i32, y: i32) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// ── Persistent diagnostics ───────────────────────────────────────────────────
+// Entries written as JSON Lines (one JSON object per line) under the Tauri
+// app-log directory. The frontend ring buffer mirrors what's on disk so the
+// Diagnostics panel shows history across restarts. Rotation: when the file
+// exceeds DIAG_MAX_BYTES it's renamed to `.1` (the previous `.1` is dropped),
+// so at most ~2× the cap exists at any time. Local-only — no network.
+
+const DIAG_FILE: &str = "diagnostics.jsonl";
+const DIAG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+const DIAG_LOAD_MAX: usize = 100;
+
+fn diag_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("resolve app_log_dir: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    Ok(dir.join(DIAG_FILE))
+}
+
+#[command]
+fn diag_append(app: AppHandle, entry: serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    let path = diag_path(&app)?;
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > DIAG_MAX_BYTES {
+            let rotated = path.with_extension("jsonl.1");
+            let _ = std::fs::remove_file(&rotated);
+            let _ = std::fs::rename(&path, &rotated);
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    let line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
+    writeln!(f, "{line}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[command]
+fn diag_load(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    use std::io::{BufRead, BufReader};
+    let path = diag_path(&app)?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let f = std::fs::File::open(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let lines: Vec<String> = BufReader::new(f)
+        .lines()
+        .map_while(Result::ok)
+        .collect();
+    let start = lines.len().saturating_sub(DIAG_LOAD_MAX);
+    let mut out = Vec::with_capacity(lines.len() - start);
+    for l in &lines[start..] {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+            out.push(v);
+        }
+    }
+    Ok(out)
+}
+
+#[command]
+fn diag_clear(app: AppHandle) -> Result<(), String> {
+    let path = diag_path(&app)?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    let rotated = path.with_extension("jsonl.1");
+    if rotated.exists() {
+        let _ = std::fs::remove_file(&rotated);
+    }
+    Ok(())
+}
+
 /// Open a URL in the user's default browser.
 /// Used for "download update" on platforms where in-place updates
 /// are disabled (macOS/Windows without codesigning).
@@ -669,6 +745,9 @@ pub fn run() {
             file_exists,
             set_cursor_position,
             open_url,
+            diag_append,
+            diag_load,
+            diag_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");
