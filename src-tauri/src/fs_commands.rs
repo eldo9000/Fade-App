@@ -23,7 +23,9 @@ pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
     }
     let mut stack: Vec<std::path::PathBuf> = vec![root];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let p = entry.path();
             let name = entry.file_name();

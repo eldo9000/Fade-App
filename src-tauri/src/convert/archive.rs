@@ -51,9 +51,7 @@ pub fn run(
     // Repack guards: some formats are extract-only or platform-locked.
     if operation != "extract" {
         if out_ext == "rar" {
-            return Err(
-                "RAR creation is not supported (proprietary) — try 7z or zip".to_string(),
-            );
+            return Err("RAR creation is not supported (proprietary) — try 7z or zip".to_string());
         }
         if out_ext == "dmg" && !cfg!(target_os = "macos") {
             return Err("DMG creation is macOS-only".to_string());
@@ -292,7 +290,13 @@ fn repack_archive(
         "iso" => repack_iso(window, job_id, src_dir, output_path, processes, cancelled),
         "dmg" => repack_dmg(window, job_id, src_dir, output_path, processes, cancelled),
         _ => repack_with_7z(
-            window, job_id, src_dir, output_path, opts, processes, cancelled,
+            window,
+            job_id,
+            src_dir,
+            output_path,
+            opts,
+            processes,
+            cancelled,
         ),
     }
 }

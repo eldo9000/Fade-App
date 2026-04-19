@@ -108,7 +108,11 @@ fn mbox_to_eml(raw: &str) -> Result<String, String> {
     // Un-escape `>From ` → `From `.
     let out = msg
         .iter()
-        .map(|l| l.strip_prefix('>').filter(|r| r.starts_with("From ")).unwrap_or(l))
+        .map(|l| {
+            l.strip_prefix('>')
+                .filter(|r| r.starts_with("From "))
+                .unwrap_or(l)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     Ok(out)
