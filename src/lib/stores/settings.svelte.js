@@ -10,6 +10,7 @@ const DEFAULTS = {
   autoCompact: true,
   hideConverted: true,
   fileTypeColumn: true,
+  lastUpdateCheck: 0,            // epoch ms; 0 = never. Gates the weekly check.
 };
 
 function load() {

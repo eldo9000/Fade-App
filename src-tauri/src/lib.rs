@@ -625,6 +625,20 @@ fn set_cursor_position(window: Window, x: i32, y: i32) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Open a URL in the user's default browser.
+/// Used for "download update" on platforms where in-place updates
+/// are disabled (macOS/Windows without codesigning).
+#[command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let res = Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let res = Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    #[cfg(target_os = "linux")]
+    let res = Command::new("xdg-open").arg(&url).spawn();
+    res.map(|_| ()).map_err(|e| e.to_string())
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -654,6 +668,7 @@ pub fn run() {
             scan_dir,
             file_exists,
             set_cursor_position,
+            open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

@@ -17,8 +17,10 @@
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { createSettings } from './lib/stores/settings.svelte.js';
+  import { pushError, clearDiagnostics, getEntries as getDiagEntries, snapshotText as diagSnapshot } from './lib/stores/diagnostics.svelte.js';
   import { check as checkUpdate } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
+  import { getVersion } from '@tauri-apps/api/app';
 
   const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
   const ARCHIVE_FORMATS = ['zip', 'tar.gz', 'tar.xz', '7z'];
@@ -70,16 +72,44 @@
   let toolWarnings = $state({});
 
   // ── Auto-updater ───────────────────────────────────────────────────────────
-  // Non-blocking check 2s after mount. Banner shows in the queue header area.
-  // 'idle' → 'available' → 'downloading' → (relaunch) | 'error' | 'dismissed'
+  // 'idle' → 'available' → 'downloading' → 'ready' → (user clicks Restart now)
+  // Install runs silently in the background; the user chooses when to relaunch.
+  //
+  // Platform split: in-place auto-update only runs on Linux. macOS requires
+  // codesign + notarize for Gatekeeper to accept the swapped binary; Windows
+  // installs carry their own UAC / install-mode gotchas. Until we have those
+  // certs, mac/win fall back to a "Download update" button that opens the
+  // GitHub releases page in the browser — user installs manually.
+  const RELEASES_URL = 'https://github.com/eldo9000/Fade-App/releases/latest';
+  const isManualUpdatePlatform = typeof navigator !== 'undefined'
+    && /Mac|Windows/.test(navigator.userAgent);
   let updateState = $state('idle');
   let updateVersion = $state('');
   let updateProgress = $state(0); // 0..100, downloading only
-  let _pendingUpdate = null; // the Update handle from check()
+  let _pendingUpdate = null;
+
+  async function openReleasesPage() {
+    try { await invoke('open_url', { url: RELEASES_URL }); }
+    catch (e) {
+      pushError('updater', 'Could not open the releases page', e);
+      setStatus('Could not open the releases page — check your browser', 'error');
+    }
+  }
+
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  // App version — read from Cargo manifest via Tauri at runtime so the footer
+  // and diagnostics report stay in sync with what actually shipped.
+  let appVersion = $state('');
+  // Diagnostics panel disclosure — closed by default so the errors list
+  // doesn't dominate the small Settings popover.
+  let diagnosticsExpanded = $state(false);
+  const diagEntries = getDiagEntries();
 
   async function checkForUpdate() {
     try {
       const update = await checkUpdate();
+      settings.lastUpdateCheck = Date.now();
       if (update) {
         _pendingUpdate = update;
         updateVersion = update.version ?? '';
@@ -88,11 +118,17 @@
         updateState = 'idle';
       }
     } catch (e) {
-      // No-op — failed checks should be silent; the user only cares when
-      // an update is actually available.
-      console.warn('[updater] check failed silently', e);
+      // Check failures stay quiet in the status bar — most users don't care
+      // when there's no connectivity — but we log for diagnostics.
+      pushError('updater', 'Update check failed', e);
       updateState = 'idle';
     }
+  }
+
+  /** Launch-gated check — runs at most once per week. Manual "Update Now" bypasses. */
+  function maybeCheckForUpdate() {
+    const last = Number(settings.lastUpdateCheck) || 0;
+    if (Date.now() - last >= WEEK_MS) checkForUpdate();
   }
 
   async function installUpdate() {
@@ -118,17 +154,48 @@
             break;
         }
       });
-      await relaunch();
+      // Do NOT relaunch automatically — user decides when to restart.
+      updateState = 'ready';
     } catch (e) {
-      // Install errors stay silent; surface only via the install button if needed.
-      console.warn('[updater] install failed silently', e);
+      // Install failures are user-visible — they just clicked a button and
+      // expected something to happen. Surface in the status bar + log.
+      pushError('updater', 'Update install failed', e);
+      setStatus('Update install failed — see Diagnostics in Settings', 'error');
       updateState = 'idle';
     }
   }
 
-  function dismissUpdate() {
-    updateState = 'dismissed';
-    _pendingUpdate = null;
+  async function restartNow() {
+    try { await relaunch(); }
+    catch (e) {
+      pushError('updater', 'Relaunch failed', e);
+      setStatus('Could not restart — quit and reopen manually', 'error');
+    }
+  }
+
+  // ── Diagnostics helpers ────────────────────────────────────────────────────
+  let _diagCopyNote = $state('');
+
+  function _diagHeader() {
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+    return [
+      `Fade v${appVersion || '?'}`,
+      `User agent: ${ua}`,
+      `Captured: ${new Date().toISOString()}`,
+      `Entries: ${diagEntries.length}`,
+    ].join('\n');
+  }
+
+  async function copyDiagnostics() {
+    try {
+      await navigator.clipboard.writeText(diagSnapshot(_diagHeader()));
+      _diagCopyNote = 'Copied to clipboard';
+      setTimeout(() => { _diagCopyNote = ''; }, 1800);
+    } catch (e) {
+      pushError('diagnostics', 'Could not copy to clipboard', e);
+      _diagCopyNote = 'Copy failed';
+      setTimeout(() => { _diagCopyNote = ''; }, 1800);
+    }
   }
 
   // ── Sequential load pipeline ────────────────────────────────────────────────
@@ -618,6 +685,21 @@
   let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled;
 
   onMount(async () => {
+    // Global error capture — installed before anything else so early failures
+    // get logged. Errors go to the in-memory diagnostics ring buffer; nothing
+    // leaves the machine. The status bar shows a brief user-facing notice.
+    window.addEventListener('error', (ev) => {
+      pushError('window.onerror', ev.message || 'Uncaught error',
+                ev.error?.stack ?? `${ev.filename ?? '?'}:${ev.lineno ?? '?'}`);
+    });
+    window.addEventListener('unhandledrejection', (ev) => {
+      const reason = ev.reason;
+      const msg = reason?.message ?? String(reason);
+      pushError('unhandledrejection', msg, reason?.stack);
+    });
+
+    try { appVersion = await getVersion(); } catch { /* non-fatal */ }
+
     await initTheme(invoke);
 
     // Restore zoom and wire hotkeys
@@ -676,6 +758,7 @@
         item.status = 'error';
         item.error = payload.message;
       }
+      pushError('job', `Conversion failed: ${item?.name ?? payload.job_id}`, payload.message);
       checkAllDone();
     });
 
@@ -692,7 +775,7 @@
     checkTools();
 
     // Fire-and-forget update check after a short delay so startup isn't blocked.
-    setTimeout(() => { checkForUpdate(); }, 2000);
+    setTimeout(() => { maybeCheckForUpdate(); }, 2000);
   });
 
   onDestroy(() => {
@@ -758,7 +841,11 @@
         magick: !result.magick,
         sevenzip: !result.sevenzip,
       };
-    } catch { /* non-fatal */ }
+      const missing = Object.entries(toolWarnings).filter(([, m]) => m).map(([k]) => k);
+      if (missing.length > 0) pushError('tools', `Missing external tool(s): ${missing.join(', ')}`);
+    } catch (e) {
+      pushError('tools', 'check_tools invoke failed', e);
+    }
   }
 
   let dismissedWarnings = $state(new Set());
@@ -1469,28 +1556,6 @@
      ondragleave={onWindowDragleave}
      ondrop={onWindowDrop}>
 
-  <!-- ── Updater banner (floats over the titlebar drag band) ──────────────── -->
-  {#if updateState === 'available' || updateState === 'downloading'}
-    <div class="absolute top-1 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-md text-[12px] shadow-lg"
-         style="background:color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
-                border:1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
-                color:var(--text-primary)">
-      {#if updateState === 'available'}
-        <span>Update available: v{updateVersion}</span>
-        <button
-          onclick={installUpdate}
-          class="px-2 py-0.5 rounded bg-[var(--accent)] text-white text-[11px] font-semibold hover:opacity-90 transition-opacity"
-        >Install &amp; restart</button>
-        <button
-          onclick={dismissUpdate}
-          class="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] text-[11px] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
-        >Later</button>
-      {:else if updateState === 'downloading'}
-        <span>Downloading {updateProgress}%…</span>
-      {/if}
-    </div>
-  {/if}
-
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
@@ -1741,34 +1806,124 @@
                   <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] shrink-0">Updates</p>
                   <div class="flex-1 h-1.5 rounded-full overflow-hidden bg-[var(--border)]">
                     <div class="h-full bg-[var(--accent)] transition-all duration-200"
-                         style="width:{updateState === 'downloading' ? updateProgress : (updateState === 'available' ? 100 : 0)}%"></div>
+                         style="width:{updateState === 'downloading' ? updateProgress : (updateState === 'ready' ? 100 : (updateState === 'available' ? 100 : 0))}%"></div>
                   </div>
                   {#if updateState === 'downloading'}
                     <span class="text-[10px] font-mono text-[var(--text-secondary)] shrink-0 tabular-nums">{updateProgress}%</span>
-                  {:else if updateState === 'available'}
+                  {:else if updateState === 'available' || updateState === 'ready'}
                     <span class="text-[10px] font-mono text-[var(--accent)] shrink-0">v{updateVersion}</span>
                   {/if}
                 </div>
-                <!-- Left-justified checkboxes + manual trigger -->
+                <!-- Left-justified checkboxes + stateful action button -->
                 <div class="flex items-center gap-4">
                   <label class="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" bind:checked={settings.notifyUpdates}
                            class="w-3.5 h-3.5 accent-[var(--accent)]" />
                     <span class="text-[12px] text-[var(--text-primary)]">Notify</span>
                   </label>
-                  <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" bind:checked={settings.autoUpdate}
-                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
-                    <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
-                  </label>
-                  <button onclick={updateState === 'available' ? installUpdate : checkForUpdate}
-                          disabled={updateState === 'downloading'}
-                          class="ml-auto px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                  {#if !isManualUpdatePlatform}
+                    <label class="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" bind:checked={settings.autoUpdate}
+                             class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                      <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
+                    </label>
+                  {/if}
+                  {#if updateState === 'available' && isManualUpdatePlatform}
+                    <button onclick={openReleasesPage}
+                            title="Opens the GitHub releases page in your browser"
+                            class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
+                                   bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
+                                   hover:opacity-90 transition-opacity">
+                      Download update
+                    </button>
+                  {:else if updateState === 'available'}
+                    <button onclick={installUpdate}
+                            class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
+                                   bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
+                                   hover:opacity-90 transition-opacity">
+                      Update Now
+                    </button>
+                  {:else if updateState === 'downloading'}
+                    <button disabled
+                            class="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] shrink-0
+                                   border border-[var(--border)] text-[var(--text-secondary)]
+                                   bg-transparent opacity-70 cursor-not-allowed">
+                      <svg class="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                      Updating
+                    </button>
+                  {:else if updateState === 'ready'}
+                    <button onclick={restartNow}
+                            class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
+                                   bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
+                                   hover:opacity-90 transition-opacity">
+                      Restart now
+                    </button>
+                  {:else}
+                    <button onclick={checkForUpdate}
+                            class="ml-auto px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                                   text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                                   hover:border-[var(--accent)] transition-colors shrink-0">
+                      Update Now
+                    </button>
+                  {/if}
+                </div>
+              </div>
+
+              <!-- Section: Diagnostics ──────────────────────────────────────
+                   Local-only. No network. Lists errors captured this session
+                   (updater failures, job errors, uncaught JS). "Copy" puts a
+                   plain-text report on the clipboard for pasting into a bug
+                   report. A future opt-in crash uploader can read from the
+                   same buffer — for now everything stays on the user's
+                   machine. -->
+              <div class="px-4 pt-3 pb-3 border-b border-[var(--border)] flex flex-col gap-2">
+                <div class="flex items-center gap-3">
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] shrink-0">Diagnostics</p>
+                  <span class="text-[11px] {diagEntries.length > 0 ? 'text-red-400' : 'text-[var(--text-secondary)]'}">
+                    {diagEntries.length === 0
+                      ? 'No errors this session'
+                      : (diagEntries.length === 1 ? '1 error this session' : `${diagEntries.length} errors this session`)}
+                  </span>
+                  {#if diagEntries.length > 0}
+                    <button onclick={() => diagnosticsExpanded = !diagnosticsExpanded}
+                            class="ml-auto text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0">
+                      {diagnosticsExpanded ? 'Hide' : 'Show'}
+                    </button>
+                  {/if}
+                </div>
+                {#if diagnosticsExpanded && diagEntries.length > 0}
+                  <div class="max-h-[140px] overflow-y-auto rounded border border-[var(--border)]
+                              bg-[var(--surface)] font-mono text-[10px] leading-snug p-2 flex flex-col gap-1">
+                    {#each diagEntries.slice().reverse() as e (e.t + e.source + e.message)}
+                      <div>
+                        <span class="text-[var(--text-secondary)]">{new Date(e.t).toLocaleTimeString()}</span>
+                        <span class="text-[var(--accent)]">[{e.source}]</span>
+                        <span class="text-[var(--text-primary)]">{e.message}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+                <div class="flex items-center gap-1.5">
+                  <button onclick={copyDiagnostics}
+                          class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
                                  text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                                 hover:border-[var(--accent)] transition-colors shrink-0
-                                 disabled:opacity-40 disabled:cursor-not-allowed">
-                    {updateState === 'available' ? 'Install & restart' : updateState === 'downloading' ? 'Downloading…' : 'Update Now'}
+                                 hover:border-[var(--accent)] transition-colors">
+                    Copy diagnostics
                   </button>
+                  {#if diagEntries.length > 0}
+                    <button onclick={clearDiagnostics}
+                            class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                                   text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                                   hover:border-[var(--accent)] transition-colors">
+                      Clear
+                    </button>
+                  {/if}
+                  {#if _diagCopyNote}
+                    <span class="text-[11px] text-[var(--text-secondary)] ml-1">{_diagCopyNote}</span>
+                  {/if}
                 </div>
               </div>
 
@@ -2607,7 +2762,9 @@
 
         <!-- Hint text — opacity + transition driven by shared tooltip store
              (see tooltip.svelte.js). Handles 100ms in, 2s hold + 2s out,
-             and 100ms crossfade on interrupt. -->
+             and 100ms crossfade on interrupt. Update-available notice
+             layers centered over the same band when Notify is on and no
+             tooltip is active; clicking opens Settings. -->
         <div class="relative min-h-[2.5rem]">
           <p class="text-[11px] leading-relaxed"
              style="color:rgba(255,255,255,0.5);
@@ -2615,6 +2772,17 @@
                     transition:opacity {tooltip.duration}ms linear {tooltip.delay}ms">
             {tooltip.text}
           </p>
+          {#if settings.notifyUpdates && (updateState === 'available' || updateState === 'ready') && tooltip.opacity < 0.05}
+            <button
+              type="button"
+              onclick={() => { settingsOpen = true; }}
+              class="absolute inset-0 flex items-center justify-center text-[11px] leading-relaxed
+                     bg-transparent border-0 cursor-pointer transition-colors"
+              style="color:rgba(255,255,255,0.5)"
+              onmouseenter={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.85)'}
+              onmouseleave={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.5)'}
+            >{updateState === 'ready' ? 'Update ready — restart to apply' : 'Update available'}</button>
+          {/if}
         </div>
 
         <!-- Zoom (left) + version (right, tucked low with slow pulse) -->
@@ -2646,7 +2814,7 @@
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
             style="color:rgba(255,255,255,0.45)">+</button>
           </div>
-          <span class="fade-pulse text-[10px] font-medium select-none">Fade v0.1.0</span>
+          <span class="fade-pulse text-[10px] font-medium select-none">Fade {appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
 
@@ -2672,5 +2840,9 @@
   }
   .preview-loading-bar {
     animation: preview-slide 1.2s ease-in-out infinite;
+  }
+  :global(input[type="checkbox"]) {
+    transform: scale(1.25);
+    transform-origin: center;
   }
 </style>
