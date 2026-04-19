@@ -1,4 +1,4 @@
-<img src="Fade-icon-light.png" width="80" alt="Fade">
+<img src="Fade-icon-dark.png" width="80" alt="Fade">
 
 # Fade
 
