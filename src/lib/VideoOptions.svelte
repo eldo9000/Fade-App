@@ -182,20 +182,24 @@
   {#if options.output_format !== 'gif'}
     <!-- Quality / CRF (applies to re-encoded codecs, not copy) -->
     {#if options.codec !== 'copy'}
-      <fieldset data-tooltip="0 lossless · 18–28 typical · 51 worst · lower = better quality">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Quality — CRF {options.crf}</legend>
-        <input type="range" min="0" max="51" step="1" bind:value={options.crf} class="w-full accent-[var(--accent)]" />
-        <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 lossless</span><span>51 worst</span></div>
-      </fieldset>
+      {#if ['h264','h265','vp9','av1'].includes(options.codec)}
+        <fieldset data-tooltip="0 lossless · 18–28 typical · 51 worst · lower = better quality">
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Quality — CRF {options.crf}</legend>
+          <input type="range" min="0" max="51" step="1" bind:value={options.crf} class="w-full accent-[var(--accent)]" />
+          <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 lossless</span><span>51 worst</span></div>
+        </fieldset>
+      {/if}
 
-      <fieldset data-tooltip="Slower preset = better compression at same quality">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Encode Preset</legend>
-        <div class="flex flex-col">
-          {#each ['ultrafast','fast','medium','slow','veryslow'] as p, i}
-            <button onclick={() => options.preset = p} class={segV(options.preset === p, i, 5)}>{p}</button>
-          {/each}
-        </div>
-      </fieldset>
+      {#if ['h264','h265'].includes(options.codec)}
+        <fieldset data-tooltip="Slower preset = better compression at same quality">
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Encode Preset</legend>
+          <div class="flex flex-col">
+            {#each ['ultrafast','fast','medium','slow','veryslow'] as p, i}
+              <button onclick={() => options.preset = p} class={segV(options.preset === p, i, 5)}>{p}</button>
+            {/each}
+          </div>
+        </fieldset>
+      {/if}
 
       {#if options.codec === 'h264' || options.codec === 'h265'}
         <fieldset data-tooltip="baseline — max compatibility · main — consumer · high — streaming / archival">
@@ -237,6 +241,55 @@
         <div class="grid" style="grid-template-columns:repeat(3,1fr)">
           {#each ['yuv420p','yuv422p','yuv444p'] as p, i}
             <button onclick={() => options.pix_fmt = p} class={seg(options.pix_fmt === p, i, 3)}>{p}</button>
+          {/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    <!-- ── HAP variant ────────────────────────────────────────────────────── -->
+    {#if options.codec === 'hap'}
+      <fieldset data-tooltip="HAP — DXT1 no alpha · HAP Alpha — DXT5 with alpha · HAP Q — YCoCg better quality · HAP Q Alpha — YCoCg with alpha">
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">HAP Variant</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each [['hap','HAP'],['hap_alpha','HAP α'],['hap_q','HAP Q'],['hap_q_alpha','HAP Qα']] as [v, lbl], i}
+            <button onclick={() => options.hap_format = v} class={seg((options.hap_format ?? 'hap') === v, i, 4)}>{lbl}</button>
+          {/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    <!-- ── DNxHR profile ──────────────────────────────────────────────────── -->
+    {#if options.codec === 'dnxhr'}
+      <fieldset data-tooltip="LB low bandwidth · SQ standard · HQ high quality · HQX 12-bit · 444 full 4:4:4 chroma">
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Profile</legend>
+        <div class="flex flex-col">
+          {#each [['dnxhr_lb','LB — Low Bandwidth'],['dnxhr_sq','SQ — Standard Quality'],['dnxhr_hq','HQ — High Quality'],['dnxhr_hqx','HQX — High Quality 12-bit'],['dnxhr_444','444 — 4:4:4']] as [v, lbl], i}
+            <button onclick={() => options.dnxhr_profile = v} class={segV((options.dnxhr_profile ?? 'dnxhr_sq') === v, i, 5)}>{lbl}</button>
+          {/each}
+        </div>
+      </fieldset>
+    {/if}
+
+    <!-- ── DNxHD bitrate ──────────────────────────────────────────────────── -->
+    {#if options.codec === 'dnxhd'}
+      <fieldset data-tooltip="Bitrate must pair with source resolution and frame rate — e.g. 185M for 1080p/29.97, 175M for 1080p/23.976">
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate</legend>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+          {#each [[36,'36M'],[120,'120M'],[175,'175M'],[185,'185M']] as [v, lbl], i}
+            <button onclick={() => options.dnxhd_bitrate = v} class={seg((options.dnxhd_bitrate ?? 185) === v, i, 4)}>{lbl}</button>
+          {/each}
+        </div>
+        <p class="text-[11px] text-[var(--text-secondary)] mt-1.5">Mismatched resolution × fps will error. Use DNxHR for resolution-independent encoding.</p>
+      </fieldset>
+    {/if}
+
+    <!-- ── DV standard ────────────────────────────────────────────────────── -->
+    {#if options.codec === 'dvvideo'}
+      <fieldset data-tooltip="NTSC: 720×480 at 29.97 fps · PAL: 720×576 at 25 fps — DV forces these exact specs">
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Standard</legend>
+        <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+          {#each [['ntsc','NTSC (720×480)'],['pal','PAL (720×576)']] as [v, lbl], i}
+            <button onclick={() => options.dv_standard = v} class={seg((options.dv_standard ?? 'ntsc') === v, i, 2)}>{lbl}</button>
           {/each}
         </div>
       </fieldset>

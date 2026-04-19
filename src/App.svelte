@@ -8,6 +8,7 @@
   import Timeline from './lib/Timeline.svelte';
   import ImageOptions from './lib/ImageOptions.svelte';
   import VideoOptions from './lib/VideoOptions.svelte';
+  import CodecWarning from './lib/CodecWarning.svelte';
   import AudioOptions from './lib/AudioOptions.svelte';
   import DataOptions from './lib/DataOptions.svelte';
   import FormatPicker from './lib/FormatPicker.svelte';
@@ -542,6 +543,7 @@
   // ── Settings ───────────────────────────────────────────────────────────────
   const settings   = createSettings();
   let settingsOpen = $state(false);
+  let aboutOpen = $state(false);
 
   // Auto-collapse queue once per session when it grows large enough to scroll
   let _autoCompactDone = false;
@@ -2580,7 +2582,7 @@
     ]},
     // Ebooks — Calibre managed install provides ebook-convert across all
     // these formats plus PDF/EPUB conversion.
-    { label: 'Ebook', cat: 'ebook', fmts: [
+    { label: 'Ebook', cat: 'ebook', todo: true, fmts: [
       { id: 'epub',  label: 'EPUB' },
       { id: 'mobi',  label: 'MOBI' },
       { id: 'azw3',  label: 'AZW3' },
@@ -2628,7 +2630,7 @@
       { id: 'woff',  label: 'WOFF' },
       { id: 'woff2', label: 'WOFF2' },
     ]},
-    { label: 'Email', cat: 'email', fmts: [
+    { label: 'Email', cat: 'email', todo: true, fmts: [
       // MSG (Outlook binary) remains deferred — backend returns a clear error.
       { id: 'msg',  label: 'MSG',  todo: true, preview: true },
       { id: 'eml',  label: 'EML'  },
@@ -3131,7 +3133,7 @@
                      border-radius:10px;
                      box-shadow:0 -10px 36px rgba(0,0,0,0.6);
                      margin-bottom:0.5rem;
-                     overflow-y:auto; z-index:50"
+                     overflow-y:auto; z-index:500"
               onmousedown={(e) => e.stopPropagation()}
             >
               <!-- Section: Updates -->
@@ -3447,11 +3449,11 @@
   <!-- Backdrop — click anywhere outside the sidebar to close settings -->
   {#if settingsOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="fixed inset-0 z-40" onpointerdown={() => settingsOpen = false}></div>
+    <div class="fixed inset-0 z-[490]" onpointerdown={() => settingsOpen = false}></div>
   {/if}
 
     <!-- ── CENTER: Preview + timeline ─────────────────────────────────────── -->
-    <div class="flex flex-col flex-1 min-w-0">
+    <div class="flex flex-col flex-1 min-w-0 relative z-0">
 
       <!-- Preview area -->
       <div class="flex-1 min-h-0 bg-[#1a1a1a] flex items-center justify-center relative overflow-hidden" bind:this={previewAreaEl}>
@@ -3466,6 +3468,23 @@
                    border backdrop-blur-sm select-none pointer-events-none
                    bg-black/50 border-white/10 text-white/50"
           >DRAFT</div>
+        {/if}
+
+        <!-- ── Codec / format constraint warning — shown above the video ── -->
+        {#if selectedItem?.mediaType === 'video' && activeOutputCategory === 'video'}
+          {@const _wc = videoOptions.codec}
+          {@const _wf = videoOptions.output_format}
+          {#if ['dnxhd','cineform','dvvideo','rawvideo','wmv2','rv20','xdcam422','xdcam35'].includes(_wc) || _wf === '3gp' || _wf === 'divx'}
+            <div class="absolute top-3 left-1/2 -translate-x-1/2 z-30 w-[min(calc(100%-2rem),560px)]">
+              <CodecWarning
+                codec={_wc}
+                output_format={_wf}
+                inputWidth={selectedWidth}
+                inputHeight={selectedHeight}
+                bind:resolution={videoOptions.resolution}
+              />
+            </div>
+          {/if}
         {/if}
 
         <!-- ── VIDEO: lives outside {#key} so videoEl is NEVER null while a
@@ -5638,13 +5657,14 @@
               </button>
               {#if !settings.filesCollapsed}
                 <div class="space-y-4">
-                  {#each fileGroups as group (group.cat)}
+                  {#each fileGroups.filter(g => !g.todo || import.meta.env.DEV) as group (group.cat)}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
-                        <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider
+                                     {group.todo ? 'text-green-600' : 'text-[var(--text-secondary)]'}">
                           {group.label}
                         </span>
-                        <div class="flex-1 h-px bg-[var(--border)]"></div>
+                        <div class="flex-1 h-px {group.todo ? 'bg-green-900' : 'bg-[var(--border)]'}"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
                         {#each group.fmts.filter(f => !f.todo || f.preview || import.meta.env.DEV) as f}
@@ -5676,7 +5696,7 @@
             cropAspect={cropAspect}
           />
         {:else if activeOutputCategory === 'video'}
-          <VideoOptions bind:options={videoOptions} errors={validationErrors} inputWidth={selectedWidth} inputHeight={selectedHeight} />
+          <VideoOptions bind:options={videoOptions} errors={validationErrors} />
         {:else if activeOutputCategory === 'audio'}
           <AudioOptions bind:options={audioOptions} errors={validationErrors} />
         {:else if activeOutputCategory === 'data'}
@@ -5764,12 +5784,80 @@
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
             style="color:rgba(255,255,255,0.45)">+</button>
           </div>
-          <span class="fade-pulse text-[10px] font-medium select-none">Fade {appVersion ? `v${appVersion}` : ''}</span>
+          <button onclick={() => aboutOpen = true}
+                  class="fade-pulse text-[10px] font-medium select-none hover:opacity-80 transition-opacity cursor-pointer">Fade {appVersion ? `v${appVersion}` : ''}</button>
         </div>
       </div>
       {/if}
 
     </aside>
+
+  <!-- About modal -->
+  {#if aboutOpen}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-[600] flex items-center justify-center"
+         style="background:rgba(0,0,0,0.5)"
+         onpointerdown={() => aboutOpen = false}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="relative rounded-xl border border-[var(--border)] shadow-2xl overflow-hidden"
+           style="width:420px; background:var(--surface-raised)"
+           onpointerdown={(e) => e.stopPropagation()}>
+
+        <!-- Header band -->
+        <div class="px-8 pt-8 pb-6 flex flex-col items-center gap-3 border-b border-[var(--border)]"
+             style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised))">
+          <!-- Logo placeholder -->
+          <div class="w-16 h-16 rounded-2xl border border-[var(--border)] flex items-center justify-center"
+               style="background:color-mix(in srgb, var(--accent) 12%, #000)">
+            <span class="text-2xl font-bold" style="color:var(--accent)">F</span>
+          </div>
+          <div class="text-center">
+            <p class="text-[22px] font-semibold text-[var(--text-primary)]">Fade</p>
+            {#if appVersion}
+              <p class="text-[12px] text-[var(--text-secondary)] mt-0.5">v{appVersion}</p>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Body -->
+        <div class="px-8 py-6 flex flex-col gap-4 text-[13px] text-[var(--text-secondary)] leading-relaxed">
+          <p>
+            Fade is a fast, offline media converter built for people who know what they're doing.
+            No subscriptions, no cloud, no limits — just ffmpeg with a decent interface.
+          </p>
+          <p>
+            Part of the <strong class="text-[var(--text-primary)]">Libre</strong> family of professional tools —
+            built to own your workflow.
+          </p>
+
+          <div class="flex flex-col gap-1.5 pt-1 text-[12px] border-t border-[var(--border)]">
+            <div class="flex justify-between">
+              <span class="text-[var(--text-secondary)]">Engine</span>
+              <span class="text-[var(--text-primary)] font-mono">ffmpeg</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-[var(--text-secondary)]">Runtime</span>
+              <span class="text-[var(--text-primary)] font-mono">Tauri + Svelte</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-[var(--text-secondary)]">License</span>
+              <span class="text-[var(--text-primary)] font-mono">MIT</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-8 pb-6 flex justify-center">
+          <button onclick={() => aboutOpen = false}
+                  class="px-5 py-1.5 rounded-md text-[13px] font-medium border border-[var(--border)]
+                         text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
+                         transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Full-window drag overlay -->
   {#if dragOver}

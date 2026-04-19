@@ -183,6 +183,24 @@ pub fn ffmpeg_video_codec_args(codec: &str) -> Vec<String> {
         "h265" => vec!["-vcodec".to_string(), "libx265".to_string()],
         "vp9" => vec!["-vcodec".to_string(), "libvpx-vp9".to_string()],
         "av1" => vec!["-vcodec".to_string(), "libaom-av1".to_string()],
+        "prores" => vec!["-vcodec".to_string(), "prores_ks".to_string()],
+        "theora" => vec!["-vcodec".to_string(), "libtheora".to_string()],
+        "mpeg2video" => vec!["-vcodec".to_string(), "mpeg2video".to_string()],
+        "mjpeg" => vec!["-vcodec".to_string(), "mjpeg".to_string()],
+        "mpeg4" => vec!["-vcodec".to_string(), "mpeg4".to_string()],
+        "mpeg1video" => vec!["-vcodec".to_string(), "mpeg1video".to_string()],
+        "ffv1" => vec!["-vcodec".to_string(), "ffv1".to_string()],
+        "qtrle" => vec!["-vcodec".to_string(), "qtrle".to_string()],
+        "dnxhd" => vec!["-vcodec".to_string(), "dnxhd".to_string()],
+        "dnxhr" => vec!["-vcodec".to_string(), "dnxhd".to_string()], // DNxHR uses the dnxhd encoder with an hr_* profile
+        "cineform" => vec!["-vcodec".to_string(), "cfhd".to_string()],
+        "hap" => vec!["-vcodec".to_string(), "hap".to_string()],
+        "rawvideo" => vec!["-vcodec".to_string(), "rawvideo".to_string()],
+        "dvvideo" => vec!["-vcodec".to_string(), "dvvideo".to_string()],
+        "xdcam422" => vec!["-vcodec".to_string(), "mpeg2video".to_string()],
+        "xdcam35" => vec!["-vcodec".to_string(), "mpeg2video".to_string()],
+        "wmv2" => vec!["-vcodec".to_string(), "wmv2".to_string()],
+        "rv20" => vec!["-vcodec".to_string(), "rv20".to_string()],
         _ => vec!["-c".to_string(), "copy".to_string()],
     }
 }
@@ -248,6 +266,83 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             if let Some(pf) = opts.pix_fmt.as_deref() {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);
             }
+        }
+        "prores" => {
+            // Default to HQ (profile 3) if not overridden by pix_fmt/user opts.
+            out.extend(["-profile:v".to_string(), "3".to_string()]);
+        }
+        "dnxhd" => {
+            // Fixed bitrate required — must match source resolution × fps exactly.
+            let br = opts.dnxhd_bitrate.unwrap_or(185);
+            out.extend(["-b:v".to_string(), format!("{}M", br)]);
+        }
+        "dnxhr" => {
+            let profile = opts.dnxhr_profile.as_deref().unwrap_or("dnxhr_sq");
+            out.extend(["-profile:v".to_string(), profile.to_string()]);
+        }
+        "cineform" => {
+            // cfhd quality scale: 0 = best (lossless), 12 = worst. 3 = standard.
+            out.extend(["-q:v".to_string(), "3".to_string()]);
+        }
+        "hap" => {
+            // Sub-format selects the texture compression variant stored in the MOV.
+            let fmt = opts.hap_format.as_deref().unwrap_or("hap");
+            if fmt != "hap" {
+                out.extend(["-format".to_string(), fmt.to_string()]);
+            }
+        }
+        "rawvideo" => {
+            let pix = opts.pix_fmt.as_deref().unwrap_or("yuv422p");
+            out.extend(["-pix_fmt".to_string(), pix.to_string()]);
+        }
+        "dvvideo" => {
+            // DV requires exact resolution and frame rate; scale is forced here.
+            match opts.dv_standard.as_deref().unwrap_or("ntsc") {
+                "pal" => out.extend([
+                    "-s".to_string(),
+                    "720x576".to_string(),
+                    "-pix_fmt".to_string(),
+                    "yuv420p".to_string(),
+                    "-r".to_string(),
+                    "25".to_string(),
+                ]),
+                _ => out.extend([
+                    "-s".to_string(),
+                    "720x480".to_string(),
+                    "-pix_fmt".to_string(),
+                    "yuv411p".to_string(),
+                    "-r".to_string(),
+                    "30000/1001".to_string(),
+                ]),
+            }
+        }
+        "xdcam422" => {
+            // XDCAM HD422: 50 Mbps CBR, 4:2:2 chroma, MPEG-2 422P profile.
+            out.extend([
+                "-b:v".to_string(),
+                "50M".to_string(),
+                "-minrate".to_string(),
+                "50M".to_string(),
+                "-maxrate".to_string(),
+                "50M".to_string(),
+                "-profile:v".to_string(),
+                "0".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv422p".to_string(),
+            ]);
+        }
+        "xdcam35" => {
+            // XDCAM HD: 35 Mbps VBR max, 4:2:0 chroma, MPEG-2 Main profile.
+            out.extend([
+                "-b:v".to_string(),
+                "35M".to_string(),
+                "-maxrate".to_string(),
+                "35M".to_string(),
+                "-profile:v".to_string(),
+                "4".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+            ]);
         }
         _ => {}
     }
@@ -339,6 +434,10 @@ pub fn resolution_to_scale(res: &str) -> String {
         }
         "854x480" => {
             "scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2"
+                .to_string()
+        }
+        "1440x1080" => {
+            "scale=1440:1080:force_original_aspect_ratio=decrease,pad=1440:1080:(ow-iw)/2:(oh-ih)/2"
                 .to_string()
         }
         other => format!("scale={}", other),
