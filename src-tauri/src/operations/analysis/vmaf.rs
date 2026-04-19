@@ -36,7 +36,11 @@ pub fn analyze_vmaf(
 
     // Scale both inputs to the model's native size; fps-match distorted to ref.
     // The `phone` flag is a libvmaf toggle, not a model — map accordingly.
-    let phone_flag = if model == "phone" { ":phone_model=1" } else { "" };
+    let phone_flag = if model == "phone" {
+        ":phone_model=1"
+    } else {
+        ""
+    };
 
     let filter = format!(
         "[0:v]scale={w}:{h}:flags=bicubic,setpts=PTS-STARTPTS[ref];\
@@ -65,8 +69,7 @@ pub fn analyze_vmaf(
     ];
     run_ffmpeg_capture(&args)?;
 
-    let body =
-        std::fs::read_to_string(&log_path).map_err(|e| format!("read vmaf log: {e}"))?;
+    let body = std::fs::read_to_string(&log_path).map_err(|e| format!("read vmaf log: {e}"))?;
     let v: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("vmaf json parse: {e}"))?;
 

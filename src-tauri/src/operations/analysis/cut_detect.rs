@@ -16,16 +16,13 @@ pub struct CutPoint {
 #[tauri::command]
 pub fn analyze_cut_detect(
     input_path: String,
-    algo: String,     // "scdet" | "scene"
-    threshold: f64,   // scdet: 5-15 · scene: 0.2-0.5
-    min_shot_s: f64,  // post-filter
+    algo: String,    // "scdet" | "scene"
+    threshold: f64,  // scdet: 5-15 · scene: 0.2-0.5
+    min_shot_s: f64, // post-filter
 ) -> Result<Vec<CutPoint>, String> {
     let args = if algo == "scene" {
         // select='gt(scene,T)' + showinfo to get pts_time.
-        let filter = format!(
-            "select='gt(scene\\,{:.3})',showinfo",
-            threshold
-        );
+        let filter = format!("select='gt(scene\\,{:.3})',showinfo", threshold);
         vec![
             "-hide_banner".to_string(),
             "-nostats".to_string(),

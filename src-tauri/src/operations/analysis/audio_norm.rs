@@ -119,7 +119,10 @@ pub fn run(
             // "max_volume: -3.5 dB"
             let max_db = stderr
                 .lines()
-                .find_map(|l| l.find("max_volume:").map(|i| l[i + 11..].trim().to_string()))
+                .find_map(|l| {
+                    l.find("max_volume:")
+                        .map(|i| l[i + 11..].trim().to_string())
+                })
                 .and_then(|s| s.trim_end_matches(" dB").trim().parse::<f64>().ok())
                 .ok_or_else(|| "volumedetect produced no max_volume".to_string())?;
             let gain_db = target_i - max_db; // target_i is the dBFS ceiling in peak mode

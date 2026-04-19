@@ -31,11 +31,7 @@ fn hash_file(input_path: &str, stream: &str) -> Result<Vec<String>, String> {
         input_path.to_string(),
     ];
     args.extend(map_arg);
-    args.extend([
-        "-f".to_string(),
-        "framemd5".to_string(),
-        "-".to_string(),
-    ]);
+    args.extend(["-f".to_string(), "framemd5".to_string(), "-".to_string()]);
 
     let out = Command::new("ffmpeg")
         .args(&args)
@@ -62,7 +58,7 @@ fn hash_file(input_path: &str, stream: &str) -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn analyze_framemd5(
     input_path: String,
-    stream: String,          // "video" | "audio" | "both"
+    stream: String, // "video" | "audio" | "both"
     diff_path: Option<String>,
 ) -> Result<FrameMd5Result, String> {
     // `both` isn't directly supported by -f framemd5 in a single pass without
@@ -121,4 +117,3 @@ pub fn analyze_framemd5(
         })
     }
 }
-
