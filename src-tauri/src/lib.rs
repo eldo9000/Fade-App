@@ -373,10 +373,10 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         // generic data XML) and already routes to "data". Premiere XML
         // interop is deferred until we have a disambiguation signal.
         "edl" | "fcpxml" | "otio" | "aaf" => "timeline",
-        // Subtitle files — routed through ffmpeg. `sbv` and `ttml` are
-        // not natively supported by ffmpeg as input/output respectively;
-        // they remain flagged `todo` in the frontend.
-        "srt" | "vtt" | "ass" | "ssa" => "subtitle",
+        // Subtitle files — routed through ffmpeg. `ttml` is ffmpeg-native
+        // for write. `sbv` is hand-rolled in convert/subtitle.rs (ffmpeg
+        // can't read or write it) via a SRT bridge step.
+        "srt" | "vtt" | "ass" | "ssa" | "ttml" | "sbv" => "subtitle",
         // Ebooks — Calibre's `ebook-convert` CLI handles the whole matrix.
         // `pdf` stays routed to "document"; Calibre reads PDFs for ebook
         // OUTPUT via the input-extension branch isn't needed because pdf

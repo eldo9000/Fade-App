@@ -2455,9 +2455,10 @@
       { id: 'vtt',  label: 'VTT'  },
       { id: 'ass',  label: 'ASS'  },
       { id: 'ssa',  label: 'SSA'  },
-      // ffmpeg can't read sbv and can only write ttml — keep both deferred.
-      { id: 'sbv',  label: 'SBV',  todo: true, preview: true },
-      { id: 'ttml', label: 'TTML', todo: true, preview: true },
+      // SBV (YouTube) is hand-rolled via a SRT bridge; TTML write is
+      // ffmpeg-native. Both now ship.
+      { id: 'sbv',  label: 'SBV'  },
+      { id: 'ttml', label: 'TTML' },
     ]},
     // Timeline / edit decision lists — pro workflow interop (Premiere,
     // Resolve, FCP, Avid). Routed through OpenTimelineIO's `otioconvert`
