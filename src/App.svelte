@@ -2462,13 +2462,14 @@
     ]},
     // Timeline / edit decision lists — pro workflow interop (Premiere,
     // Resolve, FCP, Avid). Routed through OpenTimelineIO's `otioconvert`
-    // CLI (the Rosetta stone format). `.xml` (Premiere XML) stays deferred
-    // because the extension is ambiguous with generic data XML — the
-    // backend routes `.xml` to the data pipeline.
+    // CLI (the Rosetta stone format). `.xml` (Premiere XML) is routed to
+    // the timeline pipeline when either side of the conversion is a known
+    // timeline-native extension (edl/fcpxml/otio/aaf); generic data XML
+    // still falls through to the data pipeline.
     { label: 'Timeline', cat: 'timeline', fmts: [
       { id: 'edl',    label: 'EDL' },
       { id: 'fcpxml', label: 'FCPXML' },
-      { id: 'xml',    label: 'Premiere XML', todo: true, preview: true },
+      { id: 'xml',    label: 'Premiere XML' },
       { id: 'otio',   label: 'OTIO' },
       { id: 'aaf',    label: 'AAF' },
     ]},

@@ -474,10 +474,19 @@ fn convert_file(
         .unwrap_or_default();
 
     // Route by input media type when extract_audio is set (input is video, output is audio)
+    // `.xml` is ambiguous between Premiere XML (timeline) and generic data
+    // XML. Disambiguate by the opposite extension: when either side is a
+    // known timeline-native format, the other side's `xml` means Premiere
+    // XML. otioconvert auto-picks the fcp_xml adapter from the extension.
+    let is_timeline_native = |e: &str| matches!(e, "edl" | "fcpxml" | "otio" | "aaf");
     let mtype = if options.extract_audio == Some(true) {
         "audio"
     } else if input_ext == "ipynb" {
         "notebook"
+    } else if (ext == "xml" && is_timeline_native(&input_ext))
+        || (input_ext == "xml" && is_timeline_native(&ext))
+    {
+        "timeline"
     } else {
         let t = classify_ext(&ext);
         if t == "unknown" {
