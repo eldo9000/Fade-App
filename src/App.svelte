@@ -133,7 +133,6 @@
   let watermarkOpacity   = $state(0.8);
   let watermarkScale     = $state(15);         // % of video width
   // ── Audio processing ───────────────────────────────────────────────────
-  let volumeGainDb       = $state(0);          // -30..+20
   let channelToolsMode   = $state('stereo_to_mono'); // 'stereo_to_mono' · 'swap' · 'mute_l' · 'mute_r' · 'mono_to_stereo'
   let padSilenceHead     = $state(0);          // seconds
   let padSilenceTail     = $state(0);          // seconds
@@ -214,9 +213,8 @@
     { id: 'loop',           label: 'Loop' },
     // Video processing filters (group 2).
     { id: 'rotate-flip',    label: 'Rotate / Flip' },
-    { id: 'reverse',        label: 'Reverse' },
-    { id: 'speed',          label: 'Speed' },
-    { id: 'fade',           label: 'Fade In/Out' },
+    { id: 'speed',          label: 'Speed / Reverse' },
+    { id: 'fade',           label: 'Crop / Fade' },
     { id: 'deinterlace',    label: 'Deinterlace' },
     { id: 'denoise',        label: 'Denoise' },
     // Frame / image tools (group 3).
@@ -225,7 +223,6 @@
     { id: 'frame-export',   label: 'Frame Export' },
     { id: 'watermark',      label: 'Watermark' },
     // Audio processing (group 4).
-    { id: 'volume',         label: 'Volume Gain' },
     { id: 'channel-tools',  label: 'Channel Tools' },
     { id: 'pad-silence',    label: 'Pad Silence' },
     // Chroma key — tier 1 (FFmpeg built-ins).
@@ -549,6 +546,12 @@
   const settings   = createSettings();
   let settingsOpen = $state(false);
   let aboutOpen = $state(false);
+  let aboutClosing = $state(false);
+  function closeAbout() {
+    if (aboutClosing) return;
+    aboutClosing = true;
+    setTimeout(() => { aboutOpen = false; aboutClosing = false; }, 500);
+  }
 
   // Auto-collapse queue once per session when it grows large enough to scroll
   let _autoCompactDone = false;
@@ -1924,15 +1927,6 @@
     });
   }
 
-  async function runVolume() {
-    const db = Math.max(-30, Math.min(20, Number(volumeGainDb) || 0));
-    return _runOp({
-      payload: { type: 'volume', gain_db: db },
-      suffix: `gain${db >= 0 ? '+' : ''}${db}dB`,
-      label: 'Volume',
-    });
-  }
-
   async function runChannelTools() {
     return _runOp({
       payload: { type: 'channel_tools', mode: channelToolsMode },
@@ -2506,16 +2500,14 @@
       { id: 'silence-remove', label: 'Silence Remover' },
       { id: 'video-inserts', label: 'Video Inserts', todo: true },
       { id: 'rotate-flip', label: 'Rotate / Flip', ops: true },
-      { id: 'reverse', label: 'Reverse', ops: true },
-      { id: 'speed', label: 'Speed', ops: true },
-      { id: 'fade', label: 'Fade In/Out', ops: true },
+      { id: 'speed', label: 'Speed / Reverse', ops: true },
+      { id: 'fade', label: 'Crop / Fade', ops: true },
       { id: 'deinterlace', label: 'Deinterlace', ops: true },
       { id: 'denoise', label: 'Denoise', ops: true },
       { id: 'thumbnail', label: 'Thumbnail', ops: true },
       { id: 'contact-sheet', label: 'Contact Sheet', ops: true },
       { id: 'frame-export', label: 'Frame Export', ops: true },
       { id: 'watermark', label: 'Watermark', ops: true },
-      { id: 'volume', label: 'Volume Gain', ops: true },
       { id: 'channel-tools', label: 'Channel Tools', ops: true },
       { id: 'pad-silence', label: 'Pad Silence', ops: true },
     ]},
@@ -2719,7 +2711,6 @@
     'loop':           ['video', 'audio'],
     // Video processing filters
     'rotate-flip':    ['video'],
-    'reverse':        ['video', 'audio'],
     'speed':          ['video', 'audio'],
     'fade':           ['video', 'audio'],
     'deinterlace':    ['video'],
@@ -2730,7 +2721,6 @@
     'frame-export':   ['video'],
     'watermark':      ['video'],
     // Audio processing
-    'volume':         ['video', 'audio'],
     'channel-tools':  ['video', 'audio'],
     'pad-silence':    ['video', 'audio'],
     // Chroma key
@@ -3451,7 +3441,14 @@
 
               <!-- Section: Data -->
               <div class="px-4 pt-3 pb-4 flex items-center justify-between gap-2">
-                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Data</p>
+                <div class="flex items-center justify-between w-full">
+                  <!-- svelte-ignore a11y_missing_attribute -->
+                  <a onclick={() => { settingsOpen = false; aboutOpen = true; }}
+                     class="text-[11px] text-blue-400 underline decoration-blue-400/50 hover:decoration-blue-400 cursor-pointer transition-all select-none">
+                    About
+                  </a>
+                  <span class="text-[10px] text-[var(--text-secondary)]/60 select-none">Fade{appVersion ? ` v${appVersion}` : ''}</span>
+                </div>
                 <button
                   onclick={() => { preloadCache.clear(); cachedWaveformForTimeline = null; cachedFilmstripForTimeline = null; }}
                   class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
@@ -3717,15 +3714,12 @@
                 {:else if selectedOperation === 'rotate-flip'}
                   Rotate 90°/180° or mirror horizontally/vertically. Uses <code>transpose</code>, <code>hflip</code>, or <code>vflip</code> filters and re-encodes to H.264 / AAC.
                   <br/><br/><span class="text-white/35">Pick a direction and Run. 180° is two transpose=1 passes.</span>
-                {:else if selectedOperation === 'reverse'}
-                  Play the clip backwards. Uses <code>reverse</code> + <code>areverse</code>. <strong class="text-white/80">Memory-heavy</strong> — ffmpeg buffers the full decoded stream; long clips may swap or OOM.
-                  <br/><br/><span class="text-white/35">Trim first for clips longer than a minute or two.</span>
                 {:else if selectedOperation === 'speed'}
-                  Change playback rate with pitch-preserved audio. Uses <code>setpts=PTS/R</code> for video and chained <code>atempo</code> for audio (atempo's 0.5–2.0 range is handled automatically).
-                  <br/><br/><span class="text-white/35">Pick a preset or enter a custom rate (0.1–10×).</span>
+                  Change playback rate with pitch-preserved audio, or play the clip backwards. Uses <code>setpts=PTS/R</code> for video and chained <code>atempo</code> for audio (atempo's 0.5–2.0 range is handled automatically). Reverse uses <code>reverse</code> + <code>areverse</code> and is <strong class="text-white/80">memory-heavy</strong>.
+                  <br/><br/><span class="text-white/35">Pick a preset or enter a custom rate (0.1–10×). Reverse runs independently; trim first for long clips.</span>
                 {:else if selectedOperation === 'fade'}
-                  Add a fade-in from black and/or a fade-out to black at the tail. Uses <code>fade=t=in</code> / <code>fade=t=out</code> plus matching <code>afade</code>.
-                  <br/><br/><span class="text-white/35">Both values default to 0.5s; set either to 0 to skip that side.</span>
+                  Crop uses the timeline's trim handles. Add a fade-in from black and/or a fade-out to black at the tail — <code>fade=t=in</code> / <code>fade=t=out</code> plus matching <code>afade</code>.
+                  <br/><br/><span class="text-white/35">Set the fade values; use the timeline handles for crop. Either fade defaults to 0.5s; set to 0 to skip.</span>
                 {:else if selectedOperation === 'deinterlace'}
                   Convert interlaced footage to progressive. <strong class="text-white/80">yadif</strong> is fast & safe; <strong class="text-white/80">yadif 2×</strong> doubles the framerate using both fields; <strong class="text-white/80">bwdif</strong> is higher-quality at ~2× the CPU cost.
                   <br/><br/><span class="text-white/35">Use yadif for 1080i broadcast; bwdif when artifacts matter.</span>
@@ -3744,9 +3738,6 @@
                 {:else if selectedOperation === 'watermark'}
                   Overlay a PNG watermark at a chosen corner with opacity and size (% of video width). Audio is stream-copied; video re-encodes to H.264.
                   <br/><br/><span class="text-white/35">Transparent PNGs work best. Use opacity to further tame a logo.</span>
-                {:else if selectedOperation === 'volume'}
-                  Apply a fixed gain in dB via <code>volume=NdB</code>. Video is stream-copied; audio re-encodes to AAC 192k.
-                  <br/><br/><span class="text-white/35">Range: -30 dB (much quieter) to +20 dB (much louder). Use the Loudness tool first to measure.</span>
                 {:else if selectedOperation === 'channel-tools'}
                   Channel manipulations via the <code>pan</code> filter. Downmix stereo to mono, swap L/R, mute a side, or fake stereo from a mono source.
                   <br/><br/><span class="text-white/35">For true upmix/downmix with proper LFE handling, use a dedicated audio editor.</span>
@@ -4079,13 +4070,6 @@
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Rotate/Flip</button>
                   </div>
-                {:else if selectedOperation === 'reverse'}
-                  <div class="w-full">
-                    <button onclick={runReverse}
-                      disabled={!selectedItem || selectedItem.status === 'converting'}
-                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
-                    >Run Reverse</button>
-                  </div>
                 {:else if selectedOperation === 'speed'}
                   <div class="flex flex-wrap items-center gap-2 w-full">
                     <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
@@ -4105,11 +4089,15 @@
                       </div>
                     {/if}
                   </div>
-                  <div class="w-full">
+                  <div class="w-full flex items-center gap-2">
                     <button onclick={runSpeed}
                       disabled={!selectedItem || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Speed</button>
+                    <button onclick={runReverse}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white transition-colors disabled:opacity-40"
+                    >Run Reverse</button>
                   </div>
                 {:else if selectedOperation === 'fade'}
                   <div class="flex flex-wrap items-center gap-2 w-full">
@@ -4291,24 +4279,6 @@
                       disabled={!selectedItem || selectedItem.mediaType !== 'video' || !watermarkPath || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Watermark</button>
-                  </div>
-                {:else if selectedOperation === 'volume'}
-                  <div class="flex flex-wrap items-center gap-2 w-full">
-                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 flex-1 min-w-[220px]">
-                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0">Gain</label>
-                      <input type="range" min="-30" max="20" step="0.5" bind:value={volumeGainDb}
-                             ondblclick={() => volumeGainDb = 0}
-                             class="flex-1 accent-[var(--accent)]"/>
-                      <input type="number" min="-30" max="20" step="0.5" bind:value={volumeGainDb}
-                             class="w-14 shrink-0 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
-                      <span class="text-[10px] text-white/30 shrink-0">dB</span>
-                    </div>
-                  </div>
-                  <div class="w-full">
-                    <button onclick={runVolume}
-                      disabled={!selectedItem || selectedItem.status === 'converting'}
-                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
-                    >Run Volume</button>
                   </div>
                 {:else if selectedOperation === 'channel-tools'}
                   <div class="flex flex-wrap items-center gap-2 w-full">
@@ -5699,7 +5669,7 @@
                 class="w-full flex items-center gap-2 mb-3 group"
               >
                 <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Tools</span>
-                <div class="flex-1 h-px" style="background:color-mix(in srgb, var(--accent) 30%, transparent)"></div>
+                <div class="flex-1 h-px bg-[var(--border)]"></div>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                      class="text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-transform duration-150
@@ -5913,11 +5883,10 @@
   <!-- About modal -->
   {#if aboutOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="fixed inset-0 z-[600] flex items-center justify-center"
-         style="background:rgba(0,0,0,0.5)"
-         onpointerdown={() => aboutOpen = false}>
+    <div class="{aboutClosing ? 'about-backdrop-out' : 'about-backdrop'} fixed inset-0 z-[600] flex items-center justify-center"
+         onpointerdown={closeAbout}>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="relative rounded-xl border border-[var(--border)] shadow-2xl overflow-hidden"
+      <div class="{aboutClosing ? 'about-card-out' : 'about-card'} relative rounded-xl border border-[var(--border)] shadow-2xl overflow-hidden"
            style="width:420px; background:var(--surface-raised)"
            onpointerdown={(e) => e.stopPropagation()}>
 
@@ -5944,8 +5913,12 @@
             No subscriptions, no cloud, no limits — just ffmpeg with a decent interface.
           </p>
           <p>
-            Part of the <strong class="text-[var(--text-primary)]">Libre</strong> family of professional tools —
-            built to own your workflow.
+            Part of the <strong class="text-[var(--text-primary)]">Libre</strong> family of professional tools
+            by <!-- svelte-ignore a11y_missing_attribute -->
+            <a onclick={(e) => { e.stopPropagation(); invoke('open_url', { url: 'https://irontreesoftware.com' }); }}
+               class="text-[var(--text-primary)] underline decoration-white/20 hover:decoration-white/60 cursor-pointer transition-all">
+              Iron Tree Software
+            </a> — built to own your workflow.
           </p>
 
           <div class="flex flex-col gap-1.5 pt-1 text-[12px] border-t border-[var(--border)]">
@@ -5962,16 +5935,6 @@
               <span class="text-[var(--text-primary)] font-mono">MIT</span>
             </div>
           </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="px-8 pb-6 flex justify-center">
-          <button onclick={() => aboutOpen = false}
-                  class="px-5 py-1.5 rounded-md text-[13px] font-medium border border-[var(--border)]
-                         text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
-                         transition-colors">
-            Close
-          </button>
         </div>
       </div>
     </div>
@@ -5997,6 +5960,39 @@
   }
   .preview-loading-bar {
     animation: preview-slide 1.2s ease-in-out infinite;
+  }
+
+  @keyframes about-backdrop-in {
+    0%   { background: rgba(0,0,0,0);   backdrop-filter: blur(0px); }
+    100% { background: rgba(0,0,0,0.5); backdrop-filter: blur(7px); }
+  }
+  .about-backdrop {
+    animation: about-backdrop-in 2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+
+  @keyframes about-card-in {
+    0%   { opacity: 0; filter: blur(8px); transform: translateY(12px); }
+    100% { opacity: 1; filter: blur(0px); transform: translateY(0); }
+  }
+  .about-card {
+    opacity: 0;
+    animation: about-card-in 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  @keyframes about-backdrop-out {
+    0%   { background: rgba(0,0,0,0.5); backdrop-filter: blur(7px); }
+    100% { background: rgba(0,0,0,0);   backdrop-filter: blur(0px); }
+  }
+  .about-backdrop-out {
+    animation: about-backdrop-out 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+
+  @keyframes about-card-out {
+    0%   { opacity: 1; filter: blur(0px); transform: translateY(0); }
+    100% { opacity: 0; filter: blur(8px); transform: translateY(12px); }
+  }
+  .about-card-out {
+    animation: about-card-out 0.5s cubic-bezier(0.4, 0, 1, 1) forwards;
   }
   :global(input[type="checkbox"]) {
     transform: scale(1.25);

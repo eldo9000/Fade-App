@@ -319,7 +319,7 @@
           <div class="flex-1 min-w-0">
             <p class="text-[12px] font-medium truncate leading-tight
                       {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
-               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="text-[var(--text-secondary)]">.{item.ext}</span>{/if}</p>
+               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="text-[var(--text-secondary)] opacity-70">.{item.ext}</span>{/if}</p>
             {#if item.status === 'error'}
               {@render errorBlock(item)}
             {/if}
@@ -327,7 +327,7 @@
           <!-- Col 3 compact: ext (left-justified inside its own column) + hover actions overlay. -->
           <div class="relative shrink-0 min-w-[32px] flex items-center justify-start">
             {#if item.ext && showExtColumn}
-              <span class="text-[11px] leading-tight text-[var(--text-secondary)]
+              <span class="text-[11px] leading-tight text-[var(--text-secondary)] opacity-70
                            group-hover:opacity-0 transition-opacity">{item.ext}</span>
             {/if}
             {@render hoverActions(item)}
@@ -342,7 +342,7 @@
                       {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
                title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
             {#if item.ext}
-              <p class="text-[13px] leading-tight text-[var(--text-secondary)] truncate">{item.ext}</p>
+              <p class="text-[13px] leading-tight text-[var(--text-secondary)] opacity-70 truncate">{item.ext}</p>
             {/if}
             {#if item.status === 'error'}
               {@render errorBlock(item)}
