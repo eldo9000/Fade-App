@@ -317,11 +317,12 @@ jobs:
               ;;
             windows-x86_64)
               BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-              cp "$BUNDLE"/msi/Fade_${VERSION}_x64_en-US.msi              "$STAGE/"
-              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.exe             "$STAGE/" || true
-              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.nsis.zip        "$STAGE/"
-              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.nsis.zip.sig    "$STAGE/"
-              SIG_FILE="$STAGE/Fade_${VERSION}_x64-setup.nsis.zip.sig"
+              # Tauri v2 produces an NSIS setup .exe with its updater .sig
+              # directly (no .nsis.zip wrapper). Ship MSI + NSIS + NSIS sig.
+              cp "$BUNDLE"/msi/Fade_${VERSION}_x64_en-US.msi           "$STAGE/"
+              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.exe          "$STAGE/"
+              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.exe.sig      "$STAGE/"
+              SIG_FILE="$STAGE/Fade_${VERSION}_x64-setup.exe.sig"
               ;;
           esac
 
@@ -412,7 +413,7 @@ jobs:
 
           DARWIN_SIG_FILE="dist/fade-sig-darwin-aarch64/Fade.app.tar.gz.sig"
           LINUX_SIG_FILE="dist/fade-sig-linux-x86_64/Fade_${VERSION}_amd64.AppImage.sig"
-          WINDOWS_SIG_FILE="dist/fade-sig-windows-x86_64/Fade_${VERSION}_x64-setup.nsis.zip.sig"
+          WINDOWS_SIG_FILE="dist/fade-sig-windows-x86_64/Fade_${VERSION}_x64-setup.exe.sig"
 
           for f in "$DARWIN_SIG_FILE" "$LINUX_SIG_FILE" "$WINDOWS_SIG_FILE"; do
             if [ ! -s "$f" ]; then
@@ -442,7 +443,7 @@ jobs:
               },
               'windows-x86_64': {
                 signature: fs.readFileSync(process.env.WINDOWS_SIG_FILE, 'utf8'),
-                url: base + 'Fade_' + v + '_x64-setup.nsis.zip',
+                url: base + 'Fade_' + v + '_x64-setup.exe',
               },
             },
           };
