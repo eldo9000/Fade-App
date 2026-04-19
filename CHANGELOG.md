@@ -9,16 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Infrastructure
+
+## [0.2.2] - 2026-04-18
+
+### Added
+
 - 3D model conversion via `assimp` CLI. Input + output formats: OBJ, STL,
   PLY, glTF, GLB, COLLADA (.dae), FBX (ASCII only — binary FBX requires
   the proprietary Autodesk SDK), 3DS, X3D. Binary variants preferred
   where available (STL → stlb, PLY → plyb, glTF → glb2). Requires
   `assimp` on PATH; `.deb`/`.rpm` depends now include `assimp-utils` /
   `assimp`. macOS/Windows users install via brew/scoop.
+- Proxy folders, quick output controls, separator in output naming.
 
 ### Changed
 
-### Fixed
+- Flattened `.btn-bevel` (removed hard-edge doubling shadow + :active
+  translate), promoted the format chip in the convert bar to match.
+- Version stamp in the right-panel footer pulses slowly between 20%
+  white and accent (20s cycle).
 
 ### Infrastructure
 
@@ -128,6 +142,7 @@ data, document, and archive conversion, plus a redesigned queue-driven UI.
   invoking the signer.
 - Bumped to v0.2.0.
 
-[Unreleased]: https://github.com/eldo9000/Fade-App/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/eldo9000/Fade-App/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/eldo9000/Fade-App/releases/tag/v0.2.2
 [0.2.1]: https://github.com/eldo9000/Fade-App/releases/tag/v0.2.1
 [0.2.0]: https://github.com/eldo9000/Fade-App/releases/tag/v0.2.0
