@@ -148,21 +148,15 @@ pub fn run(
         let mut anull_idx = 0usize;
 
         for (i, &has_a) in has_audio.iter().enumerate() {
-            filter_parts.push(format!(
-                "[{i}:v]setpts=PTS-STARTPTS[v{i}]"
-            ));
+            filter_parts.push(format!("[{i}:v]setpts=PTS-STARTPTS[v{i}]"));
             concat_v_inputs.push_str(&format!("[v{i}]"));
 
             if has_a {
-                filter_parts.push(format!(
-                    "[{i}:a]asetpts=PTS-STARTPTS[a{i}]"
-                ));
+                filter_parts.push(format!("[{i}:a]asetpts=PTS-STARTPTS[a{i}]"));
                 concat_a_inputs.push_str(&format!("[a{i}]"));
             } else {
                 // Synthesize silence for this segment
-                filter_parts.push(format!(
-                    "anullsrc=r=44100:cl=stereo[null{anull_idx}]"
-                ));
+                filter_parts.push(format!("anullsrc=r=44100:cl=stereo[null{anull_idx}]"));
                 concat_a_inputs.push_str(&format!("[null{anull_idx}]"));
                 anull_idx += 1;
             }
@@ -198,14 +192,7 @@ pub fn run(
 
     // Run FFmpeg inline (same pattern as run_ffmpeg helper but we need the
     // concat-list cleanup to happen after the process exits, not in a thread)
-    run_ffmpeg_merge(
-        window,
-        job_id,
-        &args,
-        total_duration,
-        processes,
-        cancelled,
-    )
+    run_ffmpeg_merge(window, job_id, &args, total_duration, processes, cancelled)
 }
 
 /// Identical to the shared `run_ffmpeg` helper; duplicated here so the merge

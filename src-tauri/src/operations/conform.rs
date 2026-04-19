@@ -110,9 +110,9 @@ pub fn run(
     job_id: &str,
     input_path: &str,
     output_path: &str,
-    fps: Option<String>,      // None = source; else UI string ("23.976", "60", ...)
+    fps: Option<String>, // None = source; else UI string ("23.976", "60", ...)
     resolution: Option<String>, // None = source; else "1920x1080"
-    pix_fmt: Option<String>,    // None = source
+    pix_fmt: Option<String>, // None = source
     fps_algo: FpsAlgo,
     scale_algo: ScaleAlgo,
     dither: bool,
@@ -186,11 +186,7 @@ pub fn run(
     }
 
     // ── Build ffmpeg args ─────────────────────────────────────────────────
-    let mut args: Vec<String> = vec![
-        "-y".to_string(),
-        "-i".to_string(),
-        input_path.to_string(),
-    ];
+    let mut args: Vec<String> = vec!["-y".to_string(), "-i".to_string(), input_path.to_string()];
 
     if !filters.is_empty() {
         args.push("-vf".to_string());
@@ -198,20 +194,33 @@ pub fn run(
     }
 
     // Video encoder — high-quality intermediate.
-    args.extend([
-        "-c:v", "libx264",
-        "-crf", "17",
-        "-preset", "slow",
-        "-pix_fmt", pix_fmt.as_deref().unwrap_or("yuv420p"),
-        // Audio: stream-copy (conform touches video only).
-        "-c:a", "copy",
-        // Keep subtitles / data streams untouched.
-        "-map", "0",
-        "-c:s", "copy",
-        "-c:d", "copy",
-        // Progress reporting to stdout.
-        "-progress", "pipe:1",
-    ].into_iter().map(String::from));
+    args.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-crf",
+            "17",
+            "-preset",
+            "slow",
+            "-pix_fmt",
+            pix_fmt.as_deref().unwrap_or("yuv420p"),
+            // Audio: stream-copy (conform touches video only).
+            "-c:a",
+            "copy",
+            // Keep subtitles / data streams untouched.
+            "-map",
+            "0",
+            "-c:s",
+            "copy",
+            "-c:d",
+            "copy",
+            // Progress reporting to stdout.
+            "-progress",
+            "pipe:1",
+        ]
+        .into_iter()
+        .map(String::from),
+    );
 
     args.push(output_path.to_string());
 

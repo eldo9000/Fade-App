@@ -34,8 +34,8 @@ pub fn run(
         .unwrap_or("aac");
 
     // PCM codecs are not valid in MP4/M4V/MOV containers
-    let needs_transcode = matches!(out_ext.as_str(), "mp4" | "m4v" | "mov")
-        && audio_codec.starts_with("pcm_");
+    let needs_transcode =
+        matches!(out_ext.as_str(), "mp4" | "m4v" | "mov") && audio_codec.starts_with("pcm_");
 
     let audio_codec_args: Vec<String> = if needs_transcode {
         vec![

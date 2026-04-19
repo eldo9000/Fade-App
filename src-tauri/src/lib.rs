@@ -675,10 +675,7 @@ fn diag_load(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
         return Ok(vec![]);
     }
     let f = std::fs::File::open(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
-    let lines: Vec<String> = BufReader::new(f)
-        .lines()
-        .map_while(Result::ok)
-        .collect();
+    let lines: Vec<String> = BufReader::new(f).lines().map_while(Result::ok).collect();
     let start = lines.len().saturating_sub(DIAG_LOAD_MAX);
     let mut out = Vec::with_capacity(lines.len() - start);
     for l in &lines[start..] {
@@ -916,16 +913,34 @@ fn run_operation(
 
         match result {
             Ok(Some(out)) => {
-                let _ = window.emit("job-done", JobDone { job_id, output_path: out });
+                let _ = window.emit(
+                    "job-done",
+                    JobDone {
+                        job_id,
+                        output_path: out,
+                    },
+                );
             }
             Ok(None) => {
-                let _ = window.emit("job-done", JobDone { job_id, output_path: String::new() });
+                let _ = window.emit(
+                    "job-done",
+                    JobDone {
+                        job_id,
+                        output_path: String::new(),
+                    },
+                );
             }
             Err(msg) if msg == "CANCELLED" => {
                 let _ = window.emit("job-cancelled", JobCancelled { job_id });
             }
             Err(msg) => {
-                let _ = window.emit("job-error", JobError { job_id, message: msg });
+                let _ = window.emit(
+                    "job-error",
+                    JobError {
+                        job_id,
+                        message: msg,
+                    },
+                );
             }
         }
     });

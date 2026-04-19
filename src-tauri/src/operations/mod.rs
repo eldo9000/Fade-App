@@ -234,9 +234,7 @@ pub(crate) fn check_codec_container_compat(
                 }
             }
             "avi" => {
-                return Some(
-                    "AVI does not support subtitle streams — use MKV".to_string(),
-                );
+                return Some("AVI does not support subtitle streams — use MKV".to_string());
             }
             _ => {}
         }
@@ -267,4 +265,3 @@ pub(crate) fn ext_of(path: &str) -> String {
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default()
 }
-
