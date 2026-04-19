@@ -105,6 +105,37 @@
   let silenceThresholdDb = $state(-30);  // -dB below which counts as silence
   let silenceMinDurS     = $state(0.5);  // gaps shorter than this are kept
   let silencePadMs       = $state(100);  // leave N ms of silence around keeps
+  // ── Intact stream-copy tools ───────────────────────────────────────────
+  let metadataStripMode  = $state('all');      // 'all' · 'title'
+  let metadataStripTitle = $state('');         // new title when mode==='title'
+  let loopCount          = $state(2);          // 2..=50 total playthroughs
+  // ── Video processing filters ───────────────────────────────────────────
+  let rotateFlipMode     = $state('cw90');     // 'cw90' · 'ccw90' · '180' · 'hflip' · 'vflip'
+  let speedPreset        = $state('1');        // preset id: '0.5'|'0.75'|'1'|'1.25'|'1.5'|'2'|'custom'
+  let speedCustom        = $state(1.0);
+  let fadeInS            = $state(0.5);
+  let fadeOutS           = $state(0.5);
+  let deinterlaceMode    = $state('yadif');    // 'yadif' · 'yadif_double' · 'bwdif'
+  let denoisePreset      = $state('medium');   // 'light' · 'medium' · 'strong'
+  // ── Frame / image tools ────────────────────────────────────────────────
+  let thumbnailTime      = $state('00:00:01');
+  let thumbnailFormat    = $state('jpeg');     // 'jpeg' · 'png' · 'webp'
+  let contactGridCols    = $state(4);
+  let contactGridRows    = $state(6);
+  let contactFrames      = $state(24);
+  let frameExportMode    = $state('fps');      // 'fps' · 'interval'
+  let frameExportFps     = $state(1);
+  let frameExportInterval = $state(5);
+  let frameExportFormat  = $state('jpeg');     // 'jpeg' · 'png' · 'webp'
+  let watermarkPath      = $state(null);
+  let watermarkCorner    = $state('br');       // 'tl' · 'tr' · 'bl' · 'br' · 'center'
+  let watermarkOpacity   = $state(0.8);
+  let watermarkScale     = $state(15);         // % of video width
+  // ── Audio processing ───────────────────────────────────────────────────
+  let volumeGainDb       = $state(0);          // -30..+20
+  let channelToolsMode   = $state('stereo_to_mono'); // 'stereo_to_mono' · 'swap' · 'mute_l' · 'mute_r' · 'mono_to_stereo'
+  let padSilenceHead     = $state(0);          // seconds
+  let padSilenceTail     = $state(0);          // seconds
   // ── Analysis ops ───────────────────────────────────────────────────────
   // All seven analysis tools share the same pattern: inputs + Run + results panel.
   // Backend wiring lands in Phase 2; for now the Run buttons are inert stubs.
@@ -159,6 +190,27 @@
     { id: 'subtitling',     label: 'Subtitling' },
     { id: 'video-inserts',  label: 'Video Inserts' },
     { id: 'silence-remove', label: 'Silence Remover' },
+    // Intact stream-copy tools (group 1).
+    { id: 'remove-audio',   label: 'Remove Audio' },
+    { id: 'remove-video',   label: 'Remove Video' },
+    { id: 'metadata-strip', label: 'Strip Metadata' },
+    { id: 'loop',           label: 'Loop' },
+    // Video processing filters (group 2).
+    { id: 'rotate-flip',    label: 'Rotate / Flip' },
+    { id: 'reverse',        label: 'Reverse' },
+    { id: 'speed',          label: 'Speed' },
+    { id: 'fade',           label: 'Fade In/Out' },
+    { id: 'deinterlace',    label: 'Deinterlace' },
+    { id: 'denoise',        label: 'Denoise' },
+    // Frame / image tools (group 3).
+    { id: 'thumbnail',      label: 'Thumbnail' },
+    { id: 'contact-sheet',  label: 'Contact Sheet' },
+    { id: 'frame-export',   label: 'Frame Export' },
+    { id: 'watermark',      label: 'Watermark' },
+    // Audio processing (group 4).
+    { id: 'volume',         label: 'Volume Gain' },
+    { id: 'channel-tools',  label: 'Channel Tools' },
+    { id: 'pad-silence',    label: 'Pad Silence' },
     // Analysis ops — reports, no output file.
     { id: 'loudness',       label: 'Loudness & True Peak' },
     { id: 'audio-norm',     label: 'Audio Normalize' },
@@ -1627,6 +1679,63 @@
     }
   }
 
+  // ── Generic op runner — wraps boilerplate around run_operation invoke ────
+  async function _runOp({ payload, suffix, outExt, label, requireVideo = false }) {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    if (requireVideo && selectedItem.mediaType !== 'video') {
+      setStatus(`${label}: video file required`, 'error');
+      return;
+    }
+    const ext = outExt || selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
+    const outPath = expectedOutputPath(selectedItem, ext, suffix, outputDir, outputSeparator);
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: { ...payload, input_path: selectedItem.path, output_path: outPath },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`${label} failed: ${err}`, 'error');
+    }
+  }
+
+  async function runRemoveAudio() {
+    const outExt = selectedItem?.ext || 'mp4';
+    return _runOp({ payload: { type: 'remove_audio' }, suffix: 'noaudio', outExt, label: 'Remove audio' });
+  }
+
+  async function runRemoveVideo() {
+    // Pick an audio container that accepts stream-copied audio of any codec.
+    const outExt = 'mka';
+    return _runOp({ payload: { type: 'remove_video' }, suffix: 'audio-only', outExt, label: 'Remove video' });
+  }
+
+  async function runMetadataStrip() {
+    return _runOp({
+      payload: {
+        type: 'metadata_strip',
+        mode: metadataStripMode,
+        title_value: metadataStripMode === 'title' ? String(metadataStripTitle || '') : null,
+      },
+      suffix: 'stripped',
+      label: 'Metadata strip',
+    });
+  }
+
+  async function runLoop() {
+    const n = Math.max(2, Math.min(50, Number(loopCount) || 2));
+    return _runOp({
+      payload: { type: 'loop', count: n },
+      suffix: `x${n}`,
+      label: 'Loop',
+    });
+  }
+
   // ── Subtitling · analyze tab ──────────────────────────────────────────────
 
   async function runSubLint() {
@@ -2049,6 +2158,10 @@
       { id: 'merge', label: 'Merge', todo: true },
       { id: 'extract', label: 'Extract', todo: true },
       { id: 'subtitling', label: 'Subtitling', todo: true },
+      { id: 'remove-audio', label: 'Remove Audio', todo: true, ops: true },
+      { id: 'remove-video', label: 'Remove Video', todo: true, ops: true },
+      { id: 'metadata-strip', label: 'Strip Metadata', todo: true, ops: true },
+      { id: 'loop', label: 'Loop', todo: true, ops: true },
     ]},
     // Processing — operations that must re-encode the video track (filter
     // chain, fps/res change, pixel alteration, timeline mutation).
@@ -2056,6 +2169,19 @@
       { id: 'conform', label: 'Conform', todo: true },
       { id: 'silence-remove', label: 'Silence Remover' },
       { id: 'video-inserts', label: 'Video Inserts', todo: true },
+      { id: 'rotate-flip', label: 'Rotate / Flip', todo: true, ops: true },
+      { id: 'reverse', label: 'Reverse', todo: true, ops: true },
+      { id: 'speed', label: 'Speed', todo: true, ops: true },
+      { id: 'fade', label: 'Fade In/Out', todo: true, ops: true },
+      { id: 'deinterlace', label: 'Deinterlace', todo: true, ops: true },
+      { id: 'denoise', label: 'Denoise', todo: true, ops: true },
+      { id: 'thumbnail', label: 'Thumbnail', todo: true, ops: true },
+      { id: 'contact-sheet', label: 'Contact Sheet', todo: true, ops: true },
+      { id: 'frame-export', label: 'Frame Export', todo: true, ops: true },
+      { id: 'watermark', label: 'Watermark', todo: true, ops: true },
+      { id: 'volume', label: 'Volume Gain', todo: true, ops: true },
+      { id: 'channel-tools', label: 'Channel Tools', todo: true, ops: true },
+      { id: 'pad-silence', label: 'Pad Silence', todo: true, ops: true },
     ]},
     // Chroma Key — three tiers of background removal / keying.
     //   chroma-ffmpeg : built-in, ffmpeg `chromakey` / `colorkey` filter, clean shots only.
@@ -2245,6 +2371,27 @@
     'subtitling':    ['video'],
     'video-inserts': ['video'],
     'silence-remove': ['video', 'audio'],
+    // Intact stream-copy tools
+    'remove-audio':   ['video'],
+    'remove-video':   ['video'],
+    'metadata-strip': ['video', 'audio'],
+    'loop':           ['video', 'audio'],
+    // Video processing filters
+    'rotate-flip':    ['video'],
+    'reverse':        ['video', 'audio'],
+    'speed':          ['video', 'audio'],
+    'fade':           ['video', 'audio'],
+    'deinterlace':    ['video'],
+    'denoise':        ['video'],
+    // Frame / image tools
+    'thumbnail':      ['video'],
+    'contact-sheet':  ['video'],
+    'frame-export':   ['video'],
+    'watermark':      ['video'],
+    // Audio processing
+    'volume':         ['video', 'audio'],
+    'channel-tools':  ['video', 'audio'],
+    'pad-silence':    ['video', 'audio'],
     // Analysis ops
     'loudness':      ['video', 'audio'],   // needs an audio track
     'audio-norm':    ['video', 'audio'],
@@ -3164,6 +3311,18 @@
                 {:else if selectedOperation === 'silence-remove'}
                   Detect silent gaps and cut them out. Uses ffmpeg <strong class="text-white/80">silenceremove</strong>. Threshold sets the dBFS floor; anything quieter than that for at least the minimum duration is removed. A padding value keeps a bit of silence around each speech region so onsets don't clip.
                   <br/><br/><span class="text-white/35">Tune threshold / min duration / padding and Run. Video stream is re-cut to follow the audio.</span>
+                {:else if selectedOperation === 'remove-audio'}
+                  Strip all audio tracks from a container while stream-copying the video. Uses <strong class="text-white/80">-map 0 -map -0:a -c copy</strong>. Output has the same video codec, container, and metadata — no re-encode.
+                  <br/><br/><span class="text-white/35">Click Run. Subtitles / chapters / attachments pass through unchanged.</span>
+                {:else if selectedOperation === 'remove-video'}
+                  Drop the video track and keep audio stream-copied. Output container is an audio-only Matroska (.mka) because it accepts any audio codec losslessly.
+                  <br/><br/><span class="text-white/35">Click Run. For a specific audio container (mp3/aac/flac), use Extract instead.</span>
+                {:else if selectedOperation === 'metadata-strip'}
+                  Remove container-level metadata and chapters via <strong class="text-white/80">-map_metadata -1</strong>. Streams are copied untouched. Choose whether to wipe every tag, or wipe everything and re-write only a new <code>title</code>.
+                  <br/><br/><span class="text-white/35">Note: this does not touch per-stream metadata inside codec bitstreams (e.g. embedded ID3 inside MP3).</span>
+                {:else if selectedOperation === 'loop'}
+                  Repeat the clip <strong class="text-white/80">N</strong> times end-to-end via <code>-stream_loop</code>. Streams are copied — no re-encode — so output file size is roughly N × input.
+                  <br/><br/><span class="text-white/35">Allowed range: 2–50 playthroughs.</span>
                 {:else if selectedOperation === 'loudness'}
                   Measure <strong class="text-white/80">EBU R128</strong> loudness: integrated LUFS (I), loudness range (LRA), and true-peak (dBTP). Read-only analysis — no file is written. True-peak uses 4× oversampling for accuracy and is slower.
                   <br/><br/><span class="text-white/35">Pick a target preset (broadcast / streaming / Spotify) and Analyze. Results appear below.</span>
@@ -3408,6 +3567,66 @@
                       disabled={!selectedItem || selectedItem.status === 'converting'}
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
                     >Run Silence Remover</button>
+                  </div>
+                {:else if selectedOperation === 'remove-audio'}
+                  <div class="w-full">
+                    <button
+                      onclick={runRemoveAudio}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Remove Audio</button>
+                  </div>
+                {:else if selectedOperation === 'remove-video'}
+                  <div class="w-full">
+                    <button
+                      onclick={runRemoveVideo}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Remove Video</button>
+                  </div>
+                {:else if selectedOperation === 'metadata-strip'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <button onclick={() => metadataStripMode = 'all'}
+                        class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                               {metadataStripMode === 'all' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                      >Strip all</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => metadataStripMode = 'title'}
+                        class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                               {metadataStripMode === 'title' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                      >Keep title only</button>
+                    </div>
+                    {#if metadataStripMode === 'title'}
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 flex-1 min-w-[140px]">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Title</label>
+                        <input type="text" bind:value={metadataStripTitle}
+                               placeholder="New title"
+                               class="flex-1 bg-transparent text-[12px] text-white outline-none"/>
+                      </div>
+                    {/if}
+                  </div>
+                  <div class="w-full">
+                    <button
+                      onclick={runMetadataStrip}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Strip Metadata</button>
+                  </div>
+                {:else if selectedOperation === 'loop'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Count</label>
+                      <input type="number" min="2" max="50" step="1" bind:value={loopCount}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button
+                      onclick={runLoop}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Loop</button>
                   </div>
                 {:else if selectedOperation === 'loudness'}
                   <!-- Row 1: target preset + true-peak toggle -->

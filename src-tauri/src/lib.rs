@@ -849,6 +849,28 @@ enum OperationPayload {
         scale_algo: operations::conform::ScaleAlgo,
         dither: bool,
     },
+    RemoveAudio {
+        input_path: String,
+        output_path: String,
+    },
+    RemoveVideo {
+        input_path: String,
+        output_path: String,
+    },
+    MetadataStrip {
+        input_path: String,
+        output_path: String,
+        /// "all" strips everything; "title" strips everything but re-writes
+        /// the container title tag with `title_value`.
+        mode: String,
+        title_value: Option<String>,
+    },
+    Loop {
+        input_path: String,
+        output_path: String,
+        /// Total playthroughs (2..=50).
+        count: u32,
+    },
 }
 
 /// Run a mechanical video/audio operation.
@@ -1013,6 +1035,64 @@ fn run_operation(
                 *threshold_db,
                 *min_silence_s,
                 *pad_ms,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::RemoveAudio {
+                input_path,
+                output_path,
+            } => operations::remove_audio::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::RemoveVideo {
+                input_path,
+                output_path,
+            } => operations::remove_video::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::MetadataStrip {
+                input_path,
+                output_path,
+                mode,
+                title_value,
+            } => operations::metadata_strip::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                mode,
+                title_value.as_deref(),
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Loop {
+                input_path,
+                output_path,
+                count,
+            } => operations::loop_op::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *count,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             )
