@@ -1,8 +1,8 @@
 //! Font conversion pipeline — shells out to `fonttools` (Python) via a
-//! small inline script. `TTFont` auto-detects the input flavor and `.flavor`
-//! + `.save()` picks the output wrapping (woff/woff2/raw sfnt). Follows the
-//! shape of `convert::model` since the tool runs to completion without
-//! streaming progress.
+//! small inline script. `TTFont` auto-detects the input flavor and setting
+//! `.flavor` before `.save()` picks the output wrapping (woff/woff2/raw
+//! sfnt). Follows the shape of `convert::model` since the tool runs to
+//! completion without streaming progress.
 //!
 //! Known limit: ttf↔otf does NOT re-encode the underlying outline table
 //! (glyf vs. CFF). The sfnt container is re-wrapped but the inner outline
