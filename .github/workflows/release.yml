@@ -306,11 +306,14 @@ jobs:
               ;;
             linux-x86_64)
               BUNDLE="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle"
-              cp "$BUNDLE"/deb/fade_${VERSION}_amd64.deb                    "$STAGE/"
-              cp "$BUNDLE"/appimage/fade_${VERSION}_amd64.AppImage          "$STAGE/"
-              cp "$BUNDLE"/appimage/fade_${VERSION}_amd64.AppImage.tar.gz   "$STAGE/"
-              cp "$BUNDLE"/appimage/fade_${VERSION}_amd64.AppImage.tar.gz.sig "$STAGE/"
-              SIG_FILE="$STAGE/fade_${VERSION}_amd64.AppImage.tar.gz.sig"
+              # tauri v2 names Linux artifacts Fade_<ver>_amd64.* (capital F)
+              # and the AppImage updater sig is .AppImage.sig (no .tar.gz wrapper).
+              echo "--- linux bundle contents ---"
+              find "$BUNDLE" -maxdepth 3 -type f | sort
+              cp "$BUNDLE"/deb/Fade_${VERSION}_amd64.deb              "$STAGE/"
+              cp "$BUNDLE"/appimage/Fade_${VERSION}_amd64.AppImage    "$STAGE/"
+              cp "$BUNDLE"/appimage/Fade_${VERSION}_amd64.AppImage.sig "$STAGE/"
+              SIG_FILE="$STAGE/Fade_${VERSION}_amd64.AppImage.sig"
               ;;
             windows-x86_64)
               BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
@@ -408,7 +411,7 @@ jobs:
           fi
 
           DARWIN_SIG_FILE="dist/fade-sig-darwin-aarch64/Fade.app.tar.gz.sig"
-          LINUX_SIG_FILE="dist/fade-sig-linux-x86_64/fade_${VERSION}_amd64.AppImage.tar.gz.sig"
+          LINUX_SIG_FILE="dist/fade-sig-linux-x86_64/Fade_${VERSION}_amd64.AppImage.sig"
           WINDOWS_SIG_FILE="dist/fade-sig-windows-x86_64/Fade_${VERSION}_x64-setup.nsis.zip.sig"
 
           for f in "$DARWIN_SIG_FILE" "$LINUX_SIG_FILE" "$WINDOWS_SIG_FILE"; do
@@ -435,7 +438,7 @@ jobs:
               },
               'linux-x86_64': {
                 signature: fs.readFileSync(process.env.LINUX_SIG_FILE, 'utf8'),
-                url: base + 'fade_' + v + '_amd64.AppImage.tar.gz',
+                url: base + 'Fade_' + v + '_amd64.AppImage',
               },
               'windows-x86_64': {
                 signature: fs.readFileSync(process.env.WINDOWS_SIG_FILE, 'utf8'),
