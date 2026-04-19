@@ -2,6 +2,7 @@ const KEY = 'fade-settings';
 
 const DEFAULTS = {
   notifyUpdates: true,
+  notifyFrequency: 'weekly',     // hard-coded for now; UI hidden
   autoUpdate: false,
   vizDefault: 'no',
   limiterAuto: false,

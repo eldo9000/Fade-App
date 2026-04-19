@@ -769,8 +769,9 @@
   let playFrac = $derived(duration ? Math.max(0, Math.min(1, currentTime / duration)) : 0);
 
   // ── Silence padding fractions (relative to total displayed width) ─────────
-  let padFrontSecs   = $derived(options?.pad_front ?? 0);
-  let padEndSecs     = $derived(options?.pad_end   ?? 0);
+  // Silence padding only applies to audio output; suppress for video.
+  let padFrontSecs   = $derived(item?.mediaType === 'video' ? 0 : (options?.pad_front ?? 0));
+  let padEndSecs     = $derived(item?.mediaType === 'video' ? 0 : (options?.pad_end   ?? 0));
   let totalDispSecs  = $derived((duration ?? 0) + padFrontSecs + padEndSecs);
   let silFrontFrac   = $derived(totalDispSecs > 0 ? padFrontSecs / totalDispSecs : 0);
   let silEndFrac     = $derived(totalDispSecs > 0 ? padEndSecs   / totalDispSecs : 0);
@@ -907,17 +908,15 @@
     }
     if (!dragging || !duration) return;
     const f = getFrac(e);
-    // Trim may extend into silence padding on either side; fractions are relative to audio duration.
-    const loFrac = -padFrontSecs / duration;
-    const hiFrac = 1 + padEndSecs / duration;
+    // Clamp trim to actual audio range — silence padding is not croppable.
     if (dragging === 'start') {
       // Block against trim_end and against the fade-in handle hitting fade-out.
       const maxF = Math.min(endFrac, fadeOutFrac - (options?.fade_in ?? 0) / duration);
-      options.trim_start = fracToSecs(Math.max(loFrac, Math.min(f, maxF)));
+      options.trim_start = fracToSecs(Math.max(0, Math.min(f, maxF)));
     }
     else if (dragging === 'end') {
       const minF = Math.max(startFrac, fadeInFrac + (options?.fade_out ?? 0) / duration);
-      options.trim_end = fracToSecs(Math.min(hiFrac, Math.max(f, minF)));
+      options.trim_end = fracToSecs(Math.min(1, Math.max(f, minF)));
     }
     else if (dragging === 'fade_in') {
       // Horizontal: block against fade-out handle.
@@ -1097,8 +1096,8 @@
            oncontextmenu={(e) => { if (zoom > 1) e.preventDefault(); }}>
       <!-- Zoom/pan transform layer -->
       <div class="absolute inset-y-0" style="left:{leftPct}%; width:{widthPct}%; transition:left 0.18s ease, width 0.18s ease">
-      <!-- Silence region: front -->
-      {#if silFrontFrac > 0}
+      <!-- Silence region: front (audio only) -->
+      {#if silFrontFrac > 0 && item?.mediaType !== 'video'}
         <div class="absolute inset-y-0 left-0 rounded-l overflow-hidden pointer-events-none"
              style="width:{silFrontFrac * 100}%; background:#0e0e0e; border-right:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease">
           <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 10 100" xmlns="http://www.w3.org/2000/svg">
@@ -1106,8 +1105,8 @@
           </svg>
         </div>
       {/if}
-      <!-- Silence region: end -->
-      {#if silEndFrac > 0}
+      <!-- Silence region: end (audio only) -->
+      {#if silEndFrac > 0 && item?.mediaType !== 'video'}
         <div class="absolute inset-y-0 right-0 rounded-r overflow-hidden pointer-events-none"
              style="width:{silEndFrac * 100}%; background:#0e0e0e; border-left:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease">
           <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 10 100" xmlns="http://www.w3.org/2000/svg">

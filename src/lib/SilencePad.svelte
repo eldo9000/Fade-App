@@ -30,6 +30,7 @@
     <input type="range" min="0" max="100" step="0.1"
            bind:value={frontPos}
            aria-label="Extend front silence"
+           data-tooltip="Prepend silence before the audio starts. Curve is exponential — fine control near 0, coarser near 60s."
            style="direction: rtl"
            class="w-full accent-[var(--accent)] cursor-ew-resize" />
     <div class="flex justify-between items-center px-0.5">
@@ -46,6 +47,7 @@
     <input type="range" min="0" max="100" step="0.1"
            bind:value={endPos}
            aria-label="Extend end silence"
+           data-tooltip="Append silence after the audio ends. Curve is exponential — fine control near 0, coarser near 60s."
            class="w-full accent-[var(--accent)] cursor-ew-resize" />
     <div class="flex justify-between items-center px-0.5">
       <span class="text-[10px] text-[var(--text-secondary)] uppercase tracking-wide">End →</span>

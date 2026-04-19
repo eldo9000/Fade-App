@@ -7,7 +7,7 @@
 
 <FormatPicker bind:options {formats} ariaLabel="Data conversion options">
   {#if options.output_format === 'json'}
-    <fieldset>
+    <fieldset data-tooltip="Indent JSON with newlines and 2-space indentation for readability — unchecked emits compact single-line JSON">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Formatting</legend>
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" bind:checked={options.pretty_print} class="accent-[var(--accent)]" />
@@ -16,7 +16,7 @@
     </fieldset>
   {/if}
   {#if options.output_format === 'csv'}
-    <fieldset>
+    <fieldset data-tooltip="Field separator — comma is standard · semicolon common in European locales · tab for TSV · pipe for data with commas">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Delimiter</legend>
       <div class="flex gap-2">
         {#each [',', ';', '\t', '|'] as d}

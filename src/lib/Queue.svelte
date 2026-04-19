@@ -1,7 +1,83 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  let { queue, selectedId, onselect, onremove, oncancel, compatibleTypes = [], compact = false, showExtColumn = true } = $props();
+  let { queue, selectedId, selectedIds = new Set(), onselect, onremove, oncancel, ontogglefolder, onmovetofolder, ondragstartfile, ondragendfile, compatibleTypes = [], compact = false, showExtColumn = true, disableHoverInfo = false } = $props();
+
+  // Two-pass layout: top-level rows (root files + folders) and a per-folder
+  // child list. Folders always render; their children render only when
+  // expanded. Folders themselves are never marked incompatible.
+  let topLevel = $derived(queue.filter(q => q.kind === 'folder' || !q.parentId));
+  function childrenOf(folderId) {
+    return queue.filter(q => q.kind === 'file' && q.parentId === folderId);
+  }
+
+  function isSelected(id) { return selectedIds.has(id) || selectedId === id; }
+
+  // Drag-to-folder is implemented with pointer events instead of HTML5 drag
+  // because Tauri's webview swallows / mis-routes drag events for intra-app
+  // payloads. Pointer events always fire reliably and let us hit-test
+  // ourselves with `elementFromPoint`.
+  let draggingId       = $state(null);
+  let dragOverFolder   = $state(null);
+  let _dragGhostX      = $state(0);
+  let _dragGhostY      = $state(0);
+  let _dragGhostLabel  = $state('');
+  let _pointerStart    = null;          // { id, x, y } captured on pointerdown
+  let _suppressNextClick = false;
+  const DRAG_THRESHOLD = 5;             // px before pointermove counts as drag
+
+  function onRowPointerDown(e, item) {
+    if (e.button !== 0) return;
+    if (!item || item.kind !== 'file') return;
+    _pointerStart = { id: item.id, x: e.clientX, y: e.clientY, label: item.name };
+    window.addEventListener('pointermove', _onWindowPointerMove);
+    window.addEventListener('pointerup',   _onWindowPointerUp, { once: true });
+  }
+  function _onWindowPointerMove(e) {
+    if (!_pointerStart) return;
+    if (!draggingId) {
+      const dx = e.clientX - _pointerStart.x;
+      const dy = e.clientY - _pointerStart.y;
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      // Past threshold — promote to a drag.
+      draggingId        = _pointerStart.id;
+      _dragGhostLabel   = _pointerStart.label;
+      _suppressNextClick = true;
+      hoveredItem       = null;          // hide info popover during drag
+      ondragstartfile?.(draggingId);
+      document.body.style.cursor = 'grabbing';
+    }
+    _dragGhostX = e.clientX;
+    _dragGhostY = e.clientY;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const folderEl = el?.closest?.('[data-folder-drop]');
+    dragOverFolder = folderEl ? folderEl.getAttribute('data-folder-drop') : null;
+  }
+  function _onWindowPointerUp(e) {
+    window.removeEventListener('pointermove', _onWindowPointerMove);
+    if (draggingId) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const folderEl = el?.closest?.('[data-folder-drop]');
+      const folderId = folderEl?.getAttribute('data-folder-drop') || null;
+      if (folderId) onmovetofolder?.(draggingId, folderId);
+      ondragendfile?.();
+    }
+    draggingId       = null;
+    dragOverFolder   = null;
+    _pointerStart    = null;
+    document.body.style.cursor = '';
+    setTimeout(() => { _suppressNextClick = false; }, 0);
+  }
+
+  function onRowClick(e, item, incompat) {
+    if (incompat) return;
+    if (_suppressNextClick) { _suppressNextClick = false; return; }
+    onselect?.(isSelected(item.id) && selectedIds.size === 1 ? null : item.id, {
+      meta:  e.metaKey,
+      ctrl:  e.ctrlKey,
+      shift: e.shiftKey,
+    });
+  }
 
   /** Traffic-light colour per status. Every item always shows a dot — the
    *  baseline (pending) is a dim gray so the column never visually empty. */
@@ -27,6 +103,7 @@
   // Incompatible = an output format is selected and this item's mediaType
   // isn't in the compat list. Used to block selection and swap popover copy.
   function isIncompatible(item) {
+    if (item.kind === 'folder') return false;
     return compatibleTypes.length > 0 && !compatibleTypes.includes(item.mediaType);
   }
 
@@ -45,6 +122,7 @@
   function _cancelHide() { clearTimeout(_hideTimer); }
 
   function onItemEnter(e, item) {
+    if (disableHoverInfo) return;   // suppress while a proxy folder is selected
     _cancelHide();
     hoveredItem = item;
     hoveredIncompatible = isIncompatible(item);
@@ -57,6 +135,11 @@
     popoverTop  = (r.top + r.height / 2) / z;
     popoverLeft = (r.right + 1) / z;
   }
+  // Force-close any open popover the moment hover info is suppressed (e.g. a
+  // proxy folder gets selected mid-hover) — otherwise the user is left with a
+  // stuck card blocking the drag target.
+  $effect(() => { if (disableHoverInfo) hoveredItem = null; });
+
   function onItemLeave()    { _scheduleHide(); }
   function onPopoverEnter() { _cancelHide(); }
   function onPopoverLeave() { _scheduleHide(); }
@@ -148,22 +231,73 @@
       <p class="text-[11px] text-[var(--text-secondary)]">Drop files or click Browse</p>
     </div>
   {:else}
-    {#each queue as item (item.id)}
+    {#snippet folderRow(item)}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      {@const kids = childrenOf(item.id)}
+      <div
+        role="listitem"
+        data-folder-drop={item.id}
+        onclick={(e) => onRowClick(e, item, false)}
+        class="relative flex items-center gap-2 px-3 py-1 border-b border-[var(--border)] cursor-pointer group transition-colors
+               {!isSelected(item.id) ? 'hover:bg-[var(--surface)]' : ''}
+               {dragOverFolder === item.id ? 'bg-[var(--accent)]/15 ring-1 ring-inset ring-[var(--accent)]' : ''}"
+        style={isSelected(item.id)
+          ? 'background:color-mix(in srgb,var(--accent) 12%,transparent); border-left:2px solid var(--accent); padding-left:10px'
+          : ''}
+      >
+        <button
+          onclick={(e) => { e.stopPropagation(); ontogglefolder?.(item.id); }}
+          class="shrink-0 w-4 h-4 flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          aria-label={item.expanded ? 'Collapse folder' : 'Expand folder'}
+        >
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+               style="transform: rotate({item.expanded ? 90 : 0}deg); transition: transform 0.12s">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+             class="shrink-0 text-[var(--accent)]">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        </svg>
+        <div class="flex-1 min-w-0">
+          <p class="text-[12px] font-medium truncate text-[var(--text-primary)] leading-tight">{item.name}</p>
+          <p class="text-[10px] text-[var(--text-secondary)] leading-tight">
+            {kids.length} file{kids.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <div class="relative shrink-0 w-6 flex items-center justify-end">
+          <button
+            onclick={(e) => { e.stopPropagation(); onremove?.(item.id); }}
+            class="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded
+                   text-[var(--text-secondary)] hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500
+                   transition-all text-[14px]"
+            aria-label="Remove folder"
+          >×</button>
+        </div>
+      </div>
+    {/snippet}
+
+    {#snippet fileRow(item, indent = false)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       {@const _incompat = isIncompatible(item)}
       <div
         role="listitem"
-        onclick={() => { if (!_incompat) onselect?.(selectedId === item.id ? null : item.id); }}
+        onpointerdown={(e) => onRowPointerDown(e, item)}
+        onclick={(e) => onRowClick(e, item, _incompat)}
         onmouseenter={(e) => onItemEnter(e, item)}
         onmouseleave={onItemLeave}
-        class="relative overflow-hidden flex items-center gap-2 px-3 py-1 border-b border-[var(--border)] group transition-colors
+        class="relative overflow-hidden flex items-center gap-2 py-1 border-b border-[var(--border)] group transition-colors
+               {indent ? 'pl-8 pr-3' : 'px-3'}
                {_incompat ? 'cursor-default' : 'cursor-pointer'}
-               {_incompat && selectedId !== item.id ? 'bg-black/40 text-[var(--text-secondary)]/60' : ''}
-               {!_incompat && selectedId !== item.id ? 'hover:bg-[var(--surface)]' : ''}"
-        style={selectedId === item.id
-          ? 'background:color-mix(in srgb,var(--accent) 12%,transparent); border-left:2px solid var(--accent); padding-left:10px'
+               {_incompat && !isSelected(item.id) ? 'bg-black/40 text-[var(--text-secondary)]/60' : ''}
+               {!_incompat && !isSelected(item.id) ? 'hover:bg-[var(--surface)]' : ''}"
+        style={isSelected(item.id)
+          ? 'background:color-mix(in srgb,var(--accent) 12%,transparent); border-left:2px solid var(--accent); padding-left:' + (indent ? '30px' : '10px')
           : ''}
       >
         {#if item.status === 'converting'}
@@ -188,8 +322,8 @@
               {@render errorBlock(item)}
             {/if}
           </div>
-          <!-- Col 3 compact: ext (right) + hover actions overlay. -->
-          <div class="relative shrink-0 min-w-[32px] flex items-center justify-end">
+          <!-- Col 3 compact: ext (left-justified inside its own column) + hover actions overlay. -->
+          <div class="relative shrink-0 min-w-[32px] flex items-center justify-start">
             {#if item.ext && showExtColumn}
               <span class="text-[11px] leading-tight text-[var(--text-secondary)]
                            group-hover:opacity-0 transition-opacity">{item.ext}</span>
@@ -251,9 +385,34 @@
           </div>
         {/if}
       </div>
+    {/snippet}
+
+    {#each topLevel as item (item.id)}
+      {#if item.kind === 'folder'}
+        {@render folderRow(item)}
+        {#if item.expanded}
+          {#each childrenOf(item.id) as child (child.id)}
+            {@render fileRow(child, true)}
+          {/each}
+        {/if}
+      {:else}
+        {@render fileRow(item, false)}
+      {/if}
     {/each}
   {/if}
 </div>
+
+<!-- Drag ghost — follows the cursor while a row is being pointer-dragged -->
+{#if draggingId}
+  <div
+    style="position:fixed; left:{_dragGhostX + 12}px; top:{_dragGhostY + 8}px;
+           pointer-events:none; z-index:2000; background:var(--surface-raised);
+           border:1px solid var(--accent); border-radius:4px;
+           box-shadow:0 4px 12px rgba(0,0,0,0.4);
+           padding:3px 8px; font-size:11px; color:var(--text-primary);
+           max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"
+  >{_dragGhostLabel}</div>
+{/if}
 
 <!-- Info hover popover — fixed so it escapes the sidebar's overflow -->
 {#if hoveredItem}

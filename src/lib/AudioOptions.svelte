@@ -136,7 +136,7 @@
   </fieldset>
 
   <!-- Trim -->
-  <fieldset>
+  <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds. Leave blank to keep that edge. Visual trim handles on the timeline sync to these fields.">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Trim (MM:SS or seconds)
     </legend>
@@ -173,7 +173,7 @@
     {/if}
   </fieldset>
 
-  <fieldset>
+  <fieldset data-tooltip="Prepend and/or append silence to the output. Useful for breathing room or aligning to a beat grid.">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Silence Padding</legend>
     <SilencePad bind:padFront={options.pad_front} bind:padEnd={options.pad_end} />
   </fieldset>
@@ -196,7 +196,7 @@
         <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>V0 best</span><span>V9 smallest</span></div>
       </fieldset>
     {/if}
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo'],['joint','Joint']] as [v, lbl], i}
@@ -206,7 +206,7 @@
     </fieldset>
 
   {:else if options.output_format === 'wav' || options.output_format === 'aiff'}
-    <fieldset>
+    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit'],[32,'32-bit float']] as [v, lbl], i}
@@ -214,7 +214,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -229,7 +229,7 @@
       <input type="range" min="0" max="8" step="1" bind:value={options.flac_compression} class="w-full accent-[var(--accent)]" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>8 smallest</span></div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit']] as [v, lbl], i}
@@ -239,7 +239,7 @@
     </fieldset>
 
   {:else if options.output_format === 'ogg'}
-    <fieldset>
+    <fieldset data-tooltip="VBR — variable bitrate by quality setting · CBR — fixed bitrate · ABR — averages to a target">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['vbr','VBR'],['cbr','CBR'],['abr','ABR']] as [v, lbl], i}
@@ -264,7 +264,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -282,11 +282,12 @@
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 cursor-pointer">
+    <label class="flex items-center gap-2 cursor-pointer"
+           data-tooltip="Opus VBR — allocates more bits to complex passages for better quality at the same average size. Uncheck for fixed bitrate.">
       <input type="checkbox" bind:checked={options.opus_vbr} class="accent-[var(--accent)]" />
       <span class="text-[12px] text-[var(--text-primary)]">Variable bitrate (VBR)</span>
     </label>
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -296,7 +297,7 @@
     </fieldset>
 
   {:else if options.output_format === 'm4a'}
-    <fieldset>
+    <fieldset data-tooltip="AAC — small lossy files, universal compatibility · ALAC — Apple Lossless, same size as FLAC with native iOS/macOS support">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Sub-Codec</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [['aac','AAC (lossy)'],['alac','ALAC (lossless)']] as [v, lbl], i}
@@ -316,7 +317,7 @@
     {/if}
 
   {:else if options.output_format === 'wma'}
-    <fieldset>
+    <fieldset data-tooltip="Standard — stereo lossy · Pro — multi-channel lossy · Lossless — bit-perfect like FLAC but Windows-only">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">WMA Mode</legend>
       <div class="flex flex-col">
         {#each [['standard','Standard'],['pro','Pro (multi-channel)'],['lossless','Lossless']] as [v, lbl], i}
@@ -326,7 +327,7 @@
     </fieldset>
 
   {:else if options.output_format === 'alac'}
-    <fieldset>
+    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit'],[32,'32-bit']] as [v, lbl], i}
@@ -334,7 +335,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -344,7 +345,7 @@
     </fieldset>
 
   {:else if options.output_format === 'ac3'}
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['mono','Mono'],['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
@@ -362,7 +363,7 @@
     </fieldset>
 
   {:else if options.output_format === 'dts'}
-    <fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
@@ -392,7 +393,7 @@
     <div class="space-y-1">
 
       <!-- Limiter -->
-      <div>
+      <div data-tooltip="Hard peak limiter — prevents samples from exceeding the dBFS ceiling you set. −1.0 dBFS typical for streaming safety.">
         <button onclick={() => options.dsp_limiter_db = options.dsp_limiter_db != null ? null : -1.0}
                 class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.dsp_limiter_db != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
@@ -409,7 +410,7 @@
       </div>
 
       <!-- Normalize -->
-      <div>
+      <div data-tooltip="EBU R128 loudness normalisation — matches perceived volume to a LUFS target with a true-peak ceiling. Use for batches that need consistent loudness.">
         <button onclick={() => { options.normalize_loudness = !options.normalize_loudness; if (options.normalize_loudness) { options.normalize_lufs ??= -16; options.normalize_true_peak ??= -1; } }}
                 class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.normalize_loudness ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
@@ -422,11 +423,13 @@
         {#if options.normalize_loudness}
           <div class="mt-1 px-1 space-y-2">
             <!-- LUFS target presets -->
-            <div class="space-y-1">
+            <div class="space-y-1"
+                 data-tooltip="Integrated loudness target. −23 EBU broadcast · −16 Apple Music / YouTube · −14 Spotify · −9 loud podcast. Lower = quieter.">
               <div class="text-[10px] text-[var(--text-secondary)] px-1">Target LUFS</div>
               <div class="flex">
                 {#each [[-23,'Broadcast'],[-16,'Streaming'],[-14,'Streaming+'],[-9,'Podcast']] as [val, label], i}
                   <button onclick={() => options.normalize_lufs = val}
+                          data-tooltip={`${val} LUFS — ${label}`}
                           class={segGrid(i, 4, 4, options.normalize_lufs === val)}>
                     <div class="font-mono text-[10px] leading-tight">{val}</div>
                     <div class="text-[9px] leading-tight opacity-70">{label}</div>
@@ -442,7 +445,8 @@
               </div>
             </div>
             <!-- True peak ceiling -->
-            <div class="space-y-1">
+            <div class="space-y-1"
+                 data-tooltip="Max allowed inter-sample peak (dBTP). −1.0 safe for lossy codecs · −0.1 mastering ceiling · more negative prevents decoder clipping.">
               <div class="text-[10px] text-[var(--text-secondary)] px-1">True Peak Ceiling</div>
               <input type="range" min="-6" max="-0.1" step="0.1"
                      value={options.normalize_true_peak ?? -1}
@@ -458,7 +462,7 @@
       </div>
 
       <!-- Highpass -->
-      <div>
+      <div data-tooltip="Butterworth highpass filter — cuts everything below the cutoff frequency. 80 Hz removes rumble · 120 Hz for voice.">
         <button onclick={() => options.dsp_highpass_freq = options.dsp_highpass_freq != null ? null : 80}
                 class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.dsp_highpass_freq != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
@@ -480,7 +484,7 @@
       </div>
 
       <!-- Lowpass -->
-      <div>
+      <div data-tooltip="Butterworth lowpass filter — cuts everything above the cutoff frequency. Tames harsh highs or simulates bandwidth-limited media.">
         <button onclick={() => options.dsp_lowpass_freq = options.dsp_lowpass_freq != null ? null : 8000}
                 class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.dsp_lowpass_freq != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
@@ -502,7 +506,7 @@
       </div>
 
       <!-- Stereo Width -->
-      <div>
+      <div data-tooltip="Mid/side stereo adjustment. −100 collapses to mono · 0 unchanged · +100 maximum width. Useful for widening narrow mixes or mono-compatibility checks.">
         <button onclick={() => options.dsp_stereo_width = options.dsp_stereo_width != null ? null : 0}
                 class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.dsp_stereo_width != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">

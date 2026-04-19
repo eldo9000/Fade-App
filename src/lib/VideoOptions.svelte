@@ -242,7 +242,7 @@
       </fieldset>
     {/if}
 
-    <fieldset>
+    <fieldset data-tooltip="Output frame rate — 24 film · 25 PAL · 30 NTSC · 60 smooth motion / gaming · Orig keeps source">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Frame Rate</legend>
       <div class="grid" style="grid-template-columns:repeat(5,1fr)">
         {#each ['original','24','25','30','60'] as r, i}
@@ -253,7 +253,7 @@
   {/if}
 
   {#if options.output_format === 'webm'}
-    <fieldset>
+    <fieldset data-tooltip="CRF — quality-based, variable size · CBR — fixed bitrate for streaming · Constrained VBR — VBR capped to a target">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['crf','CRF'],['cbr','CBR'],['cvbr','Constrained VBR']] as [v, lbl], i}
@@ -275,7 +275,7 @@
   {/if}
 
   {#if options.output_format === 'mkv'}
-    <fieldset>
+    <fieldset data-tooltip="None — discard subtitles · Copy — keep as selectable track · Burn-in — render subtitles permanently into the picture">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Subtitle Track</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['none','None'],['copy','Copy'],['burn','Burn-in']] as [v, lbl], i}
@@ -297,7 +297,7 @@
   {/if}
 
   {#if options.output_format === 'gif'}
-    <fieldset data-tooltip="Height auto-scaled to preserve aspect ratio">
+    <fieldset data-tooltip="GIF output width in pixels — height auto-scaled to preserve aspect ratio">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Output Width (px)</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [320, 480, 640, 'original'] as w, i}
@@ -305,7 +305,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="GIF frame rate — lower = smaller file. 10 fps typical for memes · 15 fps smoother · Orig keeps source rate">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Frame Rate</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [5, 10, 15, 'original'] as r, i}
@@ -313,7 +313,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="Infinite — loop forever · Once — play through then stop · No loop — single play in viewers that honor the flag">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Loop</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['infinite','Infinite'],['once','Once'],['none','No loop']] as [v, lbl], i}
@@ -321,7 +321,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="Max colors in the shared palette. 32/64 smaller file · 256 best color fidelity but largest">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Palette Size</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [32, 64, 128, 256] as p, i}
@@ -329,7 +329,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="None — flat banding · Bayer — ordered dither, retro look · Floyd-Steinberg — error diffusion, smoothest but busy">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Dither</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['none','None'],['bayer','Bayer'],['floyd','Floyd-Steinberg']] as [v, lbl], i}
@@ -341,7 +341,7 @@
 
   <!-- ── Audio bitrate (segmented) ─────────────────────────────────────── -->
   {#if !options.remove_audio}
-    <fieldset>
+    <fieldset data-tooltip="Audio track bitrate — 128 standard · 192 music · 256–320 near-transparent. Independent from video bitrate.">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
         Audio Bitrate
       </legend>
@@ -355,7 +355,7 @@
       <p class="text-[11px] text-[var(--text-secondary)] mt-1">kbps</p>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tooltip="Audio sample rate — 48 kHz standard for video · 44.1 kHz CD source · 96 kHz for high-end masters">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
         Sample Rate
       </legend>

@@ -107,6 +107,7 @@ pub struct ConvertOptions {
     pub archive_compression: Option<u32>, // 0-9, zip/gz/7z level
     // Output naming
     pub output_suffix: Option<String>,
+    pub output_separator: Option<String>,
     // Metadata — when false, strip EXIF/tags/etc. None or true = preserve.
     // Applies to image (ImageMagick -strip) and video/audio (ffmpeg -map_metadata -1).
     pub preserve_metadata: Option<bool>,
@@ -205,6 +206,7 @@ impl Default for ConvertOptions {
             archive_operation: None,
             archive_compression: None,
             output_suffix: None,
+            output_separator: None,
             preserve_metadata: None,
 
             channels: None,
@@ -285,7 +287,13 @@ pub(crate) fn probe_duration(path: &str) -> Option<f64> {
 }
 
 /// Build the output path: same dir as input (or output_dir), stem + suffix + new ext.
-fn build_output_path(input: &str, new_ext: &str, output_dir: Option<&str>, suffix: &str) -> String {
+fn build_output_path(
+    input: &str,
+    new_ext: &str,
+    output_dir: Option<&str>,
+    suffix: &str,
+    separator: &str,
+) -> String {
     let p = Path::new(input);
     let stem = p.file_stem().unwrap_or_default().to_string_lossy();
     let dir = output_dir.map(|d| d.to_string()).unwrap_or_else(|| {
@@ -296,7 +304,7 @@ fn build_output_path(input: &str, new_ext: &str, output_dir: Option<&str>, suffi
     if suffix.is_empty() {
         format!("{}/{}.{}", dir, stem, new_ext)
     } else {
-        format!("{}/{}_{}.{}", dir, stem, suffix, new_ext)
+        format!("{}/{}{}{}.{}", dir, stem, separator, suffix, new_ext)
     }
 }
 
@@ -311,6 +319,24 @@ fn validate_suffix(suffix: &str) -> Result<(), String> {
         Err(format!(
             "Invalid suffix '{}': only letters, digits, hyphens, and underscores allowed",
             suffix
+        ))
+    }
+}
+
+/// Validate the separator: at most one safe character (alphanumeric, hyphen, underscore, dot).
+fn validate_separator(sep: &str) -> Result<(), String> {
+    if sep.chars().count() > 1 {
+        return Err(format!("Separator '{}' must be a single character", sep));
+    }
+    if sep
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid separator '{}': only letters, digits, hyphen, underscore, or dot allowed",
+            sep
         ))
     }
 }
@@ -424,8 +450,16 @@ fn convert_file(
 
     let suffix = options.output_suffix.as_deref().unwrap_or("converted");
     validate_suffix(suffix)?;
+    let separator = options.output_separator.as_deref().unwrap_or("_");
+    validate_separator(separator)?;
 
-    let output_path = build_output_path(&input_path, &ext, options.output_dir.as_deref(), suffix);
+    let output_path = build_output_path(
+        &input_path,
+        &ext,
+        options.output_dir.as_deref(),
+        suffix,
+        separator,
+    );
 
     // Register cancellation flag before spawning the thread
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -621,21 +655,32 @@ mod tests {
 
     #[test]
     fn build_output_path_with_suffix() {
-        let result = build_output_path("/home/user/video.mp4", "mkv", None, "converted");
+        let result = build_output_path("/home/user/video.mp4", "mkv", None, "converted", "_");
         assert_eq!(result, "/home/user/video_converted.mkv");
     }
 
     #[test]
     fn build_output_path_empty_suffix() {
-        let result = build_output_path("/home/user/video.mp4", "mkv", None, "");
+        let result = build_output_path("/home/user/video.mp4", "mkv", None, "", "_");
         assert_eq!(result, "/home/user/video.mkv");
     }
 
     #[test]
     fn build_output_path_custom_output_dir() {
-        let result =
-            build_output_path("/home/user/video.mp4", "mp3", Some("/tmp/out"), "converted");
+        let result = build_output_path(
+            "/home/user/video.mp4",
+            "mp3",
+            Some("/tmp/out"),
+            "converted",
+            "_",
+        );
         assert_eq!(result, "/tmp/out/video_converted.mp3");
+    }
+
+    #[test]
+    fn build_output_path_custom_separator() {
+        let result = build_output_path("/home/user/video.mp4", "mkv", None, "proxy", "-");
+        assert_eq!(result, "/home/user/video-proxy.mkv");
     }
 
     // ── validate_suffix ───────────────────────────────────────────────────────

@@ -28,7 +28,11 @@
   const zoom = createZoom();
 
   let queue = $state([]);
-  let selectedId = $state(null);
+  let selectedId = $state(null);                  // primary selection — drives the centre panel
+  let selectedIds = $state(new Set());            // full multi-selection set (highlighted)
+  let selectAnchorId = $state(null);              // shift-range anchor
+  let draggingFileId = $state(null);              // intra-app drag (file → folder)
+  let folderDropHover = $state(false);            // centre-panel drop-zone hover state
   let selectedItem = $derived(queue.find(q => q.id === selectedId) ?? null);
 
   let converting = $state(false);
@@ -80,10 +84,14 @@
         _pendingUpdate = update;
         updateVersion = update.version ?? '';
         updateState = 'available';
+      } else {
+        updateState = 'idle';
       }
     } catch (e) {
-      console.error('[updater] check failed', e);
-      updateState = 'error';
+      // No-op — failed checks should be silent; the user only cares when
+      // an update is actually available.
+      console.warn('[updater] check failed silently', e);
+      updateState = 'idle';
     }
   }
 
@@ -112,8 +120,9 @@
       });
       await relaunch();
     } catch (e) {
-      console.error('[updater] install failed', e);
-      updateState = 'error';
+      // Install errors stay silent; surface only via the install button if needed.
+      console.warn('[updater] install failed silently', e);
+      updateState = 'idle';
     }
   }
 
@@ -789,7 +798,7 @@
       const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
       const mt = mediaTypeFor(ext);
       const id = crypto.randomUUID();
-      const item = { id, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
+      const item = { id, kind: 'file', parentId: null, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
       queue.push(item);
       // Fetch file stats in the background for display in the queue
       if (['video', 'audio', 'image'].includes(mt)) {
@@ -808,9 +817,67 @@
     if (selectedId === id) handleSelect(queue.length > 0 ? queue[0].id : null);
   }
 
+  // ── Batch folders ─────────────────────────────────────────────────────────
+  // UI-only scaffolding for grouping files into a batch-output folder. Each
+  // folder carries its own output options (rename rules, mirror structure,
+  // in-place proxy). Wiring up the actual rendering pipeline is a follow-up.
+
+  let batchFolderCounter = $state(0);
+
+  function addBatchFolder() {
+    batchFolderCounter += 1;
+    const id = crypto.randomUUID();
+    queue.push({
+      id,
+      kind: 'folder',
+      name: `Proxy Folder ${batchFolderCounter}`,
+      expanded: true,
+      status: 'pending',
+      // Placeholder option shape — values are not wired to the render pipeline yet.
+      batchOptions: {
+        renameMode: 'suffix',          // 'suffix' | 'prefix' | 'pattern' | 'keep'
+        renameToken: '_proxy',
+        renamePattern: '{name}_{n}',
+        outputMode: 'mirror',          // 'mirror' | 'inplace' | 'flat'
+        outputRoot: '',
+        preserveStructure: true,
+      },
+    });
+    handleSelect(id);
+  }
+
+  /** Move a queued file into a batch folder (or to root when targetFolderId is null).
+   *  Hard-noop on any unsafe shape — folders never nest, an item never targets
+   *  itself, and a missing/non-folder target is silently ignored. */
+  function moveItemToFolder(itemId, targetFolderId) {
+    if (!itemId || itemId === targetFolderId) return;
+    const idx = queue.findIndex(q => q.id === itemId);
+    if (idx === -1) return;
+    const item = queue[idx];
+    if (item.kind !== 'file') return;             // folders cannot be moved
+    if (targetFolderId) {
+      const target = queue.find(q => q.id === targetFolderId);
+      if (!target || target.kind !== 'folder') return;
+    }
+    if (item.parentId === targetFolderId) return; // already there
+    item.parentId = targetFolderId;
+    if (targetFolderId) {
+      queue.splice(idx, 1);
+      const fIdx = queue.findIndex(q => q.id === targetFolderId);
+      queue.splice(fIdx + 1, 0, item);
+    }
+  }
+
+  function toggleFolderExpanded(id) {
+    const f = queue.find(q => q.id === id);
+    if (f && f.kind === 'folder') f.expanded = !f.expanded;
+  }
+
   function clearQueue() {
     queue = [];
     selectedId = null;
+    selectedIds = new Set();
+    selectAnchorId = null;
     setStatus('', 'info');
     converting = false;
     paused = false;
@@ -859,13 +926,13 @@
 
   // Mirrors src-tauri/src/lib.rs::build_output_path so we can check collisions
   // client-side before invoking convert_file. Keep them in sync.
-  function expectedOutputPath(item, newExt, suffix, outputDirOverride) {
+  function expectedOutputPath(item, newExt, suffix, outputDirOverride, sep = '_') {
     const lastSlash = item.path.lastIndexOf('/');
     const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '.';
     const dir = outputDirOverride ?? parentDir;
     const stem = item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name;
     return suffix
-      ? `${dir}/${stem}_${suffix}.${newExt}`
+      ? `${dir}/${stem}${sep}${suffix}.${newExt}`
       : `${dir}/${stem}.${newExt}`;
   }
 
@@ -902,7 +969,7 @@
     const checked = await Promise.all(compatible.map(async item => ({
       item,
       exists: await invoke('file_exists', {
-        path: expectedOutputPath(item, outExt, outputSuffix, outputDir),
+        path: expectedOutputPath(item, outExt, outputSuffix, outputDir, outputSeparator),
       }).catch(() => false),
     })));
     const willRun     = checked.filter(c => !c.exists).map(c => c.item);
@@ -931,12 +998,12 @@
       item.status = 'converting';
       item.percent = 0;
 
-      const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix, output_dir: outputDir }
-             : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix, output_dir: outputDir }
-             : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: outputSuffix, output_dir: outputDir }
-             : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix, output_dir: outputDir }
-             : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix, output_dir: outputDir }
-             :                                 { ...archiveOptions,   output_suffix: outputSuffix, output_dir: outputDir };
+      const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             :                                 { ...archiveOptions,   output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
 
       invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
         .catch(err => { item.status = 'error'; item.error = String(err); checkAllDone(); });
@@ -946,6 +1013,7 @@
   // ── Drag over window ───────────────────────────────────────────────────────
 
   let outputSuffix = $state('converted');
+  let outputSeparator = $state('_');
   let outputDestMode = $state('source'); // 'source' | 'custom'
   let customOutputDir = $state(null);
   let folderInput = $state(null);
@@ -957,7 +1025,7 @@
   // Used as the source of truth for the queue display AND for Convert All.
   let visibleQueue = $derived.by(() => {
     if (!settings.hideConverted || !outputSuffix) return queue;
-    const suf = `_${outputSuffix}`;
+    const suf = `${outputSeparator}${outputSuffix}`;
     return queue.filter(q => {
       const stem = q.ext ? q.name.slice(0, -(q.ext.length + 1)) : q.name;
       return !stem.endsWith(suf);
@@ -974,9 +1042,17 @@
     e.target.value = '';
   }
 
-  function onWindowDragover(e) { e.preventDefault(); dragOver = true; }
+  function _isExternalFileDrag(e) {
+    return !!e.dataTransfer?.types?.includes('Files');
+  }
+  function onWindowDragover(e) {
+    if (!_isExternalFileDrag(e)) return;   // ignore intra-app row drags
+    e.preventDefault();
+    dragOver = true;
+  }
   function onWindowDragleave(e) { if (!e.relatedTarget) dragOver = false; }
   function onWindowDrop(e) {
+    if (!_isExternalFileDrag(e)) { dragOver = false; return; }
     e.preventDefault();
     dragOver = false;
     const paths = Array.from(e.dataTransfer?.files ?? []).map(f => f.path ?? f.name);
@@ -1275,8 +1351,54 @@
   // All mutations happen synchronously in the same call so Svelte batches them
   // into ONE DOM flush — guaranteed clear before any file I/O begins.
   // Then the async pipeline runs each loading stage in sequence.
-  function handleSelect(id) {
+  function deselectAll() {
+    selectedIds = new Set();
+    selectAnchorId = null;
+    handleSelect(null);
+  }
+
+  /** Items the user is allowed to select (skips folders' incompatible status — folders always selectable). */
+  function _selectableIds() {
+    return visibleQueue
+      .filter(q => q.kind === 'folder' || compatibleTypes.length === 0 || compatibleTypes.includes(q.mediaType))
+      .map(q => q.id);
+  }
+
+  function handleSelect(id, mods = null) {
     settingsOpen = false;
+
+    // Modifier-aware multi-select. Updates selectedIds + anchor, then falls
+    // through to the existing single-selection pipeline using the most-recent id.
+    if (mods && id) {
+      if (mods.shift && selectAnchorId) {
+        const order = _selectableIds();
+        const a = order.indexOf(selectAnchorId);
+        const b = order.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          const range = order.slice(lo, hi + 1);
+          selectedIds = new Set(range);
+        } else {
+          selectedIds = new Set([id]);
+          selectAnchorId = id;
+        }
+      } else if (mods.meta || mods.ctrl) {
+        const next = new Set(selectedIds);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        selectedIds = next;
+        selectAnchorId = id;
+      } else {
+        selectedIds = new Set([id]);
+        selectAnchorId = id;
+      }
+    } else if (id) {
+      selectedIds = new Set([id]);
+      selectAnchorId = id;
+    } else {
+      selectedIds = new Set();
+      selectAnchorId = null;
+    }
+
     const gen = ++_generation;  // cancel any in-flight pipeline
     const newItem = id ? queue.find(q => q.id === id) : null;
     const isMedia = !!(newItem && ['video', 'audio', 'image'].includes(newItem.mediaType));
@@ -1335,7 +1457,7 @@
      ondrop={onWindowDrop}>
 
   <!-- ── Updater banner (floats over the titlebar drag band) ──────────────── -->
-  {#if updateState === 'available' || updateState === 'downloading' || updateState === 'error'}
+  {#if updateState === 'available' || updateState === 'downloading'}
     <div class="absolute top-1 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-md text-[12px] shadow-lg"
          style="background:color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
                 border:1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -1352,12 +1474,6 @@
         >Later</button>
       {:else if updateState === 'downloading'}
         <span>Downloading {updateProgress}%…</span>
-      {:else if updateState === 'error'}
-        <span style="color:var(--text-secondary)">Update check failed</span>
-        <button
-          onclick={dismissUpdate}
-          class="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] text-[11px] hover:text-[var(--text-primary)] transition-colors"
-        >Dismiss</button>
       {/if}
     </div>
   {/if}
@@ -1365,7 +1481,7 @@
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
-    <aside class="{queueCompact ? 'w-[260px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
+    <aside class="{queueCompact ? 'w-[273px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights.
@@ -1374,51 +1490,66 @@
            "control planes" read as a unified band at the top of the app.
            shrink-0 + outer aside's flex-col means the list below scrolls
            underneath it. -->
-      <div class="flex items-center pl-[64px] pr-0 py-1.5 shrink-0"
+      <div class="flex flex-col items-end gap-1 pl-[64px] pr-2 py-1.5 shrink-0"
            data-tauri-drag-region
            style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
                   border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
-        <div class="flex items-stretch rounded overflow-hidden border border-[var(--border)] divide-x divide-[var(--border)]">
+        <!-- Row 1: Clear · Browse · Deselect -->
+        <div class="flex items-stretch gap-1.5 w-fit">
+          <button
+            onclick={clearQueue}
+            disabled={queue.length === 0}
+            class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+          >Clear</button>
           <button
             onclick={onBrowse}
-            class="px-2 py-1 text-[13px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity shrink-0"
+            class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
           >Browse…</button>
-          {#if queue.length > 0}
+          <button
+            onclick={deselectAll}
+            disabled={selectedIds.size === 0}
+            class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+          >Deselect</button>
+        </div>
+        <!-- Row 2: Compact / Expanded view + Proxy Folder -->
+        <div class="flex items-stretch gap-1.5">
+          <!-- Segmented Compact / Expanded -->
+          <div class="btn-segmented flex items-stretch shrink-0">
             <button
-              onclick={clearQueue}
-              class="px-2 py-1 text-[13px] font-semibold text-[var(--text-secondary)]
-                     hover:text-red-400 hover:bg-red-900/20 transition-colors shrink-0"
-            >Clear</button>
-          {/if}
-          <!-- Compact view -->
+              onclick={() => queueCompact = true}
+              title="Compact list"
+              class="btn-bevel btn-seg w-8 flex items-center justify-center {queueCompact ? 'is-active' : 'is-muted'}"
+            >
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
+                <rect y="0"    width="13" height="2" rx="0.5"/>
+                <rect y="3.67" width="13" height="2" rx="0.5"/>
+                <rect y="7.33" width="13" height="2" rx="0.5"/>
+                <rect y="11"   width="13" height="2" rx="0.5"/>
+              </svg>
+            </button>
+            <button
+              onclick={() => queueCompact = false}
+              title="Expanded list"
+              class="btn-bevel btn-seg w-8 flex items-center justify-center {!queueCompact ? 'is-active' : 'is-muted'}"
+            >
+              <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
+                <rect y="0"   width="13" height="3" rx="0.75"/>
+                <rect y="8"   width="13" height="3" rx="0.75"/>
+              </svg>
+            </button>
+          </div>
           <button
-            onclick={() => queueCompact = true}
-            title="Compact list"
-            class="w-8 flex items-center justify-center transition-colors shrink-0
-                   {queueCompact
-                     ? 'text-[var(--accent)] bg-[var(--accent)]/10'
-                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
+            onclick={addBatchFolder}
+            title="Add a proxy folder — batch files together for matched rename / output routing"
+            class="btn-bevel flex items-center gap-1 px-2 py-0.5 text-[11px] shrink-0"
           >
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
-              <rect y="0"    width="13" height="2" rx="0.5"/>
-              <rect y="3.67" width="13" height="2" rx="0.5"/>
-              <rect y="7.33" width="13" height="2" rx="0.5"/>
-              <rect y="11"   width="13" height="2" rx="0.5"/>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <line x1="12" y1="11" x2="12" y2="17"/>
+              <line x1="9" y1="14" x2="15" y2="14"/>
             </svg>
-          </button>
-          <!-- Expanded view -->
-          <button
-            onclick={() => queueCompact = false}
-            title="Expanded list"
-            class="w-8 flex items-center justify-center transition-colors shrink-0
-                   {!queueCompact
-                     ? 'text-[var(--accent)] bg-[var(--accent)]/10'
-                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/6'}"
-          >
-            <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
-              <rect y="0"   width="13" height="3" rx="0.75"/>
-              <rect y="8"   width="13" height="3" rx="0.75"/>
-            </svg>
+            Proxy Folder
           </button>
         </div>
       </div>
@@ -1445,9 +1576,15 @@
       <Queue
         queue={visibleQueue}
         {selectedId}
+        {selectedIds}
         onselect={handleSelect}
         onremove={(id) => removeItem(id)}
         oncancel={(id) => cancelJob(id)}
+        ontogglefolder={toggleFolderExpanded}
+        onmovetofolder={moveItemToFolder}
+        ondragstartfile={(id) => draggingFileId = id}
+        ondragendfile={() => draggingFileId = null}
+        disableHoverInfo={selectedItem?.kind === 'folder'}
         compatibleTypes={compatibleTypes}
         compact={queueCompact}
         showExtColumn={settings.fileTypeColumn}
@@ -1516,6 +1653,57 @@
           </div>
         {/if}
 
+        <!-- Quick output controls — exposed here because Source/Custom dest
+             and the suffix get tweaked far more often than anything else in
+             Settings. Mirrors the same bindings; the Settings panel still has
+             the canonical copy. -->
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-stretch gap-1">
+            <button
+              onclick={() => outputDestMode = 'source'}
+              title="Write outputs alongside the source files"
+              class="flex items-center justify-center px-2 py-1 rounded text-[11px] border transition-colors flex-1 min-w-0
+                     {outputDestMode === 'source'
+                       ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
+                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+            >
+              Source
+            </button>
+            <button
+              onclick={() => { outputDestMode = 'custom'; folderInput?.click(); }}
+              title={customOutputDir ? `Output → ${customOutputDir}` : 'Pick an output folder'}
+              class="flex items-center justify-center px-2 py-1 rounded text-[11px] border transition-colors flex-1 min-w-0
+                     {outputDestMode === 'custom'
+                       ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
+                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+            >
+              Browse
+            </button>
+            <input
+              type="text"
+              bind:value={outputSeparator}
+              maxlength="1"
+              disabled={converting}
+              onfocus={(e) => e.currentTarget.select()}
+              title="Single character placed between filename and suffix (default: _)"
+              class="w-[24px] px-1 py-1 text-[11px] text-center rounded border border-[var(--border)]
+                     bg-[var(--surface)] text-[var(--text-primary)] outline-none font-mono
+                     focus:border-[var(--accent)] transition-colors disabled:opacity-40"
+            />
+            <input
+              type="text"
+              bind:value={outputSuffix}
+              disabled={converting}
+              placeholder="suffix"
+              onfocus={(e) => e.currentTarget.select()}
+              title="Suffix appended to output filenames (e.g. name{outputSeparator}{outputSuffix}.mp4)"
+              class="w-[88px] px-2 py-1 text-[11px] rounded border border-[var(--border)]
+                     bg-[var(--surface)] text-[var(--text-primary)] outline-none font-mono
+                     focus:border-[var(--accent)] transition-colors disabled:opacity-40"
+            />
+          </div>
+        </div>
+
         <!-- Settings button (snug) + status box (fills remaining width, right-aligned) -->
         <div class="flex items-stretch gap-1.5 relative">
           {#if settingsOpen}
@@ -1535,22 +1723,38 @@
             >
               <!-- Section: Updates -->
               <div class="px-4 pt-4 pb-3 border-b border-[var(--border)]">
-                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] mb-3">Updates</p>
-                <div class="flex items-center gap-3">
-                  <label class="flex items-center gap-2 cursor-pointer flex-1">
+                <!-- Header row: "Updates" + inline progress bar filling the rest -->
+                <div class="flex items-center gap-3 mb-3">
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] shrink-0">Updates</p>
+                  <div class="flex-1 h-1.5 rounded-full overflow-hidden bg-[var(--border)]">
+                    <div class="h-full bg-[var(--accent)] transition-all duration-200"
+                         style="width:{updateState === 'downloading' ? updateProgress : (updateState === 'available' ? 100 : 0)}%"></div>
+                  </div>
+                  {#if updateState === 'downloading'}
+                    <span class="text-[10px] font-mono text-[var(--text-secondary)] shrink-0 tabular-nums">{updateProgress}%</span>
+                  {:else if updateState === 'available'}
+                    <span class="text-[10px] font-mono text-[var(--accent)] shrink-0">v{updateVersion}</span>
+                  {/if}
+                </div>
+                <!-- Left-justified checkboxes + manual trigger -->
+                <div class="flex items-center gap-4">
+                  <label class="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" bind:checked={settings.notifyUpdates}
                            class="w-3.5 h-3.5 accent-[var(--accent)]" />
                     <span class="text-[12px] text-[var(--text-primary)]">Notify</span>
                   </label>
-                  <label class="flex items-center gap-2 cursor-pointer flex-1">
+                  <label class="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" bind:checked={settings.autoUpdate}
                            class="w-3.5 h-3.5 accent-[var(--accent)]" />
                     <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
                   </label>
-                  <button class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                  <button onclick={updateState === 'available' ? installUpdate : checkForUpdate}
+                          disabled={updateState === 'downloading'}
+                          class="ml-auto px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
                                  text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                                 hover:border-[var(--accent)] transition-colors shrink-0">
-                    Update Now
+                                 hover:border-[var(--accent)] transition-colors shrink-0
+                                 disabled:opacity-40 disabled:cursor-not-allowed">
+                    {updateState === 'available' ? 'Install & restart' : updateState === 'downloading' ? 'Downloading…' : 'Update Now'}
                   </button>
                 </div>
               </div>
@@ -1606,11 +1810,23 @@
                 <div class="flex items-center gap-2">
                   <label for="output-suffix" class="text-[11px] text-[var(--text-secondary)] whitespace-nowrap shrink-0">Suffix</label>
                   <input
+                    type="text"
+                    bind:value={outputSeparator}
+                    maxlength="1"
+                    disabled={converting}
+                    onfocus={(e) => e.currentTarget.select()}
+                    title="Separator character (default: _)"
+                    class="w-[28px] px-1 py-1 text-[12px] text-center rounded border border-[var(--border)]
+                           bg-[var(--surface)] text-[var(--text-primary)] outline-none
+                           focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
+                  />
+                  <input
                     id="output-suffix"
                     type="text"
                     bind:value={outputSuffix}
                     disabled={converting}
                     placeholder="converted"
+                    onfocus={(e) => e.currentTarget.select()}
                     class="flex-1 min-w-0 px-2 py-1 text-[12px] rounded border border-[var(--border)]
                            bg-[var(--surface)] text-[var(--text-primary)] outline-none
                            focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
@@ -1693,11 +1909,11 @@
           <!-- Status box: last job/queue outcome, right-justified.
                Colour coded: gray = info, green = success, red = error/warning. -->
           <div class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded
-                      bg-[var(--surface)]/60 border border-[var(--border)]" aria-live="polite">
+                      bg-[color-mix(in_srgb,#fff_8%,var(--surface-raised))]" aria-live="polite">
             <span class="text-[11px] truncate text-right
                          {statusKind === 'success' ? 'text-green-400'
                           : statusKind === 'error' ? 'text-red-400'
-                          : 'text-[var(--text-secondary)]'}">{statusMessage}</span>
+                          : 'text-gray-400'}">{statusMessage}</span>
           </div>
         </div>
       </div>
@@ -1845,7 +2061,166 @@
 
         <!-- ── NON-VIDEO content: key block remounts on each selection ── -->
         {#key selectedId}
-          {#if selectedItem?.mediaType === 'image' && liveSrc}
+          {#if selectedItem?.kind === 'folder'}
+            <!-- Batch folder configuration panel — UI only. Wiring up rename
+                 and output-routing logic happens in a follow-up. -->
+            {@const bf = selectedItem}
+            {@const opts = bf.batchOptions}
+            <div class="w-full h-full flex select-none">
+              <!-- ── Drop zone (left rail) — hit-tested via data-folder-drop ── -->
+              <div
+                data-folder-drop={bf.id}
+                role="region"
+                aria-label="Drop files into this proxy folder"
+                class="shrink-0 w-44 m-4 mr-0 rounded-2xl border-2 border-dashed
+                       flex flex-col items-center justify-center gap-3 p-4 text-center
+                       transition-all duration-150
+                       {draggingFileId
+                         ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)]'
+                         : 'border-white/15 bg-white/[0.04] text-white/45'}"
+              >
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="text-[12px] font-medium leading-tight">Drop files here</p>
+                <p class="text-[10px] leading-snug opacity-70">
+                  Drag from the queue on the left into this zone to add them to <span class="font-semibold">{bf.name}</span>.
+                </p>
+              </div>
+
+              <div class="flex-1 min-w-0 overflow-y-auto px-10 py-8">
+              <div class="max-w-2xl mx-auto flex flex-col gap-6">
+                <!-- Header -->
+                <div class="flex items-center gap-3">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+                       class="text-[var(--accent)]">
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                  </svg>
+                  <input
+                    type="text"
+                    bind:value={bf.name}
+                    class="flex-1 bg-transparent border-b border-transparent hover:border-[var(--border)]
+                           focus:border-[var(--accent)] focus:outline-none text-[18px] font-semibold text-white/85 py-1"
+                  />
+                  <span class="text-[11px] text-white/35 font-mono">
+                    {queue.filter(q => q.kind === 'file' && q.parentId === bf.id).length} files
+                  </span>
+                </div>
+                <!-- Quick tutorial — sits right below the rename input -->
+                <div class="-mt-3 rounded-md border border-white/10 bg-white/[0.03] px-4 py-3">
+                  <p class="text-[11px] uppercase tracking-wider text-white/35 font-semibold mb-1.5">
+                    What this tool does
+                  </p>
+                  <ul class="flex flex-col gap-1 text-[12px] text-white/65">
+                    <li class="flex gap-2"><span class="text-[var(--accent)]">•</span> Careful renaming with prefixes, suffixes, or custom patterns</li>
+                    <li class="flex gap-2"><span class="text-[var(--accent)]">•</span> Batch processing of every file inside the folder with one set of rules</li>
+                    <li class="flex gap-2"><span class="text-[var(--accent)]">•</span> Proxy creation that mirrors source folders or writes back in place</li>
+                  </ul>
+                </div>
+
+                <!-- Output destination -->
+                <section class="flex flex-col gap-2">
+                  <h3 class="text-[11px] font-semibold uppercase tracking-wider text-white/45">
+                    Output destination
+                  </h3>
+                  <div class="grid grid-cols-1 gap-1.5">
+                    {#each [
+                      { v: 'mirror',  t: 'Mirror to another drive', d: 'Recreate the source folder structure under a new root.' },
+                      { v: 'inplace', t: 'In-place proxies',        d: 'Write outputs back into the same folders as the source files.' },
+                      { v: 'flat',    t: 'Flat output folder',      d: 'Dump every output into one destination folder.' },
+                    ] as o}
+                      <label class="flex items-start gap-2 px-3 py-2 rounded border cursor-pointer transition-colors
+                                    {opts.outputMode === o.v
+                                      ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                                      : 'border-[var(--border)] hover:border-white/25'}">
+                        <input type="radio" bind:group={opts.outputMode} value={o.v} class="mt-1 accent-[var(--accent)]" />
+                        <div class="flex flex-col">
+                          <span class="text-[12px] font-medium text-white/85">{o.t}</span>
+                          <span class="text-[11px] text-white/45">{o.d}</span>
+                        </div>
+                      </label>
+                    {/each}
+                  </div>
+                  {#if opts.outputMode !== 'inplace'}
+                    <div class="flex items-stretch gap-1.5 mt-1">
+                      <input
+                        type="text"
+                        bind:value={opts.outputRoot}
+                        placeholder={opts.outputMode === 'mirror' ? 'New root drive / folder…' : 'Destination folder…'}
+                        class="flex-1 px-2 py-1.5 rounded border border-[var(--border)] bg-black/30
+                               text-[12px] text-white/85 font-mono placeholder-white/25 focus:outline-none
+                               focus:border-[var(--accent)]"
+                      />
+                      <button
+                        class="px-3 py-1.5 rounded border border-[var(--border)] text-[12px] text-white/70
+                               hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                      >Browse…</button>
+                    </div>
+                  {/if}
+                  {#if opts.outputMode === 'mirror'}
+                    <label class="flex items-center gap-2 mt-1 cursor-pointer">
+                      <input type="checkbox" bind:checked={opts.preserveStructure} class="accent-[var(--accent)]" />
+                      <span class="text-[11px] text-white/60">Preserve source folder hierarchy</span>
+                    </label>
+                  {/if}
+                </section>
+
+                <!-- Rename rules -->
+                <section class="flex flex-col gap-2">
+                  <h3 class="text-[11px] font-semibold uppercase tracking-wider text-white/45">
+                    Rename rules
+                  </h3>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    {#each [
+                      { v: 'keep',    t: 'Keep original name' },
+                      { v: 'suffix',  t: 'Append suffix' },
+                      { v: 'prefix',  t: 'Prepend prefix' },
+                      { v: 'pattern', t: 'Custom pattern' },
+                    ] as o}
+                      <label class="flex items-center gap-2 px-3 py-2 rounded border cursor-pointer transition-colors
+                                    {opts.renameMode === o.v
+                                      ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                                      : 'border-[var(--border)] hover:border-white/25'}">
+                        <input type="radio" bind:group={opts.renameMode} value={o.v} class="accent-[var(--accent)]" />
+                        <span class="text-[12px] text-white/85">{o.t}</span>
+                      </label>
+                    {/each}
+                  </div>
+                  {#if opts.renameMode === 'suffix' || opts.renameMode === 'prefix'}
+                    <input
+                      type="text"
+                      bind:value={opts.renameToken}
+                      placeholder={opts.renameMode === 'suffix' ? '_proxy' : 'proxy_'}
+                      class="px-2 py-1.5 rounded border border-[var(--border)] bg-black/30
+                             text-[12px] text-white/85 font-mono placeholder-white/25 focus:outline-none
+                             focus:border-[var(--accent)]"
+                    />
+                  {:else if opts.renameMode === 'pattern'}
+                    <input
+                      type="text"
+                      bind:value={opts.renamePattern}
+                      placeholder="{'{name}_{n}'}"
+                      class="px-2 py-1.5 rounded border border-[var(--border)] bg-black/30
+                             text-[12px] text-white/85 font-mono placeholder-white/25 focus:outline-none
+                             focus:border-[var(--accent)]"
+                    />
+                    <p class="text-[10px] text-white/35 font-mono">
+                      Tokens: {'{name}'} {'{ext}'} {'{n}'} {'{date}'} {'{parent}'}
+                    </p>
+                  {/if}
+                </section>
+
+                <p class="text-[10px] text-white/25 italic">
+                  Folder-level rendering is not wired yet — these controls will drive batch output once implemented.
+                </p>
+              </div>
+              </div>
+            </div>
+          {:else if selectedItem?.mediaType === 'image' && liveSrc}
             {#if imgDiffMode && imgDiffPath && !cropActive}
               <img src={convertFileSrc(imgDiffPath)} alt="Quality diff"
                    class="max-w-full max-h-full object-contain" />
@@ -1939,7 +2314,7 @@
                 </div>
               {/if}
             {/if}
-          {:else if selectedItem && !['video','audio','image'].includes(selectedItem.mediaType)}
+          {:else if selectedItem && selectedItem.kind !== 'folder' && !['video','audio','image'].includes(selectedItem.mediaType)}
             <!-- Non-media types: show file info -->
             <div class="text-center select-none">
               <p class="text-white/20 text-[11px] font-mono uppercase tracking-widest mb-2">
@@ -2062,6 +2437,7 @@
         <!-- Output format button — shows selected format or "Output"; click to reset/pick -->
         <button
           onclick={() => { globalOutputFormat = null; }}
+          data-tooltip="Target output format for every queued file. Click to pick a new format — returns to the format picker grid below."
           class="px-3 py-1 rounded text-[13px] font-semibold border transition-colors flex items-center gap-1.5 shrink-0
                  {globalOutputFormat
                    ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
@@ -2087,6 +2463,7 @@
               type="text"
               bind:value={headerPresetName}
               placeholder="Name…"
+              data-tooltip="Name the preset — Enter saves, Esc cancels."
               autofocus
               onkeydown={(e) => { if (e.key === 'Enter') saveHeaderPreset(); if (e.key === 'Escape') { headerAdding = false; headerPresetName = ''; } }}
               class="w-24 px-3 py-1 rounded-l text-[13px] border border-[var(--border)]
@@ -2108,6 +2485,7 @@
           <div class="flex gap-1 ml-auto">
             <select
               bind:value={headerPresetId}
+              data-tooltip="Preset picker — one-click load a saved or built-in bundle of settings. Filtered to the current output category."
               onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
               class="px-3 py-1 rounded text-[13px] font-semibold border border-[var(--border)]
                      bg-[var(--surface)] outline-none transition-colors cursor-pointer
@@ -2134,6 +2512,7 @@
             <button
               onclick={() => { headerAdding = true; headerPresetName = ''; }}
               disabled={!activeOutputCategory || !['image','video','audio'].includes(activeOutputCategory)}
+              data-tooltip="Save the current panel settings as a named preset — reusable across files and sessions."
               title="Save current settings as preset"
               class="w-9 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
                      text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
@@ -2142,6 +2521,7 @@
             <button
               onclick={() => deletePreset(headerPresetId)}
               disabled={!headerPresetId || headerPresetId.startsWith('__b_')}
+              data-tooltip="Delete the selected preset — only works on your saved presets, not built-ins."
               title="Delete this preset"
               class="w-9 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
                      text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
@@ -2169,6 +2549,7 @@
                     {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
                     <button
                       onclick={() => { if (!incompatible) { globalOutputFormat = f.id; } }}
+                      data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
                       class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
                              {incompatible ? 'opacity-25 cursor-default' : ''}
                              {f.todo
@@ -2229,6 +2610,7 @@
           <div class="flex items-center gap-0.5">
           <button
             onclick={(e) => zoomClick(zoom.stepOut, e)}
+            data-tooltip="Zoom out the entire UI — ⌘- or Ctrl-"
             title="Zoom out (⌘-)"
             disabled={zoom.level === ZOOM_STEPS[0]}
             class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
@@ -2236,6 +2618,7 @@
             style="color:rgba(255,255,255,0.45)">−</button>
           <button
             onclick={(e) => zoomClick(zoom.reset, e)}
+            data-tooltip="Reset zoom to 100% — ⌘0 or Ctrl0"
             title="Reset zoom (⌘0)"
             class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
                    bg-white/5 hover:bg-white/10
@@ -2244,6 +2627,7 @@
             {Math.round(zoom.level * 100)}%</button>
           <button
             onclick={(e) => zoomClick(zoom.stepIn, e)}
+            data-tooltip="Zoom in the entire UI — ⌘+ or Ctrl+"
             title="Zoom in (⌘+)"
             disabled={zoom.level === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
             class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors

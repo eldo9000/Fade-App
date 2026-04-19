@@ -64,7 +64,7 @@
 
   <!-- Quality (for lossy formats) -->
   {#if ['jpeg', 'webp', 'avif'].includes(options.output_format)}
-    <fieldset>
+    <fieldset data-tooltip="Lossy compression quality — 80–95 typical for photos · 100 near-lossless · below 60 visible artifacts">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
         Quality — {options.quality}%
       </legend>
@@ -83,7 +83,7 @@
   {/if}
 
   <!-- Crop -->
-  <fieldset>
+  <fieldset data-tooltip="Click a ratio then drag on the preview to crop. Free = any aspect · 1:1 square · 16:9 widescreen · 3:2 DSLR · 21:9 ultrawide.">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Crop
     </legend>
@@ -111,7 +111,7 @@
   </fieldset>
 
   <!-- Resize mode -->
-  <fieldset>
+  <fieldset data-tooltip="Scale the output. Percentage scales uniformly · Pixel dimensions lets you set exact W×H · No resize keeps original size.">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Resize
     </legend>
@@ -123,7 +123,7 @@
   </fieldset>
 
   {#if options.resize_mode === 'percent'}
-    <fieldset>
+    <fieldset data-tooltip="Uniform scale factor — 50% halves dimensions · 200% doubles · aspect ratio always preserved">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
         Scale — {options.resize_percent}%
       </legend>
@@ -140,7 +140,7 @@
   {/if}
 
   {#if options.resize_mode === 'pixels'}
-    <fieldset>
+    <fieldset data-tooltip="Set exact output dimensions in pixels. Leave one side at 0 to auto-compute it and keep aspect ratio.">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
         Dimensions (0 = auto)
       </legend>
@@ -180,7 +180,8 @@
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 cursor-pointer">
+    <label class="flex items-center gap-2 cursor-pointer"
+           data-tooltip="Progressive JPEG loads top-to-bottom in multiple passes on slow connections — slightly smaller file, broadly supported.">
       <input type="checkbox" bind:checked={options.jpeg_progressive} class="accent-[var(--accent)]" />
       <span class="text-[12px] text-[var(--text-primary)]">Progressive JPEG</span>
     </label>
@@ -191,7 +192,7 @@
       <input type="range" min="0" max="9" step="1" bind:value={options.png_compression} class="w-full accent-[var(--accent)]" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>9 smallest</span></div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="RGB/RGBA full color · Grayscale shrinks file ~3× · Palette 8-bit smallest for few colors / line art">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Color Mode</legend>
       <div class="flex flex-col">
         {#each [['rgb','RGB'],['rgba','RGBA'],['gray','Grayscale'],['graya','Grayscale + Alpha'],['palette','Palette (8-bit)']] as [v, lbl], i}
@@ -199,13 +200,14 @@
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 cursor-pointer">
+    <label class="flex items-center gap-2 cursor-pointer"
+           data-tooltip="Adam7 interlacing — image loads as progressively refined passes. Slightly larger file, useful for slow connections.">
       <input type="checkbox" bind:checked={options.png_interlaced} class="accent-[var(--accent)]" />
       <span class="text-[12px] text-[var(--text-primary)]">Interlaced (Adam7)</span>
     </label>
 
   {:else if options.output_format === 'tiff'}
-    <fieldset>
+    <fieldset data-tooltip="LZW widely supported lossless · Deflate (zip) best ratio · PackBits legacy fast · None largest but max compatibility">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [['none','None'],['lzw','LZW'],['deflate','Deflate'],['packbits','PackBits']] as [v, lbl], i}
@@ -213,7 +215,7 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="8-bit standard · 16-bit for HDR / color grading · 32-bit float for scientific imaging">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[8,'8-bit'],[16,'16-bit'],[32,'32-bit float']] as [v, lbl], i}
@@ -231,7 +233,8 @@
     </fieldset>
 
   {:else if options.output_format === 'webp'}
-    <label class="flex items-center gap-2 cursor-pointer">
+    <label class="flex items-center gap-2 cursor-pointer"
+           data-tooltip="Encode WebP without perceptual loss — larger files, pixel-perfect. Disables Quality; alpha channel always preserved.">
       <input type="checkbox" bind:checked={options.webp_lossless} class="accent-[var(--accent)]" />
       <span class="text-[12px] text-[var(--text-primary)]">Lossless mode</span>
     </label>
@@ -247,7 +250,7 @@
       <input type="range" min="0" max="10" step="1" bind:value={options.avif_speed} class="w-full accent-[var(--accent)]" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>10 fastest</span></div>
     </fieldset>
-    <fieldset>
+    <fieldset data-tooltip="4:2:0 smallest file · 4:2:2 broadcast quality · 4:4:4 full chroma for text / graphics">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Chroma</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['420','YUV 4:2:0'],['422','YUV 4:2:2'],['444','YUV 4:4:4']] as [v, lbl], i}
@@ -268,14 +271,16 @@
   {/if}
 
   <!-- Rotation & flip -->
-  <fieldset>
+  <fieldset data-tooltip="Rotate clockwise in 90° steps, and/or flip the image. Combine with Auto-rotate to correct phone photos.">
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Rotation & Orientation
     </legend>
-    <div class="grid mb-2" style="grid-template-columns: repeat(4, 1fr)">
+    <div class="grid mb-2" style="grid-template-columns: repeat(4, 1fr)"
+         data-tooltip="Fixed-angle rotation applied to the output — clockwise">
       {#each [0, 90, 180, 270] as deg, i}
         <button
           onclick={() => options.rotation = deg}
+          data-tooltip={deg === 0 ? 'Leave orientation unchanged' : `Rotate ${deg}° clockwise`}
           class={seg(options.rotation === deg, i, 4)}
         >{deg === 0 ? 'None' : deg + '°'}</button>
       {/each}
@@ -283,14 +288,17 @@
     <div class="grid grid-cols-2 mb-2">
       <button
         onclick={() => options.flip_h = !options.flip_h}
+        data-tooltip="Mirror horizontally — swap left and right"
         class={seg(options.flip_h, 0, 2)}
       >Flip H</button>
       <button
         onclick={() => options.flip_v = !options.flip_v}
+        data-tooltip="Mirror vertically — swap top and bottom"
         class={seg(options.flip_v, 1, 2)}
       >Flip V</button>
     </div>
-    <label class="flex items-center gap-2 mt-2 cursor-pointer">
+    <label class="flex items-center gap-2 mt-2 cursor-pointer"
+           data-tooltip="Read the EXIF orientation tag from the source and rotate to match. Fixes sideways photos from phones without re-rotating.">
       <input type="checkbox" bind:checked={options.auto_rotate} class="accent-[var(--accent)]" />
       <span class="text-[12px] text-[var(--text-primary)]">Auto-rotate from EXIF</span>
     </label>
