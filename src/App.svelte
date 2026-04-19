@@ -2594,10 +2594,9 @@
         {:else if activeOutputCategory === 'archive'}
           <ArchiveOptions bind:options={archiveOptions} />
         {:else if activeOutputCategory === 'model'}
-          <div class="flex flex-col items-center justify-center h-full text-center gap-2 px-4">
-            <p class="text-[12px] opacity-80">3D model conversion uses assimp.</p>
-            <p class="text-[11px] opacity-60">Requires <code>assimp</code> on PATH (brew/apt/scoop install assimp).</p>
-          </div>
+          <!-- No user-tunable options for 3D model conversion today —
+               assimp picks the format-ID from the chosen output extension.
+               Render nothing rather than plastering a placeholder. -->
         {:else}
           <div class="flex flex-col items-center justify-center h-full text-center gap-2">
             <p class="text-[11px] text-green-500">Coming soon</p>
