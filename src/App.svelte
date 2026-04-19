@@ -57,6 +57,34 @@
   let folderDropHover = $state(false);            // centre-panel drop-zone hover state
   let selectedItem = $derived(queue.find(q => q.id === selectedId) ?? null);
 
+  // ── Operations mode ────────────────────────────────────────────────────────
+  let operationsMode = $state(false);
+  let selectedOperation = $state(null);
+  let cutMode = $state('cut');   // 'cut' = keep range between handles · 'extract' = remove range between handles
+  let replaceAudioPath = $state(null); // path of replacement audio (Replace Audio op)
+  let replaceAudioOffsetMs = $state(0); // audio offset in ms (negative = earlier)
+  let replaceAudioFitLength = $state(false); // true = time-stretch replacement to match video length
+  let replaceAudioAutoSync = $state(false); // one-shot: xcorr align + pitch-preserved stretch + SR/codec match
+  // ── Conform op ─────────────────────────────────────────────────────────
+  let conformFps = $state('23.976');   // '23.976' | '24' | '25' | '29.97' | '30' | '50' | '59.94' | '60' | 'source'
+  let conformResolution = $state('source'); // 'source' | '3840x2160' | '1920x1080' | '1280x720' | '854x480'
+  let conformPixFmt = $state('yuv420p');    // 'yuv420p' | 'yuv420p10le' | 'yuv422p' | 'yuv422p10le' | 'yuv444p' | 'source'
+  let conformFpsAlgo = $state('drop');  // 'drop' (fps filter) · 'blend' (framerate filter) · 'mci' (minterpolate)
+  let conformScaleAlgo = $state('lanczos'); // 'bilinear' · 'bicubic' · 'lanczos' · 'spline'
+  let conformDither = $state(true);     // 10→8-bit dither (error_diffusion)
+  const OPERATIONS = [
+    { id: 'cut-noenc',      label: 'Cut/Extract' },
+    { id: 'replace-audio',  label: 'Replace Audio' },
+    { id: 'rewrap',         label: 'Rewrap' },
+    { id: 'conform',        label: 'Conform' },
+    { id: 'merge',          label: 'Merge' },
+    { id: 'extract',        label: 'Extract' },
+    { id: 'subtitling',     label: 'Subtitling' },
+    { id: 'video-inserts',  label: 'Video Inserts' },
+  ];
+  function enterOperation(id) { selectedOperation = id; operationsMode = true; }
+  function exitOperationsMode() { operationsMode = false; selectedOperation = null; }
+
   let converting = $state(false);
   let paused = $state(false);
 
@@ -1074,6 +1102,42 @@
       : `${dir}/${stem}.${newExt}`;
   }
 
+  // ── Operations: run Conform on the selected item ──────────────────────────
+  async function runConform() {
+    if (!selectedItem || selectedItem.mediaType !== 'video') {
+      setStatus('Select a video first', 'error');
+      return;
+    }
+    if (selectedItem.status === 'converting') return;
+
+    const outPath = expectedOutputPath(selectedItem, 'mp4', 'conformed', outputDir, outputSeparator);
+
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'conform',
+          input_path: selectedItem.path,
+          output_path: outPath,
+          fps: conformFps === 'source' ? null : conformFps,
+          resolution: conformResolution === 'source' ? null : conformResolution,
+          pix_fmt: conformPixFmt === 'source' ? null : conformPixFmt,
+          fps_algo: conformFpsAlgo,   // 'drop' | 'blend' | 'mci'
+          scale_algo: conformScaleAlgo, // 'bilinear' | 'bicubic' | 'lanczos' | 'spline'
+          dither: conformDither,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Conform failed: ${err}`, 'error');
+    }
+  }
+
   async function startConvert(mode = 'all') {
     const errors = validateOptions(videoOptions, audioOptions);
     if (Object.keys(errors).length > 0) { validationErrors = errors; return; }
@@ -1351,26 +1415,36 @@
       { id: 'm4v',   todo: true }, { id: 'flv',   todo: true }, { id: 'mpg',  todo: true },
       { id: 'ogv',   todo: true }, { id: 'ts',    todo: true }, { id: '3gp',  todo: true },
       { id: 'divx',  todo: true }, { id: 'rmvb',  todo: true }, { id: 'asf',  todo: true },
-      { id: 'prores', label: 'Apple ProRes', todo: true },
-      { id: 'dnxhd', label: 'DNxHD', todo: true },
-      { id: 'dnxhr', label: 'DNxHR', todo: true },
-      { id: 'cineform', label: 'CineForm', todo: true },
-      { id: 'qt-anim', label: 'QT Animation', todo: true },
-      { id: 'uncompressed', label: 'Uncompressed', todo: true },
-      { id: 'ffv1', label: 'FFV1', todo: true },
-      { id: 'xdcam-422', label: 'XDCAM HD422', todo: true },
-      { id: 'xdcam-35', label: 'XDCAM HD35', todo: true },
-      { id: 'avc-intra', label: 'AVC-Intra', todo: true },
-      { id: 'xavc', label: 'XAVC', todo: true },
-      { id: 'xavc-lgop', label: 'XAVC Long GOP', todo: true },
-      { id: 'hap', label: 'HAP', todo: true },
-      { id: 'theora', label: 'Theora', todo: true },
-      { id: 'mpeg2', label: 'MPEG-2', todo: true },
-      { id: 'mjpeg', label: 'MJPEG', todo: true },
-      { id: 'xvid', label: 'Xvid', todo: true },
-      { id: 'dv', label: 'DV', todo: true },
       { id: 'wmv', label: 'WMV', todo: true },
-      { id: 'mpeg1', label: 'MPEG-1', todo: true },
+    ]},
+    // ── Codecs: quick-picks that set both the common container AND codec.
+    // Clicking a codec preset drops you onto the natural container for that
+    // codec (ProRes → MOV, H.264 → MP4, FFV1 → MKV, etc.) and pre-selects
+    // the codec in VideoOptions.
+    { label: 'Codecs', cat: 'codec', fmts: [
+      { id: 'codec-h264',      label: 'H.264',         ext: 'mp4', codec: 'h264'        },
+      { id: 'codec-h265',      label: 'H.265 / HEVC',  ext: 'mp4', codec: 'h265'        },
+      { id: 'codec-av1',       label: 'AV1',           ext: 'mp4', codec: 'av1'         },
+      { id: 'codec-vp9',       label: 'VP9',           ext: 'webm', codec: 'vp9'        },
+      { id: 'codec-prores',    label: 'Apple ProRes',  ext: 'mov', codec: 'prores',     todo: true },
+      { id: 'codec-dnxhd',     label: 'DNxHD',         ext: 'mov', codec: 'dnxhd',      todo: true },
+      { id: 'codec-dnxhr',     label: 'DNxHR',         ext: 'mov', codec: 'dnxhr',      todo: true },
+      { id: 'codec-cineform',  label: 'CineForm',      ext: 'mov', codec: 'cineform',   todo: true },
+      { id: 'codec-qtanim',    label: 'QT Animation',  ext: 'mov', codec: 'qtrle',      todo: true },
+      { id: 'codec-uncomp',    label: 'Uncompressed',  ext: 'mov', codec: 'rawvideo',   todo: true },
+      { id: 'codec-ffv1',      label: 'FFV1',          ext: 'mkv', codec: 'ffv1',       todo: true },
+      { id: 'codec-xdcam422',  label: 'XDCAM HD422',   ext: 'mov', codec: 'mpeg2video', todo: true },
+      { id: 'codec-xdcam35',   label: 'XDCAM HD35',    ext: 'mov', codec: 'mpeg2video', todo: true },
+      { id: 'codec-avcintra',  label: 'AVC-Intra',     ext: 'mov', codec: 'h264',       todo: true },
+      { id: 'codec-xavc',      label: 'XAVC',          ext: 'mp4', codec: 'h264',       todo: true },
+      { id: 'codec-xavclgop',  label: 'XAVC Long GOP', ext: 'mp4', codec: 'h264',       todo: true },
+      { id: 'codec-hap',       label: 'HAP',           ext: 'mov', codec: 'hap',        todo: true },
+      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv', codec: 'theora',     todo: true },
+      { id: 'codec-mpeg2',     label: 'MPEG-2',        ext: 'mpg', codec: 'mpeg2video', todo: true },
+      { id: 'codec-mjpeg',     label: 'MJPEG',         ext: 'mov', codec: 'mjpeg',      todo: true },
+      { id: 'codec-xvid',      label: 'Xvid',          ext: 'avi', codec: 'mpeg4',      todo: true },
+      { id: 'codec-dv',        label: 'DV',            ext: 'mov', codec: 'dvvideo',    todo: true },
+      { id: 'codec-mpeg1',     label: 'MPEG-1',        ext: 'mpg', codec: 'mpeg1video', todo: true },
     ]},
     { label: 'Image', cat: 'image', fmts: [
       { id: 'jpeg' }, { id: 'png' }, { id: 'webp' }, { id: 'tiff' }, { id: 'bmp' }, { id: 'avif' },
@@ -1400,7 +1474,7 @@
       { id: 'fbx', label: 'FBX (ASCII)' },
     ]},
     { label: 'Operations', cat: 'ops', fmts: [
-      { id: 'cut-noenc', label: 'Cut (no re-encode)', todo: true },
+      { id: 'cut-noenc', label: 'Cut/Extract', todo: true },
       { id: 'replace-audio', label: 'Replace Audio', todo: true },
       { id: 'rewrap', label: 'Rewrap', todo: true },
       { id: 'conform', label: 'Conform', todo: true },
@@ -1469,10 +1543,24 @@
 
   let activeOutputCategory = $derived(categoryFor(globalOutputFormat));
 
+  // Per-operation media-type compatibility — gates the file queue when in ops mode.
+  const OP_COMPAT = {
+    'cut-noenc':     ['video', 'audio'],
+    'replace-audio': ['video'],
+    'rewrap':        ['video', 'audio'],
+    'conform':       ['video'],
+    'merge':         ['video', 'audio'],
+    'extract':       ['video'],
+    'subtitling':    ['video'],
+    'video-inserts': ['video'],
+  };
   let compatibleTypes = $derived(
+    // Operations mode overrides output-category compat
+    operationsMode && selectedOperation ? (OP_COMPAT[selectedOperation] ?? []) :
     !activeOutputCategory ? [] :
     activeOutputCategory === 'audio' ? ['audio', 'video'] :
     activeOutputCategory === 'video' ? ['video'] :
+    activeOutputCategory === 'codec' ? ['video'] :
     activeOutputCategory === 'image' ? ['image'] :
     activeOutputCategory === 'data'  ? ['data'] :
     activeOutputCategory === 'document' ? ['document'] :
@@ -1755,24 +1843,31 @@
             </button>
           </div>
         {:else}
-          <div class="flex gap-1.5">
-            <button
-              onclick={() => startConvert('selected')}
-              disabled={!selectedItem || queue.length === 0 || !globalOutputFormat}
-              class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
-                     {!selectedItem || queue.length === 0 || !globalOutputFormat
-                       ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                       : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-            >Convert Selected</button>
-            <button
-              onclick={() => startConvert('all')}
-              disabled={queue.length === 0 || !globalOutputFormat}
-              class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
-                     {queue.length === 0 || !globalOutputFormat
-                       ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                       : 'bg-[var(--accent)] text-white hover:opacity-90'}"
-            >Convert All</button>
-          </div>
+          {#if operationsMode}
+            <div class="flex gap-1.5 pointer-events-none opacity-40">
+              <div class="flex-1 py-1.5 rounded text-[12px] font-medium text-center border border-red-900/60 text-red-700">Convert Selected</div>
+              <div class="flex-1 py-1.5 rounded text-[12px] font-semibold text-center bg-red-950/50 text-red-700">Convert All</div>
+            </div>
+          {:else}
+            <div class="flex gap-1.5">
+              <button
+                onclick={() => startConvert('selected')}
+                disabled={!selectedItem || queue.length === 0 || !globalOutputFormat}
+                class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
+                       {!selectedItem || queue.length === 0 || !globalOutputFormat
+                         ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
+                         : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+              >Convert Selected</button>
+              <button
+                onclick={() => startConvert('all')}
+                disabled={queue.length === 0 || !globalOutputFormat}
+                class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
+                       {queue.length === 0 || !globalOutputFormat
+                         ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
+                         : 'bg-[var(--accent)] text-white hover:opacity-90'}"
+              >Convert All</button>
+            </div>
+          {/if}
         {/if}
 
         <!-- Quick output controls — exposed here because Source/Custom dest
@@ -2186,8 +2281,9 @@
             src={liveSrc ?? undefined}
             preload="auto"
             onloadedmetadata={onVideoMetaLoaded}
-            class="max-w-full max-h-full object-contain {(!liveSrc || diffClipPath) ? 'hidden' : ''}"
+            class="{operationsMode ? 'absolute bottom-4 left-1/2 -translate-x-1/2 w-[560px] h-[316px] rounded-lg shadow-2xl border border-white/10 z-20 object-cover' : 'max-w-full max-h-full object-contain'} {operationsMode ? (!liveSrc ? 'hidden' : '') : ((!liveSrc || diffClipPath) ? 'hidden' : '')}"
           ></video>
+          {#if !operationsMode}
             {#if diffClipPath}
               <!-- svelte-ignore a11y_media_has_caption -->
               <video
@@ -2289,9 +2385,273 @@
                 {diffError}
               </div>
             {/if}
+          {/if}
+        {/if}
+
+        <!-- ── OPERATIONS MODE panel ─────────────────────────────────── -->
+        {#if operationsMode}
+          {@const op = OPERATIONS.find(o => o.id === selectedOperation)}
+          <div class="absolute inset-0 flex flex-col items-center justify-end p-8 overflow-y-auto gap-6 {selectedItem?.mediaType === 'video' ? 'pb-[340px]' : ''}">
+            <div class="flex items-center gap-3 justify-center w-[560px]">
+              <button
+                onclick={exitOperationsMode}
+                class="px-3 py-1.5 rounded text-[11px] font-medium border border-[var(--border)]
+                       text-white hover:border-[var(--accent)] hover:bg-white/5 transition-colors shrink-0"
+              >← Back</button>
+              <h2 class="text-[20px] font-semibold text-white/85">{op?.label}</h2>
+            </div>
+
+            {#if selectedItem?.mediaType !== 'video'}
+              <div class="w-[560px] aspect-video rounded-lg border border-dashed border-white/10
+                          flex items-center justify-center text-[10px] text-white/25 bg-black/30 shrink-0">
+                Video preview
+              </div>
+            {/if}
+
+            <div class="rounded-lg border border-white/10 bg-white/[0.04] px-5 py-4 w-[560px] shrink-0">
+              <p class="text-[11px] uppercase tracking-wider text-white/35 font-semibold mb-2">How it works</p>
+              <p class="text-[13px] text-white/60 leading-relaxed">
+                {#if selectedOperation === 'cut-noenc'}
+                  {#if cutMode === 'cut'}
+                    <strong class="text-white/80">Cut</strong> — keep the range between the trim handles and discard the rest. Stream copy, no re-encoding. Cuts snap to the nearest keyframe.
+                  {:else}
+                    <strong class="text-white/80">Extract</strong> — remove the range between the trim handles and glue the two halves back together. Requires re-encoding because the join point would otherwise break the GOP.
+                  {/if}
+                  <br/><br/><span class="text-white/35">Drag the trim handles on the timeline to set the range. Flip between Cut / Extract with the toggle below.</span>
+                {:else if selectedOperation === 'replace-audio'}
+                  Swap the audio track in a video with a new audio file. Video is copied untouched; only the audio is remuxed. If the new audio codec is incompatible with the container, it's transcoded to AAC automatically.
+                  <br/><br/><span class="text-white/35">Select the video in the queue. Drag a new audio file as the replacement source.</span>
+                {:else if selectedOperation === 'rewrap'}
+                  Change the container format without re-encoding any streams — fast and lossless. Example: MKV → MP4. Codec compatibility with the target container is checked first; incompatible streams are flagged before the job starts.
+                  <br/><br/><span class="text-white/35">Select a file from the queue and choose an output container.</span>
+                {:else if selectedOperation === 'conform'}
+                  Match a video to a reference specification: frame rate, resolution, and pixel format. Always requires re-encoding. Use fps=24000/1001 for broadcast 23.976 or fps=30000/1001 for 29.97.
+                  <br/><br/><span class="text-white/35">Set target fps, resolution, and pixel format in the controls below.</span>
+                {:else if selectedOperation === 'merge'}
+                  Concatenate multiple video files into one in order. Files with matching codec, resolution, fps, and pixel format merge without re-encoding via the concat demuxer. Mismatched files are re-encoded to H.264/AAC automatically.
+                  <br/><br/><span class="text-white/35">Add files to the queue in order — they will be joined top to bottom.</span>
+                {:else if selectedOperation === 'extract'}
+                  Pull individual streams out of a container: video-only, a specific audio track by index, or a subtitle track. Each stream is written to its own output file with no re-encoding.
+                  <br/><br/><span class="text-white/35">Select a file, inspect its streams in the panel, and choose what to extract.</span>
+                {:else if selectedOperation === 'subtitling'}
+                  Two modes: burn-in (hard subs — subtitles are rendered into the video pixels, always re-encodes) or embed (soft subs — subtitle file is added as a selectable track, video is not re-encoded). SRT, ASS, VTT, and SSA formats supported.
+                  <br/><br/><span class="text-white/35">Drag a subtitle file alongside the video. Choose burn-in or embed mode.</span>
+                {:else if selectedOperation === 'video-inserts'}
+                  Insert a video clip at a specific timecode in the main video. The source is split at the insert point, the clip is placed between the two halves, and everything is rejoined. Stream copy is used when all clips share the same codec and specs.
+                  <br/><br/><span class="text-white/35">Mark the insert point on the timeline, then drag the insert clip into position.</span>
+                {/if}
+              </p>
+            </div>
+
+            <div class="flex flex-col gap-3 w-[560px] shrink-0">
+              <p class="text-[10px] uppercase tracking-wider text-white/30 font-semibold">Controls</p>
+              <div class="flex flex-wrap gap-2">
+                {#if selectedOperation === 'cut-noenc'}
+                  <!-- Cut/Extract segmented toggle — matches other ops' style -->
+                  <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                    <button
+                      onclick={() => cutMode = 'cut'}
+                      class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                             {cutMode === 'cut' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                    >Cut</button>
+                    <div class="w-px h-6 bg-[var(--border)]"></div>
+                    <button
+                      onclick={() => cutMode = 'extract'}
+                      class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                             {cutMode === 'extract' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                    >Extract</button>
+                  </div>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run {cutMode === 'cut' ? 'Cut' : 'Extract'}</button>
+                {:else if selectedOperation === 'replace-audio'}
+                  <!-- Row 1: file + track + stretch toggle -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <button
+                      onclick={() => replaceAudioPath = replaceAudioPath ? null : 'pending-pick'}
+                      class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
+                    >{replaceAudioPath ? 'Clear replacement' : 'Pick audio file…'}</button>
+                    <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Keep original tracks</button>
+                    <!-- One-shot auto-sync: xcorr alignment + pitch-preserved stretch + SR/codec match -->
+                    <button
+                      onclick={() => replaceAudioAutoSync = !replaceAudioAutoSync}
+                      title="Cross-correlate to find offset, pitch-preserved stretch to match length, and reuse the video's existing audio sample-rate & codec."
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold border transition-colors
+                             {replaceAudioAutoSync
+                               ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
+                               : 'border-[var(--accent)] text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]'}"
+                    >✦ Auto-sync</button>
+                    <!-- Stretch segmented toggle: Off / Fit to length -->
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Stretch</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button
+                        onclick={() => replaceAudioFitLength = false}
+                        class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                               {!replaceAudioFitLength ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                      >Off</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button
+                        onclick={() => replaceAudioFitLength = true}
+                        class="px-3 py-1.5 text-[12px] font-semibold transition-colors
+                               {replaceAudioFitLength ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
+                      >Fit to length</button>
+                    </div>
+                  </div>
+                  <!-- Row 2: Run Replace · long offset slider · numeric readout -->
+                  <div class="flex items-center gap-3 w-full">
+                    <button class="shrink-0 px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Replace</button>
+                    <div class="flex items-center gap-2 flex-1 min-w-0">
+                      <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0">Offset</span>
+                      <input
+                        type="range"
+                        min="-2000"
+                        max="2000"
+                        step="10"
+                        bind:value={replaceAudioOffsetMs}
+                        ondblclick={() => replaceAudioOffsetMs = 0}
+                        class="flex-1 min-w-0 accent-[var(--accent)]"
+                        title="Double-click to reset to 0"
+                      />
+                      <input
+                        type="number"
+                        step="10"
+                        bind:value={replaceAudioOffsetMs}
+                        class="w-16 shrink-0 bg-black/30 border border-[var(--border)] rounded px-1.5 py-0.5 text-[12px] text-white outline-none text-right font-mono tabular-nums focus:border-[var(--accent)]"
+                      />
+                      <span class="text-[10px] text-white/30 shrink-0">ms</span>
+                    </div>
+                  </div>
+                {:else if selectedOperation === 'rewrap'}
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">MP4</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">MKV</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">MOV</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">WebM</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Rewrap</button>
+                {:else if selectedOperation === 'conform'}
+                  <!-- Row 1: targets -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">FPS</label>
+                      <select bind:value={conformFps}
+                              class="bg-transparent text-[12px] text-white outline-none font-mono tabular-nums">
+                        <option value="source">source</option>
+                        <option value="23.976">23.976</option>
+                        <option value="24">24</option>
+                        <option value="25">25</option>
+                        <option value="29.97">29.97</option>
+                        <option value="30">30</option>
+                        <option value="50">50</option>
+                        <option value="59.94">59.94</option>
+                        <option value="60">60</option>
+                      </select>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Res</label>
+                      <select bind:value={conformResolution}
+                              class="bg-transparent text-[12px] text-white outline-none font-mono tabular-nums">
+                        <option value="source">source</option>
+                        <option value="3840x2160">3840×2160 (UHD)</option>
+                        <option value="1920x1080">1920×1080 (HD)</option>
+                        <option value="1280x720">1280×720</option>
+                        <option value="854x480">854×480</option>
+                      </select>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Pix</label>
+                      <select bind:value={conformPixFmt}
+                              class="bg-transparent text-[12px] text-white outline-none font-mono tabular-nums">
+                        <option value="source">source</option>
+                        <option value="yuv420p">yuv420p (8-bit)</option>
+                        <option value="yuv420p10le">yuv420p10le (10-bit)</option>
+                        <option value="yuv422p">yuv422p (8-bit)</option>
+                        <option value="yuv422p10le">yuv422p10le (10-bit)</option>
+                        <option value="yuv444p">yuv444p (8-bit)</option>
+                      </select>
+                    </div>
+                    <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
+                            title="Pick a reference video and copy its fps/resolution/pix_fmt into the fields above.">Match reference…</button>
+                  </div>
+                  <!-- Row 2: algorithms -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <!-- FPS conversion algorithm — segmented -->
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">FPS algo</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => conformFpsAlgo = 'drop'}
+                              title="Drop / duplicate frames. Fast, deterministic. Judder on non-integer ratios."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {conformFpsAlgo === 'drop' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Drop/dup</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => conformFpsAlgo = 'blend'}
+                              title="Blend adjacent frames. Smoother than drop/dup, but ghosting on motion."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {conformFpsAlgo === 'blend' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Blend</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => conformFpsAlgo = 'mci'}
+                              title="Motion-compensated interpolation (minterpolate). Highest quality, 5–30× slower. May warp on complex motion / occlusions."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {conformFpsAlgo === 'mci' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">
+                        Optical flow
+                        {#if conformFpsAlgo === 'mci'}<span class="ml-1 text-[9px] opacity-75">slow</span>{/if}
+                      </button>
+                    </div>
+                    <!-- Scale filter -->
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Scale</label>
+                      <select bind:value={conformScaleAlgo}
+                              title="Bilinear: fast, soft. Bicubic: balanced. Lanczos: sharp downscale, ringing risk upscale. Spline: smoother upscale."
+                              class="bg-transparent text-[12px] text-white outline-none">
+                        <option value="bilinear">Bilinear</option>
+                        <option value="bicubic">Bicubic</option>
+                        <option value="lanczos">Lanczos</option>
+                        <option value="spline">Spline</option>
+                      </select>
+                    </div>
+                    <!-- Dither -->
+                    <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
+                           title="Apply error-diffusion dither when converting 10-bit → 8-bit. Prevents banding in gradients. Auto-applied only if source and target depths differ.">
+                      <input type="checkbox" bind:checked={conformDither}
+                             class="accent-[var(--accent)]"/>
+                      <span class="text-[11px] text-white/70 font-medium">10→8 dither</span>
+                    </label>
+                  </div>
+                  <!-- Row 3: run -->
+                  <div class="w-full">
+                    <button
+                      onclick={runConform}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                    >Run Conform</button>
+                  </div>
+                {:else if selectedOperation === 'merge'}
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Add from queue</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Reorder</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Check compat</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Merge</button>
+                {:else if selectedOperation === 'extract'}
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Video</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Audio track…</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Subtitle track…</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">All streams</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Extract</button>
+                {:else if selectedOperation === 'subtitling'}
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Pick subtitle file…</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Burn-in</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Embed</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Style…</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Subtitling</button>
+                {:else if selectedOperation === 'video-inserts'}
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Set insert point</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Pick insert clip…</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Trim insert</button>
+                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Insert</button>
+                {/if}
+              </div>
+            </div>
+          </div>
         {/if}
 
         <!-- ── NON-VIDEO content: key block remounts on each selection ── -->
+        {#if !operationsMode}
         {#key selectedId}
           {#if selectedItem?.kind === 'folder'}
             <!-- Batch folder configuration panel — UI only. Wiring up rename
@@ -2630,6 +2990,7 @@
                style="color:rgba(255,255,255,0.25)">Loading</p>
           {/if}
         {/key}
+        {/if}
       </div>
 
       <!-- Loading bar — sits between preview and timeline -->
@@ -2642,9 +3003,15 @@
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={isHeavyItem(selectedItem)} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={isHeavyItem(selectedItem)} replacedAudioMode={operationsMode && selectedOperation === 'replace-audio' && !!replaceAudioPath} />
       {:else if selectedItem?.mediaType === 'audio'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={isHeavyItem(selectedItem)} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={isHeavyItem(selectedItem)} replacedAudioMode={operationsMode && selectedOperation === 'replace-audio' && !!replaceAudioPath} />
+      {:else if operationsMode}
+        <!-- Placeholder strip — preserves timeline space in ops mode when no media is selected -->
+        <div class="shrink-0 h-[180px] bg-[#0f0f0f] border-t border-[var(--border)]
+                    flex items-center justify-center text-[11px] text-white/20 select-none">
+          Timeline · filmstrip · waveform will appear once a video is selected
+        </div>
       {/if}
 
     </div>
@@ -2658,6 +3025,30 @@
            onmouseleave={() => setHint('')}
            onblur={() => setHint('')}>
 
+      {#if operationsMode}
+        <!-- Operations mode: list takes over the sidebar.
+             Header hosts a second copy of the center-panel Back button so the
+             user can always reach it on either side. -->
+        <div class="flex items-center gap-2 px-3 py-2.5 shrink-0 border-b border-[var(--accent)]/30"
+             style="background:color-mix(in srgb, var(--accent) 8%, var(--surface-raised))">
+          <button
+            onclick={exitOperationsMode}
+            class="px-3 py-1.5 rounded text-[11px] font-medium border border-[var(--border)]
+                   text-white hover:border-[var(--accent)] hover:bg-white/5 transition-colors shrink-0"
+          >← Back</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5">
+          {#each OPERATIONS as op}
+            <button
+              onclick={() => selectedOperation = op.id}
+              class="w-full px-3 py-2 rounded text-[12px] text-left font-medium border transition-colors
+                     {selectedOperation === op.id
+                       ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                       : 'border-transparent text-white hover:bg-white/5 hover:border-[var(--border)]'}"
+            >{op.label}</button>
+          {/each}
+        </div>
+      {:else}
       <!-- ── Panel header: Output picker + Presets — the "control plane"
            for the options panel. Always docked (shrink-0 + no scroll wrapper).
            Subtle accent tint + heavier border make it visually distinct from
@@ -2763,32 +3154,116 @@
       <!-- Options content -->
       <div class="flex-1 min-h-0 overflow-y-auto p-4">
         {#if !globalOutputFormat}
-          <!-- ── Format picker: sectioned list with columns ─────────────────── -->
-          <div class="space-y-4">
-            {#each sortedFormatGroups as group (group.cat)}
-              <div>
-                <div class="flex items-center gap-2 mb-1.5">
-                  <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                    {group.label}
-                  </span>
-                  <div class="flex-1 h-px bg-[var(--border)]"></div>
-                </div>
-                <div class="flex flex-wrap gap-1">
-                  {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
-                    {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
-                    <button
-                      onclick={() => { if (!incompatible) { globalOutputFormat = f.id; } }}
-                      data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
-                      class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
-                             {incompatible ? 'opacity-25 cursor-default' : ''}
-                             {f.todo
-                               ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
-                               : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-                    >{f.label ?? f.id}</button>
+          {@const TOOL_CATS = ['ops', 'ai', 'analysis', 'burn']}
+          {@const conversionGroups = sortedFormatGroups.filter(g => !TOOL_CATS.includes(g.cat))}
+          {@const toolGroups       = sortedFormatGroups.filter(g =>  TOOL_CATS.includes(g.cat))}
+          <!-- ── Format picker: two super-sections (Conversion / Tools) ───── -->
+          <div class="flex flex-col gap-5">
+
+            <!-- ── CONVERSION super-section ─────────────────────────────── -->
+            <section>
+              <button
+                onclick={() => settings.conversionCollapsed = !settings.conversionCollapsed}
+                class="w-full flex items-center gap-2 mb-3 group"
+              >
+                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Conversion</span>
+                <div class="flex-1 h-px bg-[var(--border)]"></div>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                     class="text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-transform duration-150
+                            {settings.conversionCollapsed ? '-rotate-90' : ''}">
+                  <path d="M2 4l3 3 3-3"/>
+                </svg>
+              </button>
+              {#if !settings.conversionCollapsed}
+                <div class="space-y-4">
+                  {#each conversionGroups as group (group.cat)}
+                    <div>
+                      <div class="flex items-center gap-2 mb-1.5">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          {group.label}
+                        </span>
+                        <div class="flex-1 h-px bg-[var(--border)]"></div>
+                      </div>
+                      <div class="flex flex-wrap gap-1">
+                        {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV) as f}
+                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat === 'codec' ? 'video' : group.cat)}
+                          <button
+                            onclick={() => {
+                              if (incompatible) return;
+                              if (group.cat === 'codec') {
+                                // Codec preset: set both the container AND the codec so the
+                                // Video options panel lands on the right combo immediately.
+                                globalOutputFormat = f.ext;
+                                videoOptions.output_format = f.ext;
+                                videoOptions.codec = f.codec;
+                              } else {
+                                globalOutputFormat = f.id;
+                              }
+                            }}
+                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (group.cat === 'codec' ? `${f.label} — encode as ${f.codec} in ${f.ext.toUpperCase()}` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
+                            class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
+                                   {incompatible ? 'opacity-25 cursor-default' : ''}
+                                   {f.todo
+                                     ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                          >{f.label ?? f.id}</button>
+                        {/each}
+                      </div>
+                    </div>
                   {/each}
                 </div>
-              </div>
-            {/each}
+              {/if}
+            </section>
+
+            <!-- ── TOOLS super-section ──────────────────────────────────── -->
+            <section>
+              <button
+                onclick={() => settings.toolsCollapsed = !settings.toolsCollapsed}
+                class="w-full flex items-center gap-2 mb-3 group"
+              >
+                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Tools</span>
+                <div class="flex-1 h-px" style="background:color-mix(in srgb, var(--accent) 30%, transparent)"></div>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                     class="text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-transform duration-150
+                            {settings.toolsCollapsed ? '-rotate-90' : ''}">
+                  <path d="M2 4l3 3 3-3"/>
+                </svg>
+              </button>
+              {#if !settings.toolsCollapsed}
+                <div class="space-y-4">
+                  {#each toolGroups as group (group.cat)}
+                    <div>
+                      <div class="flex items-center gap-2 mb-1.5">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          {group.label}
+                        </span>
+                        <div class="flex-1 h-px bg-[var(--border)]"></div>
+                      </div>
+                      <div class="flex flex-wrap gap-1">
+                        {#each group.fmts.filter(f => !f.todo || import.meta.env.DEV || group.cat === 'ops') as f}
+                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat) && group.cat !== 'ops'}
+                          <button
+                            onclick={() => {
+                              if (incompatible) return;
+                              if (group.cat === 'ops') { enterOperation(f.id); }
+                              else { globalOutputFormat = f.id; }
+                            }}
+                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (group.cat === 'ops' ? `${(f.label ?? f.id)} — open operations mode` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
+                            class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
+                                   {incompatible ? 'opacity-25 cursor-default' : ''}
+                                   {f.todo && group.cat !== 'ops'
+                                     ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                          >{f.label ?? f.id}</button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
           </div>
         {:else if activeOutputCategory === 'image'}
           <ImageOptions bind:options={imageOptions}
@@ -2881,6 +3356,7 @@
           <span class="fade-pulse text-[10px] font-medium select-none">Fade {appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
+      {/if}
 
     </aside>
 

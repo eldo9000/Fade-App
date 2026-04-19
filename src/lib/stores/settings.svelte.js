@@ -11,6 +11,8 @@ const DEFAULTS = {
   fileTypeColumn: true,
   lastUpdateCheck: 0,            // epoch ms; 0 = never. Gates the weekly check.
   sendDiagnostics: true,         // opt-in after 1.0; forced-on during beta (see BETA flag).
+  conversionCollapsed: false,    // right-sidebar "Conversion" super-section fold state
+  toolsCollapsed: false,         // right-sidebar "Tools" super-section fold state
 };
 
 function load() {

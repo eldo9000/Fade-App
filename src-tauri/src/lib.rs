@@ -11,6 +11,7 @@ use tauri::{command, AppHandle, Emitter, Manager, State, Window};
 pub mod args;
 pub mod convert;
 pub mod fs_commands;
+pub mod operations;
 pub mod presets;
 pub mod preview;
 pub mod probe;
@@ -701,6 +702,243 @@ fn diag_clear(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ── Operations ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OperationPayload {
+    Rewrap {
+        input_path: String,
+        output_path: String,
+    },
+    Extract {
+        input_path: String,
+        stream_index: u32,
+        stream_type: String,
+        output_path: String,
+    },
+    Cut {
+        input_path: String,
+        start_secs: Option<f64>,
+        end_secs: Option<f64>,
+        output_path: String,
+    },
+    Split {
+        input_path: String,
+        timecodes_secs: Vec<f64>,
+        output_dir: String,
+    },
+    AudioOffset {
+        input_path: String,
+        offset_ms: i64,
+        output_path: String,
+    },
+    ReplaceAudio {
+        video_path: String,
+        audio_path: String,
+        output_path: String,
+    },
+    Merge {
+        input_paths: Vec<String>,
+        output_path: String,
+    },
+    Conform {
+        input_path: String,
+        output_path: String,
+        /// Target framerate as a UI-friendly string ("23.976", "60", ...).
+        /// `None` = keep source rate.
+        fps: Option<String>,
+        /// Target resolution "WxH". `None` = keep source.
+        resolution: Option<String>,
+        /// Target pixel format ("yuv420p", "yuv420p10le", ...). `None` = keep source.
+        pix_fmt: Option<String>,
+        fps_algo: operations::conform::FpsAlgo,
+        scale_algo: operations::conform::ScaleAlgo,
+        dither: bool,
+    },
+}
+
+/// Run a mechanical video/audio operation.
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+fn run_operation(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    operation: OperationPayload,
+) -> Result<(), String> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock().unwrap();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result: Result<Option<String>, String> = match &operation {
+            OperationPayload::Rewrap {
+                input_path,
+                output_path,
+            } => operations::rewrap::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Extract {
+                input_path,
+                stream_index,
+                stream_type,
+                output_path,
+            } => operations::extract::run(
+                &window,
+                &job_id,
+                input_path,
+                *stream_index,
+                stream_type,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Cut {
+                input_path,
+                start_secs,
+                end_secs,
+                output_path,
+            } => operations::cut::run(
+                &window,
+                &job_id,
+                input_path,
+                *start_secs,
+                *end_secs,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Split {
+                input_path,
+                timecodes_secs,
+                output_dir,
+            } => operations::split::run(
+                &window,
+                &job_id,
+                input_path,
+                timecodes_secs,
+                output_dir,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_dir.clone())),
+
+            OperationPayload::AudioOffset {
+                input_path,
+                offset_ms,
+                output_path,
+            } => operations::audio_offset::run(
+                &window,
+                &job_id,
+                input_path,
+                *offset_ms,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::ReplaceAudio {
+                video_path,
+                audio_path,
+                output_path,
+            } => operations::replace_audio::run(
+                &window,
+                &job_id,
+                video_path,
+                audio_path,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Merge {
+                input_paths,
+                output_path,
+            } => operations::merge::run(
+                &window,
+                &job_id,
+                input_paths,
+                output_path,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::Conform {
+                input_path,
+                output_path,
+                fps,
+                resolution,
+                pix_fmt,
+                fps_algo,
+                scale_algo,
+                dither,
+            } => operations::conform::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                fps.clone(),
+                resolution.clone(),
+                pix_fmt.clone(),
+                fps_algo.clone(),
+                scale_algo.clone(),
+                *dither,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+        };
+
+        {
+            let mut map = cancellations.lock().unwrap();
+            map.remove(&job_id);
+        }
+
+        match result {
+            Ok(Some(out)) => {
+                let _ = window.emit("job-done", JobDone { job_id, output_path: out });
+            }
+            Ok(None) => {
+                let _ = window.emit("job-done", JobDone { job_id, output_path: String::new() });
+            }
+            Err(msg) if msg == "CANCELLED" => {
+                let _ = window.emit("job-cancelled", JobCancelled { job_id });
+            }
+            Err(msg) => {
+                let _ = window.emit("job-error", JobError { job_id, message: msg });
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Return the list of streams in a media file (video, audio, subtitle, data).
+#[command]
+fn get_streams(input_path: String) -> Result<Vec<operations::StreamInfo>, String> {
+    operations::extract::get_streams(&input_path)
+}
+
 /// Open a URL in the user's default browser.
 /// Used for "download update" on platforms where in-place updates
 /// are disabled (macOS/Windows without codesigning).
@@ -748,6 +986,8 @@ pub fn run() {
             diag_append,
             diag_load,
             diag_clear,
+            run_operation,
+            get_streams,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

@@ -3,7 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { setHint } from './stores/tooltip.svelte.js';
 
-  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false } = $props();
+  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false, replacedAudioMode = false } = $props();
 
   // ── Media element ─────────────────────────────────────────────────────────
   // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives
@@ -1085,7 +1085,7 @@
       {/if}
 
       <!-- Waveform track + controls (fixed 176px) -->
-      <div class="shrink-0 flex flex-col" style="height:176px">
+      <div class="shrink-0 flex flex-col relative" style="height:176px">
 
       <!-- Viewport (clips zoomed content; wheel + middle/right-click pan) -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1132,7 +1132,9 @@
               {@const h = Math.max(1, amp * 96)}
               {@const y = (100 - h) / 2}
               <rect x={i} y={y} width={0.85} height={h}
-                    fill={`hsl(${waveformData.hues[i]},100%,55%)`} />
+                    fill={replacedAudioMode
+                      ? `hsl(${150 + (waveformData.hues[i] % 80)},75%,55%)`
+                      : `hsl(${waveformData.hues[i]},100%,55%)`} />
             {/each}
           </g>
         </svg>
@@ -1214,36 +1216,9 @@
                    fill="{(dragging==='fade_out'||fadeOutHovered) ? 'rgba(74,222,128,1)' : 'rgba(74,222,128,0.65)'}"/>
         </svg>
       </div>
-      <!-- Left handle — line is visual-only, only central icon is grabbable -->
-      <div class="absolute inset-y-0 z-20 pointer-events-none flex items-center justify-center"
-           style="left:calc({startFrac * 100}% - 7px); width:14px">
-        <div class="absolute inset-y-0 w-[2px] rounded-full"
-             style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)'}; transition:background 0.12s"></div>
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="relative z-10 pointer-events-auto cursor-ew-resize flex items-center gap-px px-[3px] py-[5px] rounded-sm"
-             onmouseenter={() => startHovered = true}
-             onmouseleave={() => startHovered = false}
-             onmousedown={(e) => { e.stopPropagation(); dragging = 'start'; }}
-             style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.06)'}; border:1px solid {(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.12)'}; transition:background 0.12s, border-color 0.12s">
-          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
-          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
-        </div>
-      </div>
-      <!-- Right handle — line is visual-only, only central icon is grabbable -->
-      <div class="absolute inset-y-0 z-20 pointer-events-none flex items-center justify-center"
-           style="left:calc({endFrac * 100}% - 7px); width:14px">
-        <div class="absolute inset-y-0 w-[2px] rounded-full"
-             style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)'}; transition:background 0.12s"></div>
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="relative z-10 pointer-events-auto cursor-ew-resize flex items-center gap-px px-[3px] py-[5px] rounded-sm"
-             onmouseenter={() => endHovered = true}
-             onmouseleave={() => endHovered = false}
-             onmousedown={(e) => { e.stopPropagation(); dragging = 'end'; }}
-             style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.06)'}; border:1px solid {(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.12)'}; transition:background 0.12s, border-color 0.12s">
-          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
-          <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
-        </div>
-      </div>
+      <!-- Trim handles moved to an unclipped overlay sibling of the viewport
+           (below) so the nugget icons poke outside the viewport's
+           overflow-hidden bounds at far edges. -->
     {/if}
 
     <!-- Playhead -->
@@ -1259,6 +1234,51 @@
       </div><!-- /track -->
       </div><!-- /transform layer -->
       </div><!-- /viewport -->
+
+      <!-- ── Unclipped handles overlay ──────────────────────────────────
+           Lives outside viewport's overflow-hidden, so nugget icons can
+           poke into the padding at left/right edges. Mirrors viewport's
+           mx-3 and vertical bounds so handle x-coords match the waveform
+           underneath. Transform + track position wrappers duplicated so
+           zoom/pan/silence math matches the viewport exactly. -->
+      {#if showTrim}
+        <div class="absolute pointer-events-none" style="left:12px; right:12px; top:6px; bottom:4px; z-index:50">
+          <div class="absolute inset-y-0 overflow-visible" style="left:{leftPct}%; width:{widthPct}%; transition:left 0.18s ease, width 0.18s ease">
+            <div class="absolute inset-y-0 overflow-visible" style="left:{silFrontFrac * 100}%; width:{audioWidthFrac * 100}%; transition:left 0.18s ease, width 0.18s ease">
+              <!-- Left handle -->
+              <div class="absolute inset-y-0 pointer-events-none flex items-center justify-center"
+                   style="left:calc({startFrac * 100}% - 7px); width:14px">
+                <div class="absolute inset-y-0 w-[2px] rounded-full"
+                     style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.38)'}; transition:background 0.12s"></div>
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="relative z-10 pointer-events-auto cursor-ew-resize flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+                     onmouseenter={() => startHovered = true}
+                     onmouseleave={() => startHovered = false}
+                     onmousedown={(e) => { e.stopPropagation(); dragging = 'start'; }}
+                     style="background:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.12)'}; border:1px solid {(dragging==='start'||startHovered) ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.22)'}; box-shadow:0 0 0 1px rgba(0,0,0,0.55), 0 1px 3px rgba(0,0,0,0.5); transition:background 0.12s, border-color 0.12s">
+                  <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.55)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
+                  <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='start'||startHovered) ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.55)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
+                </div>
+              </div>
+              <!-- Right handle -->
+              <div class="absolute inset-y-0 pointer-events-none flex items-center justify-center"
+                   style="left:calc({endFrac * 100}% - 7px); width:14px">
+                <div class="absolute inset-y-0 w-[2px] rounded-full"
+                     style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.38)'}; transition:background 0.12s"></div>
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="relative z-10 pointer-events-auto cursor-ew-resize flex items-center gap-px px-[3px] py-[5px] rounded-sm"
+                     onmouseenter={() => endHovered = true}
+                     onmouseleave={() => endHovered = false}
+                     onmousedown={(e) => { e.stopPropagation(); dragging = 'end'; }}
+                     style="background:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.12)'}; border:1px solid {(dragging==='end'||endHovered) ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.22)'}; box-shadow:0 0 0 1px rgba(0,0,0,0.55), 0 1px 3px rgba(0,0,0,0.5); transition:background 0.12s, border-color 0.12s">
+                  <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.55)'}; transition:fill 0.12s"><path d="M3 0 L0 3.5 L3 7 Z"/></svg>
+                  <svg width="3" height="7" viewBox="0 0 3 7" style="fill:{(dragging==='end'||endHovered) ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.55)'}; transition:fill 0.12s"><path d="M0 0 L3 3.5 L0 7 Z"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {/if}
 
       <!-- Controls row -->
       <div class="relative shrink-0" style="height:34px">
