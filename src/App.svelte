@@ -2260,11 +2260,15 @@
       { id: 'vorbis', label: 'Vorbis', todo: true },
       { id: 'ddp', label: 'Dolby Digital+', todo: true },
       { id: 'truehd', label: 'Dolby TrueHD', todo: true },
-      // Tracker / MIDI — placeholder scaffolding.
-      { id: 'mid',  label: 'MIDI', todo: true, preview: true },
-      { id: 'mod',  label: 'MOD',  todo: true, preview: true },
-      { id: 'xm',   label: 'XM',   todo: true, preview: true },
-      { id: 'it',   label: 'IT',   todo: true, preview: true },
+      // Tracker / MIDI — rendered via fluidsynth (MIDI, requires .sf2) or
+      // openmpt123 (module trackers). See src-tauri/src/convert/tracker.rs.
+      // These ids are INPUT format markers in the audio category — the user
+      // picks a tracker file as input, target codec is set by the audio fmt.
+      { id: 'mid',  label: 'MIDI' },
+      { id: 'mod',  label: 'MOD'  },
+      { id: 'xm',   label: 'XM'   },
+      { id: 'it',   label: 'IT'   },
+      // SF2 is a soundfont container, not an audio stream; not convertible.
       { id: 'sf2',  label: 'SF2',  todo: true, preview: true },
     ]},
     { label: 'Video', cat: 'video', fmts: [

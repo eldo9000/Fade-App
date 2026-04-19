@@ -17,6 +17,7 @@ pub mod model;
 pub mod notebook;
 pub mod subtitle;
 pub mod timeline;
+pub mod tracker;
 pub mod video;
 
 pub use archive::run as run_archive_convert;
@@ -31,4 +32,5 @@ pub use model::run as run_model_convert;
 pub use notebook::run as run_notebook_convert;
 pub use subtitle::run as run_subtitle_convert;
 pub use timeline::run as run_timeline_convert;
+pub use tracker::run as run_tracker_convert;
 pub use video::run as run_video_convert;

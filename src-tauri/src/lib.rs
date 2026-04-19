@@ -23,7 +23,8 @@ pub use args::{
 use convert::{
     run_archive_convert, run_audio_convert, run_data_convert, run_document_convert,
     run_ebook_convert, run_email_convert, run_font_convert, run_image_convert, run_model_convert,
-    run_notebook_convert, run_subtitle_convert, run_timeline_convert, run_video_convert,
+    run_notebook_convert, run_subtitle_convert, run_timeline_convert, run_tracker_convert,
+    run_video_convert,
 };
 pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
@@ -384,12 +385,20 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "epub" | "mobi" | "azw3" | "fb2" | "lit" => "ebook",
         // Email — pure-Rust eml ↔ mbox. `msg` is deferred.
         "eml" | "mbox" => "email",
+        // Tracker / MIDI — routed by INPUT extension (see convert_file), but
+        // classify_ext is also queried for UI compat matrices. `.sf2` is a
+        // soundfont container, not convertible — see convert/tracker.rs.
+        "mid" | "midi" | "mod" | "xm" | "it" | "s3m" | "sf2" => "tracker",
+        // Data-nerd formats — `.sqlite` and `.parquet` are routed by INPUT
+        // extension (see convert_file) into the data pipeline. Listed here so
+        // UI-side classification doesn't treat them as unknown.
+        "sqlite" | "sqlite3" | "db" | "parquet" => "data",
         _ => "unknown",
     }
 }
 
 /// Check whether a tool is available in PATH.
-fn tool_available(name: &str) -> bool {
+pub(crate) fn tool_available(name: &str) -> bool {
     Command::new("which")
         .arg(name)
         .output()
@@ -479,10 +488,21 @@ fn convert_file(
     // known timeline-native format, the other side's `xml` means Premiere
     // XML. otioconvert auto-picks the fcp_xml adapter from the extension.
     let is_timeline_native = |e: &str| matches!(e, "edl" | "fcpxml" | "otio" | "aaf");
+    // Tracker / MIDI lane: input extension determines the pipeline regardless
+    // of the audio target (wav/mp3/flac/etc. would otherwise route to "audio"
+    // and hand the raw .mid to ffmpeg, which can't decode it).
+    let is_tracker_input = |e: &str| matches!(e, "mid" | "midi" | "mod" | "xm" | "it" | "s3m");
+    // Data-nerd lane: sqlite/parquet need an input-driven route because their
+    // output formats (csv/json/tsv/xml) collide with the generic data pipeline.
+    let is_data_nerd_input = |e: &str| matches!(e, "sqlite" | "sqlite3" | "db" | "parquet");
     let mtype = if options.extract_audio == Some(true) {
         "audio"
     } else if input_ext == "ipynb" {
         "notebook"
+    } else if is_tracker_input(&input_ext) {
+        "tracker"
+    } else if is_data_nerd_input(&input_ext) {
+        "data"
     } else if (ext == "xml" && is_timeline_native(&input_ext))
         || (input_ext == "xml" && is_timeline_native(&ext))
     {
@@ -571,6 +591,15 @@ fn convert_file(
                 Arc::clone(&cancelled),
             ),
             "font" => run_font_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "tracker" => run_tracker_convert(
                 &window,
                 &job_id,
                 &input_path,
