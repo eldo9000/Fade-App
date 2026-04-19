@@ -2,7 +2,7 @@
 
 # Fade
 
-The multimedia utility knife. 
+The multimedia utility knife. Nothing creative. Just tools.
 
 For when you need to do that one thing... to that one file... quickly.
 
