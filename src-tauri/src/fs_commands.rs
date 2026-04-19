@@ -8,24 +8,38 @@ pub fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
-/// List all files (non-recursive) in a directory. Returns full paths, sorted.
+/// List files in a directory. When `recursive` is true, descends into all
+/// subdirectories (dotfiles and dot-dirs skipped). Returns full paths, sorted.
 /// Falls back to the current working directory if the given path fails to open.
 #[command]
-pub fn scan_dir(path: String) -> Vec<String> {
-    let mut files: Vec<String> = std::fs::read_dir(&path)
-        .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
-        .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            let name = e.file_name();
+pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
+    let recurse = recursive.unwrap_or(false);
+    let mut files: Vec<String> = Vec::new();
+    let root = std::path::PathBuf::from(&path);
+    // Return [] for missing or non-directory paths so callers can use this
+    // to probe "is this a dir?" without a separate command round-trip.
+    if !root.is_dir() {
+        return files;
+    }
+    let mut stack: Vec<std::path::PathBuf> = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if p.is_file() && !name_str.starts_with('.') {
-                p.to_str().map(str::to_owned)
-            } else {
-                None
+            if name_str.starts_with('.') {
+                continue;
             }
-        })
-        .collect();
+            if p.is_file() {
+                if let Some(s) = p.to_str() {
+                    files.push(s.to_owned());
+                }
+            } else if recurse && p.is_dir() {
+                stack.push(p);
+            }
+        }
+    }
     files.sort();
     files
 }
@@ -80,7 +94,7 @@ mod tests {
         fs::write(dir.join(".hidden"), b"").unwrap();
         fs::create_dir(dir.join("subdir")).unwrap();
 
-        let files = scan_dir(dir.to_string_lossy().to_string());
+        let files = scan_dir(dir.to_string_lossy().to_string(), None);
         // Only the two non-hidden files, sorted, absolute paths.
         assert_eq!(files.len(), 2, "files were: {files:?}");
         assert!(files[0].ends_with("a.txt"));
@@ -98,7 +112,7 @@ mod tests {
         fs::write(dir.join("nested").join("inside.txt"), b"").unwrap();
         fs::write(dir.join("top.txt"), b"").unwrap();
 
-        let files = scan_dir(dir.to_string_lossy().to_string());
+        let files = scan_dir(dir.to_string_lossy().to_string(), None);
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("top.txt"));
         fs::remove_dir_all(&dir).ok();
@@ -113,7 +127,23 @@ mod tests {
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        let _files = scan_dir(missing.to_string_lossy().to_string());
+        let _files = scan_dir(missing.to_string_lossy().to_string(), None);
         // No panic = pass.
+    }
+
+    #[test]
+    fn scan_dir_recursive_descends_into_subdirectories() {
+        let dir = unique_tmp("scan-rec");
+        fs::create_dir(dir.join("nested")).unwrap();
+        fs::write(dir.join("nested").join("inside.txt"), b"").unwrap();
+        fs::write(dir.join("top.txt"), b"").unwrap();
+        fs::create_dir(dir.join(".hidden")).unwrap();
+        fs::write(dir.join(".hidden").join("skip.txt"), b"").unwrap();
+
+        let files = scan_dir(dir.to_string_lossy().to_string(), Some(true));
+        assert_eq!(files.len(), 2, "files were: {files:?}");
+        assert!(files.iter().any(|f| f.ends_with("inside.txt")));
+        assert!(files.iter().any(|f| f.ends_with("top.txt")));
+        fs::remove_dir_all(&dir).ok();
     }
 }

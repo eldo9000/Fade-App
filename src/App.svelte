@@ -24,6 +24,17 @@
 
   const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
   const ARCHIVE_FORMATS = ['zip', 'tar.gz', 'tar.xz', '7z'];
+  // Premiere XML (`.xml`) is deferred — extension clashes with data XML.
+  const TIMELINE_FORMATS = ['otio', 'edl', 'fcpxml', 'aaf'];
+  const FONT_FORMATS = ['ttf', 'otf', 'woff', 'woff2'];
+  // Subtitle: ffmpeg handles srt↔vtt↔ass↔ssa natively. sbv and ttml
+  // stay `todo` until we have a fallback path (ffmpeg can't read sbv
+  // and can only write ttml).
+  const SUBTITLE_FORMATS = ['srt', 'vtt', 'ass', 'ssa'];
+  const EBOOK_FORMATS = ['epub', 'mobi', 'azw3', 'fb2', 'lit'];
+  const EMAIL_FORMATS = ['eml', 'mbox'];
+  // Jupyter notebook outputs (input ext `.ipynb` is routed backend-side).
+  const NOTEBOOK_FORMATS = ['md', 'py', 'html'];
 
   // Fade is a raw utility, not a playback viewer — performance beats fidelity.
   // Standard preview is already half-resolution. Items flip to draft mode
@@ -452,6 +463,7 @@
   // Advanced audio panel — persists across file switches
   let vizExpanded = $state(false);
   let queueCompact = $state(false);
+  let recurseSubfolders = $state(true);
 
   // ── Settings ───────────────────────────────────────────────────────────────
   const settings   = createSettings();
@@ -819,6 +831,35 @@
     output_dir: null,
   });
 
+  // Timeline / EDL conversions — shelled out to OpenTimelineIO's
+  // `otioconvert`. Format picked by output extension; no other options.
+  let timelineOptions = $state({
+    output_format: 'otio',
+    output_dir: null,
+  });
+
+  // Font conversions — shelled out to fonttools (Python). Output flavor
+  // picked by extension (ttf/otf/woff/woff2). No other options today.
+  let fontOptions = $state({
+    output_format: 'woff2',
+    output_dir: null,
+  });
+
+  let subtitleOptions = $state({
+    output_format: 'vtt',
+    output_dir: null,
+  });
+
+  let ebookOptions = $state({
+    output_format: 'epub',
+    output_dir: null,
+  });
+
+  let emailOptions = $state({
+    output_format: 'mbox',
+    output_dir: null,
+  });
+
   // ── Event listeners ────────────────────────────────────────────────────────
 
   let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled;
@@ -866,7 +907,7 @@
     // Pre-load Test-Files folder
     try {
       const testDir = '/Users/eldo/Desktop/Test-Files';
-      const files = await invoke('scan_dir', { path: testDir });
+      const files = await invoke('scan_dir', { path: testDir, recursive: recurseSubfolders });
       if (files.length > 0) {
         addFiles(files);
         imageOptions.output_dir = testDir;
@@ -1084,7 +1125,7 @@
     queue.push({
       id,
       kind: 'folder',
-      name: `Proxy Folder ${batchFolderCounter}`,
+      name: `Proxy Node ${batchFolderCounter}`,
       expanded: true,
       status: 'pending',
       // Placeholder option shape — values are not wired to the render pipeline yet.
@@ -1701,7 +1742,12 @@
              : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              : item.mediaType === 'archive'  ? { ...archiveOptions,  output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             :                                 { ...modelOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
+             : item.mediaType === 'model'    ? { ...modelOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'timeline' ? { ...timelineOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'subtitle' ? { ...subtitleOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'ebook'    ? { ...ebookOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'email'    ? { ...emailOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             :                                 { ...fontOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
 
       invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
         .catch(err => { item.status = 'error'; item.error = String(err); checkAllDone(); });
@@ -1749,12 +1795,26 @@
     dragOver = true;
   }
   function onWindowDragleave(e) { if (!e.relatedTarget) dragOver = false; }
-  function onWindowDrop(e) {
+  async function onWindowDrop(e) {
     if (!_isExternalFileDrag(e)) { dragOver = false; return; }
     e.preventDefault();
     dragOver = false;
     const paths = Array.from(e.dataTransfer?.files ?? []).map(f => f.path ?? f.name);
-    if (paths.length) addFiles(paths);
+    if (!paths.length) return;
+    // Expand any dropped directories via scan_dir, honouring the Subfolders
+    // toggle. `file_exists` returns true for dirs; we rely on scan_dir
+    // returning [] for regular files so a single call per path works.
+    const expanded = [];
+    for (const p of paths) {
+      try {
+        const listed = await invoke('scan_dir', { path: p, recursive: recurseSubfolders });
+        if (listed.length > 0) expanded.push(...listed);
+        else expanded.push(p);
+      } catch {
+        expanded.push(p);
+      }
+    }
+    if (expanded.length) addFiles(expanded);
   }
 
   // ── Presets ────────────────────────────────────────────────────────────────
@@ -1787,6 +1847,11 @@
     else if (cat === 'document') documentOptions.output_format = globalOutputFormat;
     else if (cat === 'archive')  archiveOptions.output_format  = globalOutputFormat;
     else if (cat === 'model')    modelOptions.output_format    = globalOutputFormat;
+    else if (cat === 'timeline') timelineOptions.output_format = globalOutputFormat;
+    else if (cat === 'font')     fontOptions.output_format     = globalOutputFormat;
+    else if (cat === 'subtitle') subtitleOptions.output_format = globalOutputFormat;
+    else if (cat === 'ebook')    ebookOptions.output_format    = globalOutputFormat;
+    else if (cat === 'email')    emailOptions.output_format    = globalOutputFormat;
   });
 
   // Built-in presets — always available, never persisted to backend
@@ -2041,7 +2106,7 @@
       // Dev / data-nerd formats — placeholder scaffolding.
       { id: 'sqlite',  label: 'SQLite',  todo: true, preview: true },
       { id: 'parquet', label: 'Parquet', todo: true, preview: true },
-      { id: 'ipynb',   label: 'Jupyter', todo: true, preview: true },
+      { id: 'ipynb',   label: 'Jupyter' },
     ]},
     { label: 'Document', cat: 'document', fmts: [
       { id: 'html' }, { id: 'pdf' }, { id: 'txt' }, { id: 'md' },
@@ -2069,50 +2134,56 @@
     // Ebooks — Calibre managed install provides ebook-convert across all
     // these formats plus PDF/EPUB conversion.
     { label: 'Ebook', cat: 'ebook', fmts: [
-      { id: 'epub',  label: 'EPUB',  todo: true, preview: true },
-      { id: 'mobi',  label: 'MOBI',  todo: true, preview: true },
-      { id: 'azw3',  label: 'AZW3',  todo: true, preview: true },
-      { id: 'fb2',   label: 'FB2',   todo: true, preview: true },
-      { id: 'lit',   label: 'LIT',   todo: true, preview: true },
+      { id: 'epub',  label: 'EPUB' },
+      { id: 'mobi',  label: 'MOBI' },
+      { id: 'azw3',  label: 'AZW3' },
+      { id: 'fb2',   label: 'FB2'  },
+      { id: 'lit',   label: 'LIT'  },
     ]},
     // Subtitle file-format conversion (distinct from the Subtitling
     // operation — this is SRT-to-VTT style plumbing, not video embed/burn).
     { label: 'Subtitle', cat: 'subtitle', fmts: [
-      { id: 'srt',  label: 'SRT',  todo: true, preview: true },
-      { id: 'vtt',  label: 'VTT',  todo: true, preview: true },
-      { id: 'ass',  label: 'ASS',  todo: true, preview: true },
-      { id: 'ssa',  label: 'SSA',  todo: true, preview: true },
+      { id: 'srt',  label: 'SRT'  },
+      { id: 'vtt',  label: 'VTT'  },
+      { id: 'ass',  label: 'ASS'  },
+      { id: 'ssa',  label: 'SSA'  },
+      // ffmpeg can't read sbv and can only write ttml — keep both deferred.
       { id: 'sbv',  label: 'SBV',  todo: true, preview: true },
       { id: 'ttml', label: 'TTML', todo: true, preview: true },
     ]},
     // Timeline / edit decision lists — pro workflow interop (Premiere,
-    // Resolve, FCP, Avid). OpenTimelineIO is the Rosetta stone format.
+    // Resolve, FCP, Avid). Routed through OpenTimelineIO's `otioconvert`
+    // CLI (the Rosetta stone format). `.xml` (Premiere XML) stays deferred
+    // because the extension is ambiguous with generic data XML — the
+    // backend routes `.xml` to the data pipeline.
     { label: 'Timeline', cat: 'timeline', fmts: [
-      { id: 'edl',    label: 'EDL',     todo: true, preview: true },
-      { id: 'fcpxml', label: 'FCPXML',  todo: true, preview: true },
+      { id: 'edl',    label: 'EDL' },
+      { id: 'fcpxml', label: 'FCPXML' },
       { id: 'xml',    label: 'Premiere XML', todo: true, preview: true },
-      { id: 'otio',   label: 'OTIO',    todo: true, preview: true },
-      { id: 'aaf',    label: 'AAF',     todo: true, preview: true },
+      { id: 'otio',   label: 'OTIO' },
+      { id: 'aaf',    label: 'AAF' },
     ]},
     { label: 'Archive', cat: 'archive', fmts: [
       { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
-      // Disc / comic-book images — scaffolding.
-      { id: 'iso', label: 'ISO',  todo: true, preview: true },
-      { id: 'dmg', label: 'DMG',  todo: true, preview: true },
-      { id: 'cbr', label: 'CBR',  todo: true, preview: true },
-      { id: 'cbz', label: 'CBZ',  todo: true, preview: true },
-      { id: 'rar', label: 'RAR',  todo: true, preview: true },
+      { id: 'iso', label: 'ISO' },
+      { id: 'dmg', label: 'DMG' },
+      { id: 'cbr', label: 'CBR' },
+      { id: 'cbz', label: 'CBZ' },
+      { id: 'rar', label: 'RAR' },
     ]},
+    // Font containers — routed through fonttools (Python). Flavor swap only:
+    // ttf↔otf does not re-encode outlines (glyf vs. CFF is preserved).
     { label: 'Font', cat: 'font', fmts: [
-      { id: 'ttf',   label: 'TTF',   todo: true, preview: true },
-      { id: 'otf',   label: 'OTF',   todo: true, preview: true },
-      { id: 'woff',  label: 'WOFF',  todo: true, preview: true },
-      { id: 'woff2', label: 'WOFF2', todo: true, preview: true },
+      { id: 'ttf',   label: 'TTF' },
+      { id: 'otf',   label: 'OTF' },
+      { id: 'woff',  label: 'WOFF' },
+      { id: 'woff2', label: 'WOFF2' },
     ]},
     { label: 'Email', cat: 'email', fmts: [
+      // MSG (Outlook binary) remains deferred — backend returns a clear error.
       { id: 'msg',  label: 'MSG',  todo: true, preview: true },
-      { id: 'eml',  label: 'EML',  todo: true, preview: true },
-      { id: 'mbox', label: 'MBOX', todo: true, preview: true },
+      { id: 'eml',  label: 'EML'  },
+      { id: 'mbox', label: 'MBOX' },
     ]},
   ];
 
@@ -2135,6 +2206,11 @@
     document: ['document'],
     archive:  ['archive'],
     model:    ['model'],
+    timeline: ['timeline'],
+    font:     ['font'],
+    subtitle: ['subtitle'],
+    ebook:    ['ebook'],
+    email:    ['email'],
   };
   let compatibleOutputCats = $derived(
     selectedItem ? (OUTPUT_CATS_FOR[selectedItem.mediaType] ?? null) : null
@@ -2189,6 +2265,11 @@
     activeOutputCategory === 'document' ? ['document'] :
     activeOutputCategory === 'archive'  ? ['archive'] :
     activeOutputCategory === 'model'    ? ['model'] :
+    activeOutputCategory === 'timeline' ? ['timeline'] :
+    activeOutputCategory === 'font'     ? ['font'] :
+    activeOutputCategory === 'subtitle' ? ['subtitle'] :
+    activeOutputCategory === 'ebook'    ? ['ebook'] :
+    activeOutputCategory === 'email'    ? ['email'] :
     []
   );
 
@@ -2338,19 +2419,19 @@
            data-tauri-drag-region
            style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
                   border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
-        <!-- Left: Proxy Folder (flipped from right) -->
+        <!-- Left: Proxy Node (flipped from right) -->
         <button
           onclick={addBatchFolder}
-          title="Add a proxy folder — batch files together for matched rename / output routing"
+          title="Add a proxy node — batch files together for matched rename / output routing"
           class="btn-bevel flex items-center gap-1 px-2 py-0.5 text-[11px] shrink-0"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-            <line x1="12" y1="11" x2="12" y2="17"/>
-            <line x1="9" y1="14" x2="15" y2="14"/>
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
           </svg>
-          Proxy Folder
+          Proxy Node
         </button>
         <!-- Right: Compact / Expanded segmented (flipped from left) -->
         <div class="btn-segmented flex items-stretch shrink-0">
@@ -2434,16 +2515,21 @@
           onclick={clearQueue}
           disabled={queue.length === 0}
           class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
-        >Clear List</button>
+        >Clear</button>
         <button
           onclick={onBrowse}
           class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
         >Add Files</button>
         <button
+          onclick={() => recurseSubfolders = !recurseSubfolders}
+          data-tooltip="Recurse into subfolders when a directory is added"
+          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0 {recurseSubfolders ? 'is-active' : ''}"
+        >Subfolders</button>
+        <button
           onclick={deselectAll}
           disabled={selectedIds.size === 0}
           class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
-        >Deselect All</button>
+        >Deselect</button>
       </div>
 
       <!-- ── Bottom panel: output + convert + settings ──────────────────────── -->
@@ -3867,7 +3953,7 @@
               <div
                 data-folder-drop={bf.id}
                 role="region"
-                aria-label="Drop files into this proxy folder"
+                aria-label="Drop files into this proxy node"
                 class="shrink-0 w-44 m-4 mr-0 rounded-2xl border-2 border-dashed
                        flex flex-col items-center justify-center gap-3 p-4 text-center
                        transition-all duration-150
@@ -3894,7 +3980,9 @@
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
                        class="text-[var(--accent)]">
-                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12"/>
                   </svg>
                   <input
                     type="text"
@@ -4577,6 +4665,16 @@
           <!-- No user-tunable options for 3D model conversion today —
                assimp picks the format-ID from the chosen output extension.
                Render nothing rather than plastering a placeholder. -->
+        {:else if activeOutputCategory === 'timeline'}
+          <FormatPicker bind:options={timelineOptions} formats={TIMELINE_FORMATS} ariaLabel="Timeline conversion options" />
+        {:else if activeOutputCategory === 'font'}
+          <FormatPicker bind:options={fontOptions} formats={FONT_FORMATS} ariaLabel="Font conversion options" upperCase={false} />
+        {:else if activeOutputCategory === 'subtitle'}
+          <FormatPicker bind:options={subtitleOptions} formats={SUBTITLE_FORMATS} ariaLabel="Subtitle conversion options" />
+        {:else if activeOutputCategory === 'ebook'}
+          <FormatPicker bind:options={ebookOptions} formats={EBOOK_FORMATS} ariaLabel="Ebook conversion options" />
+        {:else if activeOutputCategory === 'email'}
+          <FormatPicker bind:options={emailOptions} formats={EMAIL_FORMATS} ariaLabel="Email conversion options" />
         {:else}
           <div class="flex flex-col items-center justify-center h-full text-center gap-2">
             <p class="text-[11px] text-green-500">Coming soon</p>

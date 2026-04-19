@@ -22,7 +22,8 @@ pub use args::{
 };
 use convert::{
     run_archive_convert, run_audio_convert, run_data_convert, run_document_convert,
-    run_image_convert, run_model_convert, run_video_convert,
+    run_ebook_convert, run_email_convert, run_font_convert, run_image_convert, run_model_convert,
+    run_notebook_convert, run_subtitle_convert, run_timeline_convert, run_video_convert,
 };
 pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
@@ -358,10 +359,31 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" => "audio",
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
         "md" | "markdown" | "html" | "htm" | "txt" => "document",
-        "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" => "archive",
+        "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" | "iso" | "dmg" | "cbz"
+        | "cbr" => "archive",
         // 3D models — routed through assimp CLI. See args/model.rs for
         // the full extension→assimp-format-id mapping.
         "obj" | "stl" | "ply" | "gltf" | "glb" | "dae" | "fbx" | "3ds" | "x3d" => "model",
+        // Font containers — routed through fonttools (Python). See
+        // convert/font.rs for the ttf/otf/woff/woff2 matrix.
+        "ttf" | "otf" | "woff" | "woff2" => "font",
+        // Timeline / edit-decision-list formats — routed through
+        // OpenTimelineIO's `otioconvert` CLI. `xml` is deliberately not
+        // listed here: the extension is ambiguous (Premiere XML vs.
+        // generic data XML) and already routes to "data". Premiere XML
+        // interop is deferred until we have a disambiguation signal.
+        "edl" | "fcpxml" | "otio" | "aaf" => "timeline",
+        // Subtitle files — routed through ffmpeg. `sbv` and `ttml` are
+        // not natively supported by ffmpeg as input/output respectively;
+        // they remain flagged `todo` in the frontend.
+        "srt" | "vtt" | "ass" | "ssa" => "subtitle",
+        // Ebooks — Calibre's `ebook-convert` CLI handles the whole matrix.
+        // `pdf` stays routed to "document"; Calibre reads PDFs for ebook
+        // OUTPUT via the input-extension branch isn't needed because pdf
+        // output still targets the document pipeline.
+        "epub" | "mobi" | "azw3" | "fb2" | "lit" => "ebook",
+        // Email — pure-Rust eml ↔ mbox. `msg` is deferred.
+        "eml" | "mbox" => "email",
         _ => "unknown",
     }
 }
@@ -441,9 +463,21 @@ fn convert_file(
         return Err(format!("Invalid output format: {ext}"));
     }
 
+    // Route by INPUT extension first for pipelines where the backend is
+    // picked by what we're reading, not what we're writing (ipynb → md/py/html
+    // would otherwise route through the document pipeline, which doesn't
+    // know how to parse a Jupyter notebook). Mirror the extract_audio
+    // pattern below.
+    let input_ext = Path::new(&input_path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
     // Route by input media type when extract_audio is set (input is video, output is audio)
     let mtype = if options.extract_audio == Some(true) {
         "audio"
+    } else if input_ext == "ipynb" {
+        "notebook"
     } else {
         let t = classify_ext(&ext);
         if t == "unknown" {
@@ -519,6 +553,52 @@ fn convert_file(
                 Arc::clone(&cancelled),
             ),
             "model" => run_model_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "font" => run_font_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "timeline" => run_timeline_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "subtitle" => run_subtitle_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "ebook" => run_ebook_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
+            "email" => run_email_convert(&window, &job_id, &input_path, &output_path, &options),
+            "notebook" => run_notebook_convert(
                 &window,
                 &job_id,
                 &input_path,
