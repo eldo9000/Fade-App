@@ -37,6 +37,17 @@ html, body, #app {
 }
 .animate-fade-in { animation: fade-in 150ms ease-out both; }
 
+/* Footer "Fade v0.1.0" pulse — 20s cycle: 10s hold, 5s up to accent, 5s back. */
+@keyframes fade-pulse {
+  0%, 50%   { color: rgba(255,255,255,0.2); }
+  75%       { color: var(--accent); }
+  100%      { color: rgba(255,255,255,0.2); }
+}
+.fade-pulse {
+  color: rgba(255,255,255,0.2);
+  animation: fade-pulse 20s ease-in-out infinite;
+}
+
 /* ── Bevel buttons ─────────────────────────────────────────────────────────
    A small hard-edge "doubling" shadow under each button. Enabled buttons get
    an accent (blue) bevel so the eye reads them as actionable; disabled
@@ -44,28 +55,20 @@ html, body, #app {
    Used for the queue header controls (Clear / Browse / Deselect / view
    toggle / Proxy Folder). */
 .btn-bevel {
-  /* Slightly brighter than the queue header so the chip floats off it,
-     but nowhere near a hard black contrast. */
   background: color-mix(in srgb, #fff 6%, var(--surface-raised));
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 2px 0 0 color-mix(in srgb, #fff 22%, var(--surface-raised));
-  transition: background 120ms, color 120ms, transform 80ms, box-shadow 120ms;
+  transition: background 120ms, color 120ms;
   font-weight: 400;
 }
 .btn-bevel:hover:not(:disabled) {
   background: color-mix(in srgb, #fff 11%, var(--surface-raised));
   color: var(--text-primary);
 }
-.btn-bevel:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: 0 1px 0 0 color-mix(in srgb, #fff 22%, var(--surface-raised));
-}
 .btn-bevel:disabled {
   cursor: not-allowed;
   color: color-mix(in srgb, var(--text-secondary) 60%, transparent);
-  box-shadow: 0 2px 0 0 color-mix(in srgb, var(--border) 90%, transparent);
 }
 /* "Selected / on" state for segmented toggles like Compact/Expanded */
 .btn-bevel.is-active {

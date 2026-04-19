@@ -2451,10 +2451,7 @@
         <button
           onclick={() => { globalOutputFormat = null; }}
           data-tooltip="Target output format for every queued file. Click to pick a new format — returns to the format picker grid below."
-          class="px-3 py-1 rounded text-[13px] font-semibold border transition-colors flex items-center gap-1.5 shrink-0
-                 {globalOutputFormat
-                   ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
-                   : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+          class="btn-bevel px-3 py-1 text-[13px] flex items-center gap-1.5 shrink-0 {globalOutputFormat ? 'is-active' : ''}"
         >
           {#if globalOutputFormat}
             {FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)?.label?.toUpperCase() ?? globalOutputFormat.toUpperCase()}
@@ -2605,7 +2602,7 @@
       </div>
 
       <!-- ── Bottom footer: hint text + zoom controls ────────────────────── -->
-      <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
+      <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 pt-2.5 pb-1"
            style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
 
         <!-- Hint text — opacity + transition driven by shared tooltip store
@@ -2620,10 +2617,8 @@
           </p>
         </div>
 
-        <!-- Version + zoom -->
+        <!-- Zoom (left) + version (right, tucked low with slow pulse) -->
         <div class="flex items-center justify-between gap-0.5">
-          <span class="text-[10px] font-medium select-none"
-                style="color:rgba(255,255,255,0.2)">Fade v0.1.0</span>
           <div class="flex items-center gap-0.5">
           <button
             onclick={(e) => zoomClick(zoom.stepOut, e)}
@@ -2651,6 +2646,7 @@
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
             style="color:rgba(255,255,255,0.45)">+</button>
           </div>
+          <span class="fade-pulse text-[10px] font-medium select-none">Fade v0.1.0</span>
         </div>
       </div>
 
