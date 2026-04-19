@@ -2898,7 +2898,7 @@
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
-    <aside class="{queueCompact ? 'w-[273px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative z-50"
+    <aside class="{queueCompact ? 'w-[273px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative {settingsOpen ? 'z-[500]' : 'z-50'}"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights.
