@@ -739,6 +739,22 @@ enum OperationPayload {
         input_paths: Vec<String>,
         output_path: String,
     },
+    AudioNormalize {
+        input_path: String,
+        output_path: String,
+        mode: operations::analysis::audio_norm::NormMode,
+        target_i: f64,
+        target_tp: f64,
+        target_lra: f64,
+        linear: bool,
+    },
+    SilenceRemove {
+        input_path: String,
+        output_path: String,
+        threshold_db: f64,
+        min_silence_s: f64,
+        pad_ms: u32,
+    },
     Conform {
         input_path: String,
         output_path: String,
@@ -880,6 +896,48 @@ fn run_operation(
             )
             .map(|_| Some(output_path.clone())),
 
+            OperationPayload::AudioNormalize {
+                input_path,
+                output_path,
+                mode,
+                target_i,
+                target_tp,
+                target_lra,
+                linear,
+            } => operations::analysis::audio_norm::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *mode,
+                *target_i,
+                *target_tp,
+                *target_lra,
+                *linear,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
+            OperationPayload::SilenceRemove {
+                input_path,
+                output_path,
+                threshold_db,
+                min_silence_s,
+                pad_ms,
+            } => operations::silence_remove::run(
+                &window,
+                &job_id,
+                input_path,
+                output_path,
+                *threshold_db,
+                *min_silence_s,
+                *pad_ms,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            )
+            .map(|_| Some(output_path.clone())),
+
             OperationPayload::Conform {
                 input_path,
                 output_path,
@@ -1003,6 +1061,14 @@ pub fn run() {
             diag_clear,
             run_operation,
             get_streams,
+            operations::analysis::loudness::analyze_loudness,
+            operations::analysis::cut_detect::analyze_cut_detect,
+            operations::analysis::black_detect::analyze_black_detect,
+            operations::analysis::vmaf::analyze_vmaf,
+            operations::analysis::framemd5::analyze_framemd5,
+            operations::subtitling::probe::probe_subtitles,
+            operations::subtitling::lint::lint_subtitle,
+            operations::subtitling::diff::diff_subtitle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

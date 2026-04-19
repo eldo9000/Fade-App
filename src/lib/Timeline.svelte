@@ -3,7 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { setHint } from './stores/tooltip.svelte.js';
 
-  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false, replacedAudioMode = false } = $props();
+  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false, replacedAudioMode = false, analysisMode = false, analysisHistogramDim = false, analysisHistogram = null } = $props();
 
   // ── Media element ─────────────────────────────────────────────────────────
   // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives
@@ -825,7 +825,11 @@
   let widthPct  = $derived(zoom * 100);
   let leftPct   = $derived((0.5 - panCenter * zoom) * 100);
   // Bars get visually thin at low zoom; boost opacity there. 2× at zoom=1 → baseline at zoom≥4.
-  let waveOpacity = $derived(0.525 * (2 - Math.min(1, (zoom - 1) / 3)));
+  // In analysis mode with a histogram overlay (Loudness / Audio Norm), the
+  // waveform fades to 50% so the overlaid measurement curve reads clearly.
+  let waveOpacity = $derived(
+    0.525 * (2 - Math.min(1, (zoom - 1) / 3)) * (analysisHistogramDim ? 0.5 : 1)
+  );
 
   function _clampPan(p, z) {
     if (z <= 1) return 0.5;
@@ -955,7 +959,9 @@
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   }
 
-  const showTrim   = $derived(options != null && duration != null);
+  // analysisMode forces trim/fade handles off — analysis tools don't produce
+  // output files, so the user can't crop them and the UI would only mislead.
+  const showTrim   = $derived(options != null && duration != null && !analysisMode);
 </script>
 
 <svelte:window onmousemove={onWindowMouseMove} onmouseup={onWindowMouseUp}
@@ -1143,6 +1149,23 @@
           <span style="font-size:13px; font-weight:500; color:rgba(255,255,255,0.25)">Loading</span>
         </div>
       {/if}
+
+      {#if analysisHistogram && analysisHistogram.length > 0}
+        <!-- Analysis histogram overlay (e.g. momentary LUFS / peak envelope).
+             Drawn as a polyline across the full track; Y is pre-normalized
+             into 0..1 by the caller. Opacity is high enough to read clearly
+             over the dimmed waveform below. -->
+        <svg class="absolute inset-0 w-full h-full pointer-events-none"
+             preserveAspectRatio="none" viewBox="0 0 100 100"
+             xmlns="http://www.w3.org/2000/svg">
+          <polyline
+            points={analysisHistogram.map((v, i) => `${(i / (analysisHistogram.length - 1)) * 100},${100 - Math.max(0, Math.min(1, v)) * 100}`).join(' ')}
+            fill="none"
+            stroke="var(--accent)"
+            stroke-width="1.5"
+            vector-effect="non-scaling-stroke"/>
+        </svg>
+      {/if}
     </div>
 
     {#if showTrim}
@@ -1242,7 +1265,7 @@
            underneath. Transform + track position wrappers duplicated so
            zoom/pan/silence math matches the viewport exactly. -->
       {#if showTrim}
-        <div class="absolute pointer-events-none" style="left:12px; right:12px; top:6px; bottom:4px; z-index:50">
+        <div class="absolute pointer-events-none" style="left:12px; right:12px; top:6px; bottom:38px; z-index:50">
           <div class="absolute inset-y-0 overflow-visible" style="left:{leftPct}%; width:{widthPct}%; transition:left 0.18s ease, width 0.18s ease">
             <div class="absolute inset-y-0 overflow-visible" style="left:{silFrontFrac * 100}%; width:{audioWidthFrac * 100}%; transition:left 0.18s ease, width 0.18s ease">
               <!-- Left handle -->

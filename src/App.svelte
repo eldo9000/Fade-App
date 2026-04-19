@@ -69,6 +69,18 @@
   let replaceAudioOffsetMs = $state(0); // audio offset in ms (negative = earlier)
   let replaceAudioFitLength = $state(false); // true = time-stretch replacement to match video length
   let replaceAudioAutoSync = $state(false); // one-shot: xcorr align + pitch-preserved stretch + SR/codec match
+  // ── Rewrap op ──────────────────────────────────────────────────────────
+  // Output container. 4 buttons in the panel toggle this; Run reads it.
+  let rewrapFormat = $state('mp4');      // 'mp4' | 'mkv' | 'mov' | 'webm'
+  // ── Extract op ─────────────────────────────────────────────────────────
+  // Which streams to pull out. Audio / subtitle modes extract every matching
+  // stream into its own file; a per-track picker can layer on later once
+  // ffprobe results land in the UI.
+  let extractMode = $state('video');     // 'video' | 'audio' | 'subtitle' | 'all'
+  // ── Merge op ───────────────────────────────────────────────────────────
+  // Ordered list of queue item ids. Add from queue pushes selectedId; the
+  // list is rendered below with remove + reorder buttons.
+  let mergeSelection = $state([]);       // string[] (queue item ids, display order)
   // ── Conform op ─────────────────────────────────────────────────────────
   let conformFps = $state('23.976');   // '23.976' | '24' | '25' | '29.97' | '30' | '50' | '59.94' | '60' | 'source'
   let conformResolution = $state('source'); // 'source' | '3840x2160' | '1920x1080' | '1280x720' | '854x480'
@@ -76,6 +88,56 @@
   let conformFpsAlgo = $state('drop');  // 'drop' (fps filter) · 'blend' (framerate filter) · 'mci' (minterpolate)
   let conformScaleAlgo = $state('lanczos'); // 'bilinear' · 'bicubic' · 'lanczos' · 'spline'
   let conformDither = $state(true);     // 10→8-bit dither (error_diffusion)
+  // ── Silence Remover ────────────────────────────────────────────────────
+  // ffmpeg `silenceremove` filter. Threshold in dB; min silence duration;
+  // optional padding kept around each kept region so speech doesn't clip.
+  let silenceThresholdDb = $state(-30);  // -dB below which counts as silence
+  let silenceMinDurS     = $state(0.5);  // gaps shorter than this are kept
+  let silencePadMs       = $state(100);  // leave N ms of silence around keeps
+  // ── Analysis ops ───────────────────────────────────────────────────────
+  // All seven analysis tools share the same pattern: inputs + Run + results panel.
+  // Backend wiring lands in Phase 2; for now the Run buttons are inert stubs.
+  // Loudness & TP
+  let loudnessTarget = $state('-23');       // '-23' broadcast · '-16' streaming · '-14' Spotify · 'custom'
+  let loudnessTargetCustom = $state(-23);
+  let loudnessTruePeak = $state(true);      // peak=true flag (4× oversample, slower but accurate)
+  let loudnessResult = $state(null);        // { I, LRA, TP, threshold } | null
+  // Audio Norm
+  let audioNormMode = $state('ebu');        // 'ebu' (two-pass loudnorm) · 'peak' · 'rg' (ReplayGain tag-only)
+  let audioNormTargetI = $state(-16);
+  let audioNormTargetTP = $state(-1.5);
+  let audioNormTargetLRA = $state(11);
+  let audioNormLinear = $state(true);       // linear=true preserves dynamics in two-pass
+  // Cut Detection
+  let cutDetectAlgo = $state('scdet');      // 'scdet' (FFmpeg ≥4.4) · 'scene'
+  let cutDetectThreshold = $state(10);      // scdet: 5–15 · scene: 0.2–0.5 (scaled at runtime)
+  let cutDetectMinShotS = $state(0.5);      // minimum shot length in seconds (post-filter)
+  let cutDetectResults = $state([]);        // [{ time, score }]
+  // Black Detection
+  let blackDetectMinDur = $state(0.1);      // d= min black duration
+  let blackDetectPixTh = $state(0.10);      // pix_th
+  let blackDetectPicTh = $state(0.98);      // pic_th
+  let blackDetectResults = $state([]);      // [{ start, end, duration }]
+  // VMAF
+  let vmafReferencePath = $state(null);     // reference (source-of-truth) video
+  let vmafDistortedPath = $state(null);     // distorted (encoded) video
+  let vmafModel = $state('hd');             // 'hd' (vmaf_v0.6.1) · '4k' (vmaf_4k_v0.6.1) · 'phone'
+  let vmafSubsample = $state(1);            // n_subsample — 1 = every frame, 5 = every 5th
+  let vmafResult = $state(null);            // { mean, min, max, harmonic_mean }
+  // FrameMD5
+  let frameMd5Stream = $state('video');     // 'video' · 'audio' · 'both'
+  let frameMd5DiffPath = $state(null);      // optional second file for diff mode
+  let frameMd5Result = $state(null);        // { hashes, firstDivergence? }
+  // Subtitling · analyze tab extras
+  let subLintCpsMax = $state(21);           // chars-per-second ceiling
+  let subLintMinDurMs = $state(1000);       // <1s → warn
+  let subLintMaxDurMs = $state(7000);       // >7s → warn
+  let subLintLineMaxChars = $state(42);
+  let subLintMaxLines = $state(2);
+  let subDiffReferencePath = $state(null);  // optional reference subtitle for diff
+  let subLintResults = $state(null);        // LintIssue[] | null
+  let subDiffResults = $state(null);        // SubDiffLine[] | null
+  let subProbeResults = $state(null);       // SubStream[] | null
   const OPERATIONS = [
     { id: 'cut-noenc',      label: 'Cut/Extract' },
     { id: 'replace-audio',  label: 'Replace Audio' },
@@ -85,6 +147,14 @@
     { id: 'extract',        label: 'Extract' },
     { id: 'subtitling',     label: 'Subtitling' },
     { id: 'video-inserts',  label: 'Video Inserts' },
+    { id: 'silence-remove', label: 'Silence Remover' },
+    // Analysis ops — reports, no output file.
+    { id: 'loudness',       label: 'Loudness & True Peak' },
+    { id: 'audio-norm',     label: 'Audio Normalize' },
+    { id: 'cut-detect',     label: 'Cut Detection' },
+    { id: 'black-detect',   label: 'Black Detection' },
+    { id: 'vmaf',           label: 'VMAF' },
+    { id: 'framemd5',       label: 'FrameMD5' },
   ];
   function enterOperation(id) { selectedOperation = id; operationsMode = true; }
   function exitOperationsMode() { operationsMode = false; selectedOperation = null; }
@@ -779,6 +849,20 @@
     document.documentElement.style.zoom = String(zoom.level);
     window.addEventListener('keydown', zoom.handleKey);
 
+    // Mouse back button (X1) → click the first on-screen [data-back-button].
+    // Preempt in mousedown so the webview doesn't attempt history nav first;
+    // auxclick covers browsers that only surface X1 there.
+    const handleMouseBack = (ev) => {
+      if (ev.button !== 3) return;
+      const btn = document.querySelector('[data-back-button]');
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      btn.click();
+    };
+    window.addEventListener('mousedown', handleMouseBack);
+    window.addEventListener('auxclick', handleMouseBack);
+
     // Pre-load Test-Files folder
     try {
       const testDir = '/Users/eldo/Desktop/Test-Files';
@@ -1065,6 +1149,26 @@
     e.target.value = '';
   }
 
+  // ── Auxiliary single-file picker ───────────────────────────────────────────
+  // Shared hidden <input> that ops pages (VMAF reference, subtitle diff, etc.)
+  // drive through pickAuxFile(setter). Replaces the earlier 'pending-pick'
+  // placeholder strings. Phase 2 wiring can swap this for the richer
+  // plugin-dialog API if/when we add that dep.
+  let auxFileInput = $state(null);
+  let _auxFileTarget = null;
+  function pickAuxFile(setter, accept = '') {
+    _auxFileTarget = setter;
+    if (!auxFileInput) return;
+    auxFileInput.accept = accept;
+    auxFileInput.click();
+  }
+  function onAuxFileChange(e) {
+    const f = e.target.files?.[0];
+    if (f && _auxFileTarget) _auxFileTarget(f.path ?? f.name);
+    _auxFileTarget = null;
+    e.target.value = '';
+  }
+
   // ── Cancel / Pause ─────────────────────────────────────────────────────────
 
   async function cancelJob(id) {
@@ -1106,6 +1210,182 @@
       : `${dir}/${stem}.${newExt}`;
   }
 
+  // ── Operations: mechanical ops (rewrap, extract, cut, merge, replace-audio)
+  // All share the same shape: set status, compute output path, invoke
+  // `run_operation`, and let the generic job-progress / job-done listeners
+  // handle UI updates (same as runConform below).
+
+  async function runRewrap() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    const outPath = expectedOutputPath(selectedItem, rewrapFormat, 'rewrap', outputDir, outputSeparator);
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: { type: 'rewrap', input_path: selectedItem.path, output_path: outPath },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Rewrap failed: ${err}`, 'error');
+    }
+  }
+
+  async function runCut() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    const opts = selectedItem.mediaType === 'video' ? videoOptions : audioOptions;
+    const outExt = selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
+    const outPath = expectedOutputPath(selectedItem, outExt, 'cut', outputDir, outputSeparator);
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'cut',
+          input_path: selectedItem.path,
+          start_secs: opts.trim_start ?? null,
+          end_secs: opts.trim_end ?? null,
+          output_path: outPath,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Cut failed: ${err}`, 'error');
+    }
+  }
+
+  async function runReplaceAudio() {
+    if (!selectedItem || selectedItem.mediaType !== 'video') {
+      setStatus('Select a video first', 'error'); return;
+    }
+    if (!replaceAudioPath) { setStatus('Pick a replacement audio file', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    const outPath = expectedOutputPath(selectedItem, selectedItem.ext || 'mp4', 'replaced', outputDir, outputSeparator);
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'replace_audio',
+          video_path: selectedItem.path,
+          audio_path: replaceAudioPath,
+          output_path: outPath,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Replace audio failed: ${err}`, 'error');
+    }
+  }
+
+  async function runMerge() {
+    if (mergeSelection.length < 2) {
+      setStatus('Add at least 2 files to merge', 'error'); return;
+    }
+    const items = mergeSelection
+      .map(id => queue.find(q => q.id === id))
+      .filter(Boolean);
+    if (items.length < 2) { setStatus('Merge list has missing items', 'error'); return; }
+
+    const first = items[0];
+    const outExt = first.ext || 'mp4';
+    const outPath = expectedOutputPath(first, outExt, 'merged', outputDir, outputSeparator);
+
+    first.status = 'converting';
+    first.percent = 0;
+    first.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: first.id,
+        operation: {
+          type: 'merge',
+          input_paths: items.map(i => i.path),
+          output_path: outPath,
+        },
+      });
+    } catch (err) {
+      first.status = 'error';
+      first.error = String(err);
+      setStatus(`Merge failed: ${err}`, 'error');
+    }
+  }
+
+  async function runExtract() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    let streams = [];
+    try {
+      streams = await invoke('get_streams', { inputPath: selectedItem.path });
+    } catch (err) {
+      setStatus(`Extract: probe failed: ${err}`, 'error');
+      return;
+    }
+    // Filter streams by mode. For 'video' we take the first video stream
+    // (one output). For 'audio' / 'subtitle' / 'all' we write one file per
+    // matching stream — keeps the per-track UI deferred to a later pass.
+    let targets = [];
+    if (extractMode === 'video') {
+      const v = streams.find(s => s.stream_type === 'video');
+      if (v) targets = [v];
+    } else if (extractMode === 'all') {
+      targets = streams.filter(s => ['video', 'audio', 'subtitle'].includes(s.stream_type));
+    } else {
+      targets = streams.filter(s => s.stream_type === extractMode);
+    }
+    if (targets.length === 0) {
+      setStatus(`No ${extractMode} streams found`, 'error'); return;
+    }
+
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+
+    for (const s of targets) {
+      // Pick an output extension matching the stream type/codec.
+      const ext = s.stream_type === 'video'
+        ? (s.codec === 'h264' ? 'h264' : s.codec === 'hevc' ? 'hevc' : 'mkv')
+        : s.stream_type === 'audio'
+        ? (s.codec === 'aac' ? 'aac' : s.codec === 'mp3' ? 'mp3' : s.codec === 'opus' ? 'opus' : s.codec === 'flac' ? 'flac' : 'mka')
+        : s.stream_type === 'subtitle'
+        ? (s.codec === 'subrip' ? 'srt' : s.codec === 'ass' || s.codec === 'ssa' ? 'ass' : s.codec === 'webvtt' ? 'vtt' : 'mks')
+        : 'bin';
+      const suffix = targets.length > 1
+        ? `extract_${s.stream_type}_${s.index}`
+        : `extract_${s.stream_type}`;
+      const outPath = expectedOutputPath(selectedItem, ext, suffix, outputDir, outputSeparator);
+      // Each extract is its own job; last one reuses selectedItem.id so the UI
+      // can reflect progress; earlier ones use a derived id so they don't
+      // stomp the queue row (we still surface errors via status).
+      const jobId = targets.length === 1 || s === targets[targets.length - 1]
+        ? selectedItem.id
+        : `${selectedItem.id}__extract_${s.index}`;
+      try {
+        await invoke('run_operation', {
+          jobId,
+          operation: {
+            type: 'extract',
+            input_path: selectedItem.path,
+            stream_index: s.index,
+            stream_type: s.stream_type,
+            output_path: outPath,
+          },
+        });
+      } catch (err) {
+        setStatus(`Extract stream ${s.index} failed: ${err}`, 'error');
+      }
+    }
+  }
+
   // ── Operations: run Conform on the selected item ──────────────────────────
   async function runConform() {
     if (!selectedItem || selectedItem.mediaType !== 'video') {
@@ -1139,6 +1419,217 @@
       selectedItem.status = 'error';
       selectedItem.error = String(err);
       setStatus(`Conform failed: ${err}`, 'error');
+    }
+  }
+
+  // ── Analysis ops (read-only — no job pipeline) ────────────────────────────
+
+  async function runLoudness() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    const target = loudnessTarget === 'custom'
+      ? Number(loudnessTargetCustom)
+      : Number(loudnessTarget);
+    loudnessResult = null;
+    setStatus('Measuring loudness…', 'info');
+    try {
+      loudnessResult = await invoke('analyze_loudness', {
+        inputPath: selectedItem.path,
+        targetI: target,
+        targetTp: -2.0,
+        truePeak: loudnessTruePeak,
+      });
+      setStatus('Loudness measured', 'success');
+    } catch (err) {
+      setStatus(`Loudness failed: ${err}`, 'error');
+    }
+  }
+
+  async function runCutDetect() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    cutDetectResults = [];
+    setStatus('Detecting cuts…', 'info');
+    try {
+      const res = await invoke('analyze_cut_detect', {
+        inputPath: selectedItem.path,
+        algo: cutDetectAlgo,
+        threshold: Number(cutDetectThreshold),
+        minShotS: Number(cutDetectMinShotS),
+      });
+      cutDetectResults = res.map(c => ({
+        time: c.time.toFixed(3),
+        score: c.score.toFixed(2),
+      }));
+      setStatus(`${cutDetectResults.length} cuts`, 'success');
+    } catch (err) {
+      setStatus(`Cut detect failed: ${err}`, 'error');
+    }
+  }
+
+  async function runBlackDetect() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    blackDetectResults = [];
+    setStatus('Detecting black frames…', 'info');
+    try {
+      const res = await invoke('analyze_black_detect', {
+        inputPath: selectedItem.path,
+        minDuration: Number(blackDetectMinDur),
+        pixTh: Number(blackDetectPixTh),
+        picTh: Number(blackDetectPicTh),
+      });
+      blackDetectResults = res.map(b => ({
+        start: b.start.toFixed(3),
+        end: b.end.toFixed(3),
+        duration: b.duration.toFixed(3),
+      }));
+      setStatus(`${blackDetectResults.length} black intervals`, 'success');
+    } catch (err) {
+      setStatus(`Black detect failed: ${err}`, 'error');
+    }
+  }
+
+  async function runVmaf() {
+    if (!vmafReferencePath || !vmafDistortedPath) return;
+    vmafResult = null;
+    setStatus('Computing VMAF…', 'info');
+    try {
+      const r = await invoke('analyze_vmaf', {
+        referencePath: vmafReferencePath,
+        distortedPath: vmafDistortedPath,
+        model: vmafModel,
+        subsample: Number(vmafSubsample),
+      });
+      vmafResult = {
+        mean: r.mean.toFixed(2),
+        min: r.min.toFixed(2),
+        max: r.max.toFixed(2),
+        harmonic_mean: r.harmonic_mean.toFixed(2),
+      };
+      setStatus('VMAF complete', 'success');
+    } catch (err) {
+      setStatus(`VMAF failed: ${err}`, 'error');
+    }
+  }
+
+  async function runFrameMd5() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    frameMd5Result = null;
+    setStatus('Hashing frames…', 'info');
+    try {
+      const r = await invoke('analyze_framemd5', {
+        inputPath: selectedItem.path,
+        stream: frameMd5Stream,
+        diffPath: frameMd5DiffPath,
+      });
+      frameMd5Result = {
+        hashes: r.hashes,
+        firstDivergence: r.first_divergence,
+      };
+      setStatus('FrameMD5 complete', 'success');
+    } catch (err) {
+      setStatus(`FrameMD5 failed: ${err}`, 'error');
+    }
+  }
+
+  async function runAudioNorm() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    const outExt = selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
+    const outPath = expectedOutputPath(selectedItem, outExt, 'normalized', outputDir, outputSeparator);
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'audio_normalize',
+          input_path: selectedItem.path,
+          output_path: outPath,
+          mode: audioNormMode,                  // 'ebu' | 'peak' | 'rg'
+          target_i: Number(audioNormTargetI),
+          target_tp: Number(audioNormTargetTP),
+          target_lra: Number(audioNormTargetLRA),
+          linear: audioNormLinear,
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Audio normalize failed: ${err}`, 'error');
+    }
+  }
+
+  async function runSilenceRemove() {
+    if (!selectedItem) { setStatus('Select a file first', 'error'); return; }
+    if (selectedItem.status === 'converting') return;
+    const outExt = selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
+    const outPath = expectedOutputPath(selectedItem, outExt, 'unsilenced', outputDir, outputSeparator);
+    selectedItem.status = 'converting';
+    selectedItem.percent = 0;
+    selectedItem.error = null;
+    try {
+      await invoke('run_operation', {
+        jobId: selectedItem.id,
+        operation: {
+          type: 'silence_remove',
+          input_path: selectedItem.path,
+          output_path: outPath,
+          threshold_db: Number(silenceThresholdDb),
+          min_silence_s: Number(silenceMinDurS),
+          pad_ms: Number(silencePadMs),
+        },
+      });
+    } catch (err) {
+      selectedItem.status = 'error';
+      selectedItem.error = String(err);
+      setStatus(`Silence remove failed: ${err}`, 'error');
+    }
+  }
+
+  // ── Subtitling · analyze tab ──────────────────────────────────────────────
+
+  async function runSubLint() {
+    if (!selectedItem) { setStatus('Select a subtitle file first', 'error'); return; }
+    subLintResults = null;
+    try {
+      subLintResults = await invoke('lint_subtitle', {
+        inputPath: selectedItem.path,
+        thresholds: {
+          cps_max: Number(subLintCpsMax),
+          min_dur_ms: Number(subLintMinDurMs),
+          max_dur_ms: Number(subLintMaxDurMs),
+          line_max_chars: Number(subLintLineMaxChars),
+          max_lines: Number(subLintMaxLines),
+        },
+      });
+      setStatus(`${subLintResults.length} lint issues`, 'success');
+    } catch (err) {
+      setStatus(`Subtitle lint failed: ${err}`, 'error');
+    }
+  }
+
+  async function runSubDiff() {
+    if (!selectedItem || !subDiffReferencePath) return;
+    subDiffResults = null;
+    try {
+      subDiffResults = await invoke('diff_subtitle', {
+        aPath: selectedItem.path,
+        bPath: subDiffReferencePath,
+      });
+      setStatus('Subtitle diff complete', 'success');
+    } catch (err) {
+      setStatus(`Subtitle diff failed: ${err}`, 'error');
+    }
+  }
+
+  async function runSubProbe() {
+    if (!selectedItem) { setStatus('Select a video first', 'error'); return; }
+    subProbeResults = null;
+    try {
+      subProbeResults = await invoke('probe_subtitles', { inputPath: selectedItem.path });
+      setStatus(`${subProbeResults.length} subtitle streams`, 'success');
+    } catch (err) {
+      setStatus(`Subtitle probe failed: ${err}`, 'error');
     }
   }
 
@@ -1498,7 +1989,7 @@
     // chain, fps/res change, pixel alteration, timeline mutation).
     { label: 'Processing', cat: 'processing', fmts: [
       { id: 'conform', label: 'Conform', todo: true },
-      { id: 'silence-remove', label: 'Silence Remover', todo: true },
+      { id: 'silence-remove', label: 'Silence Remover' },
       { id: 'video-inserts', label: 'Video Inserts', todo: true },
     ]},
     // Chroma Key — three tiers of background removal / keying.
@@ -1522,15 +2013,17 @@
       { id: 'subtitling', label: 'Subtitling', todo: true, ops: true },
     ]},
     { label: 'Analysis', cat: 'analysis', fmts: [
-      { id: 'loudness', label: 'Loudness & TP', todo: true },
-      { id: 'audio-norm', label: 'Audio Norm', todo: true },
-      { id: 'cut-detect', label: 'Cut Detection', todo: true },
-      { id: 'black-detect', label: 'Black Detection', todo: true },
-      { id: 'vmaf', label: 'VMAF', todo: true },
-      { id: 'framemd5', label: 'FrameMD5', todo: true },
+      // ops:true routes the click into operations mode instead of setting it as
+      // an output format — analysis tools produce reports, not output files.
+      { id: 'loudness', label: 'Loudness & TP', ops: true },
+      { id: 'audio-norm', label: 'Audio Norm', ops: true },
+      { id: 'cut-detect', label: 'Cut Detection', ops: true },
+      { id: 'black-detect', label: 'Black Detection', ops: true },
+      { id: 'vmaf', label: 'VMAF', ops: true },
+      { id: 'framemd5', label: 'FrameMD5', ops: true },
       // Same unified Subtitling page — surfaces from Analysis so users who
       // look for "subtitle lint / diff / detect" find it where they expect.
-      { id: 'subtitling', label: 'Subtitling', todo: true, ops: true },
+      { id: 'subtitling', label: 'Subtitling', ops: true },
     ]},
     { label: 'Burn & Rip', cat: 'burn', fmts: [
       { id: 'dvd', label: 'DVD', todo: true },
@@ -1675,6 +2168,14 @@
     'extract':       ['video'],
     'subtitling':    ['video'],
     'video-inserts': ['video'],
+    'silence-remove': ['video', 'audio'],
+    // Analysis ops
+    'loudness':      ['video', 'audio'],   // needs an audio track
+    'audio-norm':    ['video', 'audio'],
+    'cut-detect':    ['video'],
+    'black-detect': ['video'],
+    'vmaf':          ['video'],            // reference & distorted both video
+    'framemd5':      ['video', 'audio'],   // per-frame hash works on either
   };
   let compatibleTypes = $derived(
     // Operations mode overrides output-category compat
@@ -1804,6 +2305,17 @@
   aria-hidden="true"
 />
 
+<!-- Hidden single-file input shared by auxiliary ops pickers (VMAF ref,
+     subtitle diff, frame-md5 diff, etc.). Target setter is held in JS
+     state between click and change. -->
+<input
+  type="file"
+  bind:this={auxFileInput}
+  onchange={onAuxFileChange}
+  class="hidden"
+  aria-hidden="true"
+/>
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="relative flex h-full bg-[var(--surface)] overflow-hidden select-none"
      ondragover={onWindowDragover}
@@ -1822,66 +2334,47 @@
            "control planes" read as a unified band at the top of the app.
            shrink-0 + outer aside's flex-col means the list below scrolls
            underneath it. -->
-      <div class="flex flex-col items-end gap-1 pl-[64px] pr-2 py-1.5 shrink-0"
+      <div class="flex items-center justify-between gap-1.5 pl-[64px] pr-2 py-1.5 shrink-0"
            data-tauri-drag-region
            style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
                   border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
-        <!-- Row 1: Clear · Browse · Deselect -->
-        <div class="flex items-stretch gap-1.5 w-fit">
+        <!-- Left: Proxy Folder (flipped from right) -->
+        <button
+          onclick={addBatchFolder}
+          title="Add a proxy folder — batch files together for matched rename / output routing"
+          class="btn-bevel flex items-center gap-1 px-2 py-0.5 text-[11px] shrink-0"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <line x1="12" y1="11" x2="12" y2="17"/>
+            <line x1="9" y1="14" x2="15" y2="14"/>
+          </svg>
+          Proxy Folder
+        </button>
+        <!-- Right: Compact / Expanded segmented (flipped from left) -->
+        <div class="btn-segmented flex items-stretch shrink-0">
           <button
-            onclick={clearQueue}
-            disabled={queue.length === 0}
-            class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
-          >Clear</button>
-          <button
-            onclick={onBrowse}
-            class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
-          >Browse…</button>
-          <button
-            onclick={deselectAll}
-            disabled={selectedIds.size === 0}
-            class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
-          >Deselect</button>
-        </div>
-        <!-- Row 2: Compact / Expanded view + Proxy Folder -->
-        <div class="flex items-stretch gap-1.5">
-          <!-- Segmented Compact / Expanded -->
-          <div class="btn-segmented flex items-stretch shrink-0">
-            <button
-              onclick={() => queueCompact = true}
-              title="Compact list"
-              class="btn-bevel btn-seg w-8 flex items-center justify-center {queueCompact ? 'is-active' : 'is-muted'}"
-            >
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
-                <rect y="0"    width="13" height="2" rx="0.5"/>
-                <rect y="3.67" width="13" height="2" rx="0.5"/>
-                <rect y="7.33" width="13" height="2" rx="0.5"/>
-                <rect y="11"   width="13" height="2" rx="0.5"/>
-              </svg>
-            </button>
-            <button
-              onclick={() => queueCompact = false}
-              title="Expanded list"
-              class="btn-bevel btn-seg w-8 flex items-center justify-center {!queueCompact ? 'is-active' : 'is-muted'}"
-            >
-              <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
-                <rect y="0"   width="13" height="3" rx="0.75"/>
-                <rect y="8"   width="13" height="3" rx="0.75"/>
-              </svg>
-            </button>
-          </div>
-          <button
-            onclick={addBatchFolder}
-            title="Add a proxy folder — batch files together for matched rename / output routing"
-            class="btn-bevel flex items-center gap-1 px-2 py-0.5 text-[11px] shrink-0"
+            onclick={() => queueCompact = true}
+            title="Compact list"
+            class="btn-bevel btn-seg w-9 py-1 px-2 flex items-center justify-center {queueCompact ? 'is-active' : 'is-muted'}"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <line x1="12" y1="11" x2="12" y2="17"/>
-              <line x1="9" y1="14" x2="15" y2="14"/>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
+              <rect y="0"    width="13" height="2" rx="0.5"/>
+              <rect y="3.67" width="13" height="2" rx="0.5"/>
+              <rect y="7.33" width="13" height="2" rx="0.5"/>
+              <rect y="11"   width="13" height="2" rx="0.5"/>
             </svg>
-            Proxy Folder
+          </button>
+          <button
+            onclick={() => queueCompact = false}
+            title="Expanded list"
+            class="btn-bevel btn-seg w-8 flex items-center justify-center {!queueCompact ? 'is-active' : 'is-muted'}"
+          >
+            <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
+              <rect y="0"   width="13" height="3" rx="0.75"/>
+              <rect y="8"   width="13" height="3" rx="0.75"/>
+            </svg>
           </button>
         </div>
       </div>
@@ -1931,6 +2424,27 @@
         aria-hidden="true"
         webkitdirectory
       />
+
+      <!-- ── Queue-action bar: Clear / Add / Deselect — lives in its own
+           gray panel above the black control panel, visually separated by
+           a single hairline. Center-justified. ───────────────────────── -->
+      <div class="shrink-0 border-t border-[var(--border)] flex items-center justify-center gap-1.5 px-3 py-1.5"
+           style="background:var(--surface-raised)">
+        <button
+          onclick={clearQueue}
+          disabled={queue.length === 0}
+          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+        >Clear List</button>
+        <button
+          onclick={onBrowse}
+          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+        >Add Files</button>
+        <button
+          onclick={deselectAll}
+          disabled={selectedIds.size === 0}
+          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+        >Deselect All</button>
+      </div>
 
       <!-- ── Bottom panel: output + convert + settings ──────────────────────── -->
       <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 py-2.5"
@@ -2561,6 +3075,27 @@
                 {:else if selectedOperation === 'video-inserts'}
                   Insert a video clip at a specific timecode in the main video. The source is split at the insert point, the clip is placed between the two halves, and everything is rejoined. Stream copy is used when all clips share the same codec and specs.
                   <br/><br/><span class="text-white/35">Mark the insert point on the timeline, then drag the insert clip into position.</span>
+                {:else if selectedOperation === 'silence-remove'}
+                  Detect silent gaps and cut them out. Uses ffmpeg <strong class="text-white/80">silenceremove</strong>. Threshold sets the dBFS floor; anything quieter than that for at least the minimum duration is removed. A padding value keeps a bit of silence around each speech region so onsets don't clip.
+                  <br/><br/><span class="text-white/35">Tune threshold / min duration / padding and Run. Video stream is re-cut to follow the audio.</span>
+                {:else if selectedOperation === 'loudness'}
+                  Measure <strong class="text-white/80">EBU R128</strong> loudness: integrated LUFS (I), loudness range (LRA), and true-peak (dBTP). Read-only analysis — no file is written. True-peak uses 4× oversampling for accuracy and is slower.
+                  <br/><br/><span class="text-white/35">Pick a target preset (broadcast / streaming / Spotify) and Analyze. Results appear below.</span>
+                {:else if selectedOperation === 'audio-norm'}
+                  Normalize audio loudness. <strong class="text-white/80">EBU R128</strong> (two-pass loudnorm, recommended) measures first then applies a matched gain curve; <strong class="text-white/80">Peak</strong> scales the max sample to a ceiling; <strong class="text-white/80">ReplayGain</strong> writes tags without touching samples.
+                  <br/><br/><span class="text-white/35">Choose mode, set targets, Run. Video streams are stream-copied.</span>
+                {:else if selectedOperation === 'cut-detect'}
+                  Find shot/scene changes. <strong class="text-white/80">scdet</strong> (FFmpeg ≥4.4) scores each frame transition; <strong class="text-white/80">scene</strong> uses the classic select filter. Higher threshold = fewer false positives. Downscale first for a 10× speedup.
+                  <br/><br/><span class="text-white/35">Results list timestamps — click any entry to seek the timeline.</span>
+                {:else if selectedOperation === 'black-detect'}
+                  Detect black intervals (fades, slates, leader). Emits start/end/duration for each run longer than the min-duration threshold. Pairs naturally with cut detection for fade-to-black transitions.
+                  <br/><br/><span class="text-white/35">Tune min duration and pixel/picture thresholds, then Analyze.</span>
+                {:else if selectedOperation === 'vmaf'}
+                  Netflix <strong class="text-white/80">VMAF</strong> perceptual quality score comparing a distorted encode against a reference. Outputs a mean score 0–100. Reference and distorted must match in resolution and frame rate — the tool auto-scales both inputs to the model's native size.
+                  <br/><br/><span class="text-white/35">Drop the reference and distorted files, pick a model, Run. Subsample &gt;1 skips frames for speed.</span>
+                {:else if selectedOperation === 'framemd5'}
+                  Emit an MD5 hash per decoded frame for bit-exactness verification. Hashes are over decoded pixels (or PCM samples) so they're codec-agnostic. Diff mode compares two files line-by-line to locate the first frame of divergence.
+                  <br/><br/><span class="text-white/35">Pick streams (video / audio / both). Add a second file to run a diff.</span>
                 {/if}
               </p>
             </div>
@@ -2583,12 +3118,18 @@
                              {cutMode === 'extract' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}"
                     >Extract</button>
                   </div>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run {cutMode === 'cut' ? 'Cut' : 'Extract'}</button>
+                  <button
+                    onclick={() => cutMode === 'cut' ? runCut() : runExtract()}
+                    disabled={!selectedItem || selectedItem.status === 'converting'}
+                    class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                  >Run {cutMode === 'cut' ? 'Cut' : 'Extract'}</button>
                 {:else if selectedOperation === 'replace-audio'}
                   <!-- Row 1: file + track + stretch toggle -->
                   <div class="flex flex-wrap items-center gap-2 w-full">
                     <button
-                      onclick={() => replaceAudioPath = replaceAudioPath ? null : 'pending-pick'}
+                      onclick={() => replaceAudioPath
+                        ? (replaceAudioPath = null)
+                        : pickAuxFile((p) => replaceAudioPath = p, 'audio/*,video/*')}
                       class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
                     >{replaceAudioPath ? 'Clear replacement' : 'Pick audio file…'}</button>
                     <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Keep original tracks</button>
@@ -2620,7 +3161,11 @@
                   </div>
                   <!-- Row 2: Run Replace · long offset slider · numeric readout -->
                   <div class="flex items-center gap-3 w-full">
-                    <button class="shrink-0 px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Replace</button>
+                    <button
+                      onclick={runReplaceAudio}
+                      disabled={!selectedItem || selectedItem.mediaType !== 'video' || !replaceAudioPath || selectedItem.status === 'converting'}
+                      class="shrink-0 px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Replace</button>
                     <div class="flex items-center gap-2 flex-1 min-w-0">
                       <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold shrink-0">Offset</span>
                       <input
@@ -2643,11 +3188,20 @@
                     </div>
                   </div>
                 {:else if selectedOperation === 'rewrap'}
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">MP4</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">MKV</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">MOV</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">WebM</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Rewrap</button>
+                  {#each ['mp4', 'mkv', 'mov', 'webm'] as fmt}
+                    <button
+                      onclick={() => rewrapFormat = fmt}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold border transition-colors
+                             {rewrapFormat === fmt
+                               ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
+                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+                    >{fmt.toUpperCase()}</button>
+                  {/each}
+                  <button
+                    onclick={runRewrap}
+                    disabled={!selectedItem || selectedItem.status === 'converting'}
+                    class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                  >Run Rewrap</button>
                 {:else if selectedOperation === 'conform'}
                   <!-- Row 1: targets -->
                   <div class="flex flex-wrap items-center gap-2 w-full">
@@ -2744,17 +3298,409 @@
                       class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                     >Run Conform</button>
                   </div>
+                {:else if selectedOperation === 'silence-remove'}
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Threshold (dB)</label>
+                      <input type="number" step="1" bind:value={silenceThresholdDb}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Min silence (s)</label>
+                      <input type="number" step="0.05" bind:value={silenceMinDurS}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Pad (ms)</label>
+                      <input type="number" step="10" bind:value={silencePadMs}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <div class="w-full">
+                    <button
+                      onclick={runSilenceRemove}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Silence Remover</button>
+                  </div>
+                {:else if selectedOperation === 'loudness'}
+                  <!-- Row 1: target preset + true-peak toggle -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Target</label>
+                      <select bind:value={loudnessTarget}
+                              class="bg-transparent text-[12px] text-white outline-none font-mono tabular-nums">
+                        <option value="-23">-23 LUFS · Broadcast (EBU R128)</option>
+                        <option value="-16">-16 LUFS · Streaming</option>
+                        <option value="-14">-14 LUFS · Spotify / Apple Music</option>
+                        <option value="custom">Custom…</option>
+                      </select>
+                    </div>
+                    {#if loudnessTarget === 'custom'}
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">LUFS</label>
+                        <input type="number" step="0.5" bind:value={loudnessTargetCustom}
+                               class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      </div>
+                    {/if}
+                    <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
+                           title="4× oversampling for accurate true-peak measurement. Slower but required for broadcast compliance.">
+                      <input type="checkbox" bind:checked={loudnessTruePeak} class="accent-[var(--accent)]"/>
+                      <span class="text-[11px] text-white/70 font-medium">True peak</span>
+                    </label>
+                  </div>
+                  <!-- Row 2: run + results -->
+                  <div class="w-full">
+                    <button
+                      onclick={runLoudness}
+                      disabled={!selectedItem}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Analyze</button>
+                  </div>
+                  <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 font-mono tabular-nums text-[12px] text-white/70">
+                    {#if loudnessResult}
+                      <div class="grid grid-cols-4 gap-2">
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">Integrated</span>{loudnessResult.I} LUFS</div>
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">LRA</span>{loudnessResult.LRA} LU</div>
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">True peak</span>{loudnessResult.TP} dBTP</div>
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">Threshold</span>{loudnessResult.threshold} LUFS</div>
+                      </div>
+                    {:else}
+                      <span class="text-white/30">No results yet — Analyze to measure.</span>
+                    {/if}
+                  </div>
+                {:else if selectedOperation === 'audio-norm'}
+                  <!-- Row 1: mode segmented -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Mode</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => audioNormMode = 'ebu'}
+                              title="Two-pass EBU R128 loudnorm. Most accurate; preserves dynamics with linear=true."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {audioNormMode === 'ebu' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">EBU R128</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => audioNormMode = 'peak'}
+                              title="Scale peak sample to a dBFS ceiling. Fast, no perceptual weighting."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {audioNormMode === 'peak' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Peak</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => audioNormMode = 'rg'}
+                              title="Write ReplayGain tags only. No sample changes. Players apply the gain on playback."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {audioNormMode === 'rg' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">ReplayGain tag</button>
+                    </div>
+                  </div>
+                  <!-- Row 2: targets (EBU only shows LRA) -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">{audioNormMode === 'peak' ? 'dBFS' : 'I'}</label>
+                      <input type="number" step="0.5" bind:value={audioNormTargetI}
+                             class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    {#if audioNormMode === 'ebu'}
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">TP</label>
+                        <input type="number" step="0.1" bind:value={audioNormTargetTP}
+                               class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      </div>
+                      <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                        <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">LRA</label>
+                        <input type="number" step="0.5" bind:value={audioNormTargetLRA}
+                               class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                      </div>
+                      <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
+                             title="Two-pass with linear=true preserves dynamic range. Single-pass is dynamic compression.">
+                        <input type="checkbox" bind:checked={audioNormLinear} class="accent-[var(--accent)]"/>
+                        <span class="text-[11px] text-white/70 font-medium">Linear (preserve dynamics)</span>
+                      </label>
+                    {/if}
+                  </div>
+                  <!-- Row 3: run -->
+                  <div class="w-full">
+                    <button
+                      onclick={runAudioNorm}
+                      disabled={!selectedItem || selectedItem.status === 'converting'}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run Normalize</button>
+                  </div>
+                {:else if selectedOperation === 'cut-detect'}
+                  <!-- Row 1: algo + threshold + min shot -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Algo</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => cutDetectAlgo = 'scdet'}
+                              title="FFmpeg scdet filter. Modern scoring, range ~5–15."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {cutDetectAlgo === 'scdet' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">scdet</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => cutDetectAlgo = 'scene'}
+                              title="Classic select='gt(scene,T)'. Range 0.2–0.5."
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {cutDetectAlgo === 'scene' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">scene</button>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Threshold</label>
+                      <input type="number" step="0.5" bind:value={cutDetectThreshold}
+                             class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Min shot (s)</label>
+                      <input type="number" step="0.1" bind:value={cutDetectMinShotS}
+                             class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <!-- Row 2: run -->
+                  <div class="w-full">
+                    <button
+                      onclick={runCutDetect}
+                      disabled={!selectedItem}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Detect Cuts</button>
+                  </div>
+                  <!-- Row 3: results -->
+                  <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 font-mono tabular-nums text-[12px] max-h-40 overflow-y-auto">
+                    {#if cutDetectResults.length}
+                      {#each cutDetectResults as c, i}
+                        <button class="w-full text-left py-0.5 px-1 hover:bg-white/5 text-white/70 flex justify-between">
+                          <span>#{i + 1}</span>
+                          <span>{c.time}s</span>
+                          <span class="text-white/40">{c.score}</span>
+                        </button>
+                      {/each}
+                    {:else}
+                      <span class="text-white/30">No cuts detected yet — run to populate.</span>
+                    {/if}
+                  </div>
+                {:else if selectedOperation === 'black-detect'}
+                  <!-- Row 1: thresholds -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Min dur (s)</label>
+                      <input type="number" step="0.05" bind:value={blackDetectMinDur}
+                             class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
+                         title="pix_th: pixel luma threshold below which a pixel counts as black.">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Pix th</label>
+                      <input type="number" step="0.01" min="0" max="1" bind:value={blackDetectPixTh}
+                             class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
+                         title="pic_th: fraction of pixels below pix_th for a frame to count as black.">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Pic th</label>
+                      <input type="number" step="0.01" min="0" max="1" bind:value={blackDetectPicTh}
+                             class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <!-- Row 2: run -->
+                  <div class="w-full">
+                    <button
+                      onclick={runBlackDetect}
+                      disabled={!selectedItem}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Detect Black</button>
+                  </div>
+                  <!-- Row 3: results -->
+                  <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 font-mono tabular-nums text-[12px] max-h-40 overflow-y-auto">
+                    {#if blackDetectResults.length}
+                      {#each blackDetectResults as b, i}
+                        <button class="w-full text-left py-0.5 px-1 hover:bg-white/5 text-white/70 grid grid-cols-4 gap-2">
+                          <span>#{i + 1}</span>
+                          <span>{b.start}s</span>
+                          <span>{b.end}s</span>
+                          <span class="text-white/40">{b.duration}s</span>
+                        </button>
+                      {/each}
+                    {:else}
+                      <span class="text-white/30">No black intervals detected yet.</span>
+                    {/if}
+                  </div>
+                {:else if selectedOperation === 'vmaf'}
+                  <!-- Row 1: file pickers -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <button onclick={() => vmafReferencePath
+                              ? (vmafReferencePath = null)
+                              : pickAuxFile((p) => vmafReferencePath = p, 'video/*')}
+                            class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">
+                      {vmafReferencePath ? 'Clear reference' : 'Pick reference…'}
+                    </button>
+                    <button onclick={() => vmafDistortedPath
+                              ? (vmafDistortedPath = null)
+                              : pickAuxFile((p) => vmafDistortedPath = p, 'video/*')}
+                            class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">
+                      {vmafDistortedPath ? 'Clear distorted' : 'Pick distorted…'}
+                    </button>
+                  </div>
+                  <!-- Row 2: model + subsample -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Model</label>
+                      <select bind:value={vmafModel}
+                              class="bg-transparent text-[12px] text-white outline-none">
+                        <option value="hd">HD · vmaf_v0.6.1</option>
+                        <option value="4k">4K · vmaf_4k_v0.6.1</option>
+                        <option value="phone">Phone</option>
+                      </select>
+                    </div>
+                    <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
+                         title="Score every Nth frame. 1 = every frame (slowest, most accurate). 5 = 5× faster.">
+                      <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Subsample</label>
+                      <input type="number" step="1" min="1" bind:value={vmafSubsample}
+                             class="w-12 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                    </div>
+                  </div>
+                  <!-- Row 3: run + result -->
+                  <div class="w-full">
+                    <button
+                      onclick={runVmaf}
+                      disabled={!vmafReferencePath || !vmafDistortedPath}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >Run VMAF</button>
+                  </div>
+                  <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 font-mono tabular-nums text-[12px] text-white/70">
+                    {#if vmafResult}
+                      <div class="grid grid-cols-4 gap-2">
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">Mean</span>{vmafResult.mean}</div>
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">Harmonic</span>{vmafResult.harmonic_mean}</div>
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">Min</span>{vmafResult.min}</div>
+                        <div><span class="text-white/40 text-[10px] uppercase tracking-wider block">Max</span>{vmafResult.max}</div>
+                      </div>
+                    {:else}
+                      <span class="text-white/30">Drop a reference and distorted file, then Run.</span>
+                    {/if}
+                  </div>
+                {:else if selectedOperation === 'framemd5'}
+                  <!-- Row 1: stream picker + optional diff file -->
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
+                      <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Streams</span>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => frameMd5Stream = 'video'}
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {frameMd5Stream === 'video' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Video</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => frameMd5Stream = 'audio'}
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {frameMd5Stream === 'audio' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Audio</button>
+                      <div class="w-px h-6 bg-[var(--border)]"></div>
+                      <button onclick={() => frameMd5Stream = 'both'}
+                              class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
+                                     {frameMd5Stream === 'both' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Both</button>
+                    </div>
+                    <button onclick={() => frameMd5DiffPath
+                              ? (frameMd5DiffPath = null)
+                              : pickAuxFile((p) => frameMd5DiffPath = p, 'audio/*,video/*')}
+                            title="Optional second file. When set, first differing frame is highlighted."
+                            class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">
+                      {frameMd5DiffPath ? 'Clear diff file' : 'Add diff file…'}
+                    </button>
+                  </div>
+                  <!-- Row 2: run -->
+                  <div class="w-full">
+                    <button
+                      onclick={runFrameMd5}
+                      disabled={!selectedItem}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >{frameMd5DiffPath ? 'Run Diff' : 'Hash Frames'}</button>
+                  </div>
+                  <!-- Row 3: results -->
+                  <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 font-mono tabular-nums text-[11px] text-white/70 max-h-40 overflow-y-auto">
+                    {#if frameMd5Result}
+                      {#if frameMd5Result.firstDivergence != null}
+                        <div class="text-[var(--accent)] mb-1">First divergence at frame #{frameMd5Result.firstDivergence}</div>
+                      {/if}
+                      {#each frameMd5Result.hashes ?? [] as h}
+                        <div class="flex gap-2"><span class="text-white/30 w-10 shrink-0">{h.idx}</span><span>{h.hash}</span></div>
+                      {/each}
+                    {:else}
+                      <span class="text-white/30">No hashes yet — run to populate.</span>
+                    {/if}
+                  </div>
                 {:else if selectedOperation === 'merge'}
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Add from queue</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Reorder</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Check compat</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Merge</button>
+                  <div class="flex flex-wrap items-center gap-2 w-full">
+                    <button
+                      onclick={() => {
+                        if (selectedId && !mergeSelection.includes(selectedId)) {
+                          mergeSelection = [...mergeSelection, selectedId];
+                        }
+                      }}
+                      disabled={!selectedId || mergeSelection.includes(selectedId)}
+                      class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
+                    >Add selected</button>
+                    <button
+                      onclick={() => mergeSelection = []}
+                      disabled={mergeSelection.length === 0}
+                      class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
+                    >Clear list</button>
+                    <button
+                      onclick={runMerge}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                      disabled={mergeSelection.length < 2}
+                    >Run Merge</button>
+                  </div>
+                  <!-- Ordered list — top-to-bottom is concat order. -->
+                  <div class="w-full rounded border border-[var(--border)] bg-black/20 px-2 py-1.5 max-h-48 overflow-y-auto">
+                    {#if mergeSelection.length === 0}
+                      <span class="text-white/30 text-[12px]">Select a file in the queue and click <em>Add selected</em>. Needs at least 2.</span>
+                    {:else}
+                      {#each mergeSelection as id, i (id)}
+                        {@const q = queue.find(x => x.id === id)}
+                        <div class="flex items-center gap-2 py-1">
+                          <span class="text-white/40 font-mono tabular-nums text-[10px] w-5">{i + 1}.</span>
+                          <span class="flex-1 truncate text-[12px] text-white/80">{q?.name ?? id}</span>
+                          <button
+                            onclick={() => {
+                              if (i === 0) return;
+                              const next = [...mergeSelection];
+                              [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                              mergeSelection = next;
+                            }}
+                            disabled={i === 0}
+                            class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)] text-white/60 hover:text-white hover:border-[var(--accent)] disabled:opacity-30"
+                            title="Move up"
+                          >↑</button>
+                          <button
+                            onclick={() => {
+                              if (i === mergeSelection.length - 1) return;
+                              const next = [...mergeSelection];
+                              [next[i], next[i + 1]] = [next[i + 1], next[i]];
+                              mergeSelection = next;
+                            }}
+                            disabled={i === mergeSelection.length - 1}
+                            class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)] text-white/60 hover:text-white hover:border-[var(--accent)] disabled:opacity-30"
+                            title="Move down"
+                          >↓</button>
+                          <button
+                            onclick={() => mergeSelection = mergeSelection.filter(x => x !== id)}
+                            class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)] text-white/60 hover:text-red-400 hover:border-red-400"
+                            title="Remove"
+                          >×</button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
                 {:else if selectedOperation === 'extract'}
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Video</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Audio track…</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Subtitle track…</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">All streams</button>
-                  <button class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">Run Extract</button>
+                  {#each [
+                    { id: 'video',    label: 'Video' },
+                    { id: 'audio',    label: 'Audio' },
+                    { id: 'subtitle', label: 'Subtitles' },
+                    { id: 'all',      label: 'All streams' },
+                  ] as m}
+                    <button
+                      onclick={() => extractMode = m.id}
+                      class="px-3 py-1.5 rounded text-[12px] font-semibold border transition-colors
+                             {extractMode === m.id
+                               ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
+                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+                    >{m.label}</button>
+                  {/each}
+                  <button
+                    onclick={runExtract}
+                    disabled={!selectedItem || selectedItem.status === 'converting'}
+                    class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                  >Run Extract</button>
                 {:else if selectedOperation === 'subtitling'}
                   <!-- Unified Subtitling page — tabs for the three workflows
                        that the sidebar entries route into. -->
@@ -2795,11 +3741,106 @@
                         <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Restore Punctuation</button>
                       </div>
                     {:else if subtitlingTab === 'analyze'}
-                      <div class="flex flex-wrap gap-2">
-                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Subtitle Lint</button>
-                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Subtitle Diff…</button>
-                        <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Caption Detection</button>
+                      <!-- Row 1: lint thresholds -->
+                      <div class="flex flex-wrap items-center gap-2 w-full">
+                        <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
+                             title="Characters-per-second reading speed ceiling. >21 is too fast to read comfortably.">
+                          <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">CPS max</label>
+                          <input type="number" step="1" bind:value={subLintCpsMax}
+                                 class="w-12 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                        </div>
+                        <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                          <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Min dur (ms)</label>
+                          <input type="number" step="100" bind:value={subLintMinDurMs}
+                                 class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                        </div>
+                        <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                          <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Max dur (ms)</label>
+                          <input type="number" step="100" bind:value={subLintMaxDurMs}
+                                 class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                        </div>
+                        <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                          <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Line max</label>
+                          <input type="number" step="1" bind:value={subLintLineMaxChars}
+                                 class="w-12 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                        </div>
+                        <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1">
+                          <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Lines max</label>
+                          <input type="number" step="1" bind:value={subLintMaxLines}
+                                 class="w-10 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
+                        </div>
                       </div>
+                      <!-- Row 2: actions -->
+                      <div class="flex flex-wrap items-center gap-2 w-full">
+                        <button
+                          onclick={runSubLint}
+                          disabled={!selectedItem}
+                          class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                        >Run Lint</button>
+                        <button onclick={() => subDiffReferencePath
+                                  ? (subDiffReferencePath = null)
+                                  : pickAuxFile((p) => subDiffReferencePath = p, '.srt,.vtt,.ass,.ssa')}
+                                title="Optional reference subtitle for a diff. Without one, Lint runs on the selected file."
+                                class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">
+                          {subDiffReferencePath ? 'Clear diff reference' : 'Pick diff reference…'}
+                        </button>
+                        {#if subDiffReferencePath}
+                          <button
+                            onclick={runSubDiff}
+                            disabled={!selectedItem}
+                            class="px-3 py-1.5 rounded text-[12px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                          >Run Diff</button>
+                        {/if}
+                        <button
+                          onclick={runSubProbe}
+                          disabled={!selectedItem}
+                          class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
+                          title="Probe the currently selected video for subtitle streams (ffprobe).">Detect tracks</button>
+                      </div>
+
+                      <!-- Results: lint issues / diff lines / detected tracks -->
+                      {#if subLintResults}
+                        <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 text-[11px] font-mono max-h-48 overflow-y-auto">
+                          {#if subLintResults.length === 0}
+                            <span class="text-white/30">No lint issues.</span>
+                          {:else}
+                            {#each subLintResults as issue}
+                              <div class="flex gap-2 py-0.5">
+                                <span class="text-white/40 w-20 shrink-0">{issue.time}</span>
+                                <span class="text-[var(--accent)] w-28 shrink-0">{issue.kind}</span>
+                                <span class="text-white/70">{issue.message}</span>
+                              </div>
+                            {/each}
+                          {/if}
+                        </div>
+                      {/if}
+                      {#if subDiffResults}
+                        <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 text-[11px] font-mono max-h-48 overflow-y-auto">
+                          {#each subDiffResults as d}
+                            <div class="flex gap-2 py-0.5
+                                        {d.kind === 'add' ? 'text-emerald-400' : d.kind === 'del' ? 'text-red-400' : 'text-white/50'}">
+                              <span class="w-4 shrink-0">{d.kind === 'add' ? '+' : d.kind === 'del' ? '-' : ' '}</span>
+                              <span class="truncate">{d.left ?? d.right ?? ''}</span>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                      {#if subProbeResults}
+                        <div class="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 text-[11px] font-mono max-h-40 overflow-y-auto">
+                          {#if subProbeResults.length === 0}
+                            <span class="text-white/30">No subtitle streams found.</span>
+                          {:else}
+                            {#each subProbeResults as s}
+                              <div class="flex gap-2 py-0.5">
+                                <span class="text-white/40 w-10 shrink-0">#{s.index}</span>
+                                <span class="text-white/70 w-24 shrink-0">{s.codec}</span>
+                                <span class="text-white/60 w-20 shrink-0">{s.language ?? '—'}</span>
+                                <span class="text-white/50 truncate">{s.title ?? ''}</span>
+                              </div>
+                            {/each}
+                          {/if}
+                        </div>
+                      {/if}
                     {/if}
                   </div>
                 {:else if selectedOperation === 'video-inserts'}
@@ -3166,9 +4207,9 @@
 
       <!-- Timeline -->
       {#if selectedItem?.mediaType === 'video'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={isHeavyItem(selectedItem)} replacedAudioMode={operationsMode && selectedOperation === 'replace-audio' && !!replaceAudioPath} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={videoOptions} mediaEl={videoEl} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} filmstripReady={tlFilmstripReady} cachedWaveform={cachedWaveformForTimeline} cachedFilmstripFrames={cachedFilmstripForTimeline} draft={isHeavyItem(selectedItem)} replacedAudioMode={operationsMode && selectedOperation === 'replace-audio' && !!replaceAudioPath} analysisMode={operationsMode && ['loudness','audio-norm','cut-detect','black-detect','vmaf','framemd5'].includes(selectedOperation)} analysisHistogramDim={operationsMode && ['loudness','audio-norm'].includes(selectedOperation)} />
       {:else if selectedItem?.mediaType === 'audio'}
-        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={isHeavyItem(selectedItem)} replacedAudioMode={operationsMode && selectedOperation === 'replace-audio' && !!replaceAudioPath} />
+        <Timeline item={selectedItem} duration={selectedDuration} bind:options={audioOptions} onscrubstart={dismissDiff} bind:vizExpanded mediaReady={tlMediaReady} waveformReady={tlWaveformReady} spectrogramReady={tlSpectrogramReady} cachedWaveform={cachedWaveformForTimeline} draft={isHeavyItem(selectedItem)} replacedAudioMode={operationsMode && selectedOperation === 'replace-audio' && !!replaceAudioPath} analysisMode={operationsMode && ['loudness','audio-norm','cut-detect','black-detect','vmaf','framemd5'].includes(selectedOperation)} analysisHistogramDim={operationsMode && ['loudness','audio-norm'].includes(selectedOperation)} />
       {:else if operationsMode}
         <!-- Placeholder strip — preserves timeline space in ops mode when no media is selected -->
         <div class="shrink-0 h-[180px] bg-[#0f0f0f] border-t border-[var(--border)]
@@ -3196,8 +4237,9 @@
              style="background:color-mix(in srgb, var(--accent) 8%, var(--surface-raised))">
           <button
             onclick={exitOperationsMode}
-            class="px-3 py-1.5 rounded text-[11px] font-medium border border-[var(--border)]
-                   text-white hover:border-[var(--accent)] hover:bg-white/5 transition-colors shrink-0"
+            data-back-button
+            class="px-3 py-1.5 rounded text-[11px] font-semibold bg-[var(--accent)] text-white
+                   hover:opacity-90 transition-opacity shrink-0"
           >← Back</button>
         </div>
         <div class="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5">
@@ -3231,8 +4273,9 @@
           <button
             onclick={() => { globalOutputFormat = null; }}
             data-tooltip="Back to the format picker grid."
-            class="px-3 py-1.5 rounded text-[11px] font-medium border border-[var(--border)]
-                   text-white hover:border-[var(--accent)] hover:bg-white/5 transition-colors shrink-0"
+            data-back-button
+            class="px-3 py-1.5 rounded text-[11px] font-semibold bg-[var(--accent)] text-white
+                   hover:opacity-90 transition-opacity shrink-0"
           >← Back</button>
         {:else}
           <button

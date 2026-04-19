@@ -4,6 +4,7 @@
 //! emitting the same `job-progress` / `job-done` / `job-error` / `job-cancelled`
 //! events used by the existing `convert_file` command.
 
+pub mod analysis;
 pub mod audio_offset;
 pub mod conform;
 pub mod cut;
@@ -11,7 +12,9 @@ pub mod extract;
 pub mod merge;
 pub mod replace_audio;
 pub mod rewrap;
+pub mod silence_remove;
 pub mod split;
+pub mod subtitling;
 
 use serde::Serialize;
 use std::collections::HashMap;
