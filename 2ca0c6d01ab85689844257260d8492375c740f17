@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: marked B8 DONE in audits/04-attack-plan.md pointing to efad2cc
+deferred: none
+fragile: none
+ci: unknown
