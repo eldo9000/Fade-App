@@ -169,13 +169,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** revert `tauri.conf.json` + `lib.rs:1574` diff.
 - **Status:** DONE — commit `2a58924`. `assetProtocol.scope` narrowed from `["**"]` to `["$HOME/**", "$TEMP/**", "/Volumes/**", "/media/**", "/mnt/**"]` — eliminates `/etc`, `/usr`, `/System`, `~/.ssh`, etc. from webview-reachable paths. `open_url` gained `validate_url_scheme()` enforcing http/https/mailto allowlist + 4096 byte cap + no whitespace/control chars; rejection happens before `Command::spawn`. 6 new unit tests; 175 rust + 30 vitest tests pass; clippy clean; cargo audit unchanged. **Deferred:** runtime `asset_protocol_scope().allow_file()` expansion for files outside `$HOME` on Windows secondary drives — follow-up.
 
-### B5 — `fix(presets): add normalize_loudness + save_preset file lock`
+### B5 — `fix(presets): add normalize_loudness + save_preset file lock` — **DONE** (c6c4254)
 - **Findings:** F-10, F-20
 - **Rationale:** Same file (`presets.rs`), same subsystem.
 - **Effort:** XS
 - **Risk:** LOW
 - **Test:** Unit — save preset with `normalize_loudness: true`, reload, assert field present. Concurrent double-save test.
 - **Rollback:** trivial.
+- **Status:** DONE — commit `c6c4254`. `FadePreset` is pinned in `librewin_common` via git tag so the field was added via a local `StoredPreset` superset that reads/writes the same JSON file (`fade-presets.json`); Shelf's narrower reader ignores the unknown field, so both apps round-trip cleanly. `PresetManager.svelte` now sends `normalizeLoudness` on the audio save path. Save/delete both run under an `fs2` exclusive advisory lock on a sidecar `fade-presets.json.lock` file, serializing RMW across threads and processes. Concurrency test (16 × 5 saves) lands all 80 rows with unique ids; legacy-JSON compat test verifies files predating the new field still load. 179 rust + 30 vitest tests pass; clippy clean; cargo audit unchanged.
 
 ### B6 — `fix(ui): cancel + preview UX guards`
 - **Findings:** F-19 (post-cancel flicker), F-21 (preview stale-result overwrite)
