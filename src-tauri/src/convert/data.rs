@@ -221,7 +221,7 @@ fn parse_input(in_ext: &str, raw: &str) -> Result<serde_json::Value, String> {
         "json" | "ndjson" | "jsonl" => {
             serde_json::from_str(raw).map_err(|e| format!("JSON parse error: {e}"))
         }
-        "yaml" | "yml" => serde_yaml::from_str(raw).map_err(|e| format!("YAML parse error: {e}")),
+        "yaml" | "yml" => serde_yml::from_str(raw).map_err(|e| format!("YAML parse error: {e}")),
         "toml" => {
             let v: toml::Value =
                 toml::from_str(raw).map_err(|e| format!("TOML parse error: {e}"))?;
@@ -309,7 +309,7 @@ fn write_output(
                 serde_json::to_string(value).map_err(|e| e.to_string())
             }
         }
-        "yaml" => serde_yaml::to_string(value).map_err(|e| e.to_string()),
+        "yaml" => serde_yml::to_string(value).map_err(|e| e.to_string()),
         "toml" => write_toml(value),
         "csv" | "tsv" => write_csv(value, delim_byte),
         "xml" => Ok(write_xml(value, pretty)),

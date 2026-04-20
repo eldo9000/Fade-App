@@ -8,6 +8,14 @@
 
 ---
 
+## BC-003: librewin-common pinned past latest Libre-Apps tag
+**First observed:** 2026-04-20
+**File:** `src-tauri/Cargo.toml`
+**Description:** `librewin-common` is pinned to git rev `d55e89df`, which is newer than the latest tag `v0.1.2` in eldo9000/Libre-Apps. Until a new tag is cut in Libre-Apps, this dep cannot move to a semver pin and will stay opaque. No runtime impact; affects maintainability.
+**Fix:** Cut a new tag in Libre-Apps at or past `d55e89df`, then switch the Cargo.toml dep to `tag = "vX.Y.Z"`.
+
+---
+
 ## BC-002: Audio analysers black / silent before first playback
 **First observed:** 2026-04-17
 **File:** `src/lib/Timeline.svelte`

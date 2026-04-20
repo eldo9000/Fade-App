@@ -36,10 +36,11 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde           = { version = "1", features = ["derive"] }
 serde_json      = "1"
+# pinned past v0.1.2 (latest tag); Libre-Apps needs a new tag cut before this can move to a semver pin
 librewin-common = { git = "https://github.com/eldo9000/Libre-Apps.git", rev = "d55e89df876e02b572b0740556e16dbcbc7c1252" }
 uuid            = { version = "1", features = ["v4"] }
 csv             = "1"
-serde_yaml      = "0.9"
+serde_yml       = "0.0.12"
 toml            = "0.8"
 quick-xml       = { version = "0.36", features = ["serialize"] }
 pulldown-cmark  = "0.12"
