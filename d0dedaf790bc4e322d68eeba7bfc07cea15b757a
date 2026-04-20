@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted QueueManager from App.svelte — queue state, selection, drag, async pipeline
+deferred: operation runners remain in App.svelte for TASK-5c
+fragile: $bindable selectedItem chain; _loadGen cancellation pattern
+ci: unknown
