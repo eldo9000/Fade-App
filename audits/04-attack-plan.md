@@ -187,13 +187,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** trivial.
 - **Status:** DONE — commit `01299c5`. F-19: new `applyProgressIfActive()` in `itemStatus.js` guards the terminal triad (done/error/cancelled) so a late `job-progress` event can no longer flip a cancelled item back to `converting`; `job-done`/`job-error` listeners also guard against overwriting a `cancelled` item (races the other direction). F-21: monotonic generation-token pattern added at all three preview call sites (`ChromaKeyPanel.generateChromaPreview`, `App._runImageDiff`, `App.runDiffPreview`) — each invoke captures `gen = ++counter` and discards its result if `counter` has moved on. 10 new vitest regressions (40 total, was 30) cover the terminal-state guard, the full cancel→late-progress sequence, and the generation-token pattern under concurrent + out-of-order resolution. 179 rust + 40 vitest tests pass; clippy clean; cargo audit unchanged.
 
-### B7 — `perf(archive): memoize seven_zip_bin + progress rate-limit scaffolding`
+### B7 — `perf(archive): memoize seven_zip_bin + progress rate-limit scaffolding` — **DONE** (969d5b8)
 - **Findings:** F-25, F-26 (scaffolding only — real landing in B8)
 - **Rationale:** XS perf wins; F-26 gets the rate-limit helper (`RateLimiter { min_interval, min_delta }`) as a standalone utility, ready for B8 to wire into consolidated `run_ffmpeg`.
 - **Effort:** XS
 - **Risk:** LOW
 - **Test:** Unit test for `RateLimiter::should_emit`; memoization test for `seven_zip_bin`.
 - **Rollback:** trivial.
+- **Status:** DONE — commit `969d5b8`. `seven_zip_bin()` now memoizes via `OnceLock<&'static str>` — subprocess probe happens once per process instead of per archive op. Selection logic factored into `resolve_seven_zip_bin(probe)` for testability without shelling out. New `operations::rate_limiter` module: `RateLimiter { min_interval, min_delta }` with `should_emit(now, value)` — first emission always accepts, subsequent need both thresholds crossed, rejected emissions don't reset the baseline (prevents arbitrary drift via sub-delta stream). Struct gated behind `#[allow(dead_code)]` until B8 wires it into consolidated `run_ffmpeg`. 188 rust tests (was 179 — +3 seven_zip_bin, +6 RateLimiter); 40 vitest unchanged; clippy clean; cargo audit unchanged.
 
 ### B8 — `refactor(operations): consolidate run_ffmpeg — kill 3-copy drift`
 - **Findings:** F-01, F-26 (wire rate-limiter from B7)
