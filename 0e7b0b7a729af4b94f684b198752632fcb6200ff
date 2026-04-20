@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: session 4 audit synthesis — produced 04-attack-plan.md with 33 findings, 18 PR batches, 4 phases, dependency graph
+deferred: none — plan complete, no code changes yet
+fragile: none
+ci: unknown
