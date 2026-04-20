@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: wrote audits/01-static-analysis.md — session 1 of 3-pass audit (static / concern-based / adversarial). Semgrep + cargo-audit + pattern scans on src-tauri/src and src. 0 CRITICAL, 4 HIGH, 9 MEDIUM.
+deferred: sessions 2 (concern-based) and 3 (adversarial) — this file is the input.
+fragile: CLAUDE.md references validate_output_name() which does not exist — finding #3 flags this. Doc/code invariant drift.
+ci: unknown
