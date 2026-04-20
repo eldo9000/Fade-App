@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: v0.6.2 release green; all housekeeping arc work shipped
+deferred: none
+fragile: $bindable chain through extracted components
+ci: green
