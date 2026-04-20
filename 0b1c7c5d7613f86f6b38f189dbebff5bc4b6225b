@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted OperationsPanel (final component of TASK-5c); all 3 components extracted
+deferred: none
+fragile: $bindable chain — selectedItem mutation must propagate through binding layers
+ci: unknown
