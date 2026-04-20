@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: B6 (F-19 post-cancel flicker + F-21 preview stale-result overwrite) closed via terminal-state guard helper and generation-token pattern at three preview sites
+deferred: none
+fragile: none — UI-only changes, guards are additive
+ci: unknown
