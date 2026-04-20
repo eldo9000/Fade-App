@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: session 3 adversarial audit — verdicts on all 79 session-2 findings; top 15 ranked, 2 rejected, 18 weakened, 9 needs-evidence
+deferred: session 4 synthesis + fix plan not yet written
+fragile: 9 NEEDS-EVIDENCE items may need runtime verification before fixing (CONC-007 cancel-retry race, PERF-016 preset RMW, ARCH-007/011/016/017 scope enumerations)
+ci: unknown
