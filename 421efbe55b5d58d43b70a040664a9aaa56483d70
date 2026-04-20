@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: observer sync Run 2 — reflects completed split sprint + remaining release debt
+deferred: v0.6.2 release (user-deferred)
+fragile: $bindable chain through App → QueueManager → OperationsPanel
+ci: unknown
