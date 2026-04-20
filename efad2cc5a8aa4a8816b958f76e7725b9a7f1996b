@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: B8 — consolidated 3 run_ffmpeg copies into operations::run_ffmpeg; wired B7 RateLimiter (100ms/0.5%) into canonical progress loop
+deferred: tauri dev smoke test — release build clean, all callers exercised by 194 rust tests; user verifies on next interactive launch
+fragile: subtitle.rs and merge.rs now depend on operations::run_ffmpeg signature — any future change to that signature must update both callers
+ci: unknown
