@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "io.librewin.fade",
   "name": "Fade",
-  "version": "0.1.0",
+  "version": "0.6.2",
   "description": "Convert and process images, video, and audio",
   "permissions": {
     "filesystem": {
