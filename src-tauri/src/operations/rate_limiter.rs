@@ -12,15 +12,12 @@
 //! there is no prior emission). The first `should_emit` call always accepts
 //! so the UI sees a 0% tick at job start.
 //!
-//! Landing target: B8 will wire this into the consolidated `run_ffmpeg`
-//! replacing the current unbounded per-line emit. Kept standalone + tested
-//! here so B8 lands as a pure integration, not a design question.
+//! Wired into the canonical `run_ffmpeg` in `operations/mod.rs`; replaces
+//! the previous unbounded per-line emit so a 60fps encode no longer drives
+//! 60 webview wakeups per second.
 
 use std::time::{Duration, Instant};
 
-// Scaffolding for B8 — struct + methods land ahead of their call site so
-// the integration PR is a one-file change in `run_ffmpeg`.
-#[allow(dead_code)]
 pub(crate) struct RateLimiter {
     min_interval: Duration,
     min_delta: f32,
@@ -28,7 +25,6 @@ pub(crate) struct RateLimiter {
     last_value: Option<f32>,
 }
 
-#[allow(dead_code)]
 impl RateLimiter {
     pub(crate) fn new(min_interval: Duration, min_delta: f32) -> Self {
         Self {

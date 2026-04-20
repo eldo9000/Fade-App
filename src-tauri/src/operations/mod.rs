@@ -31,9 +31,18 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 
 use crate::{parse_out_time_ms, truncate_stderr, JobProgress};
+use rate_limiter::RateLimiter;
+
+/// Default progress-emission cadence for `run_ffmpeg`. ffmpeg-emitted
+/// `out_time_ms` lines arrive per encoded frame (~60 Hz at 60fps); the
+/// limiter throttles UI wakeups to roughly 10 Hz with a 0.5 % minimum
+/// percent delta. First emit always passes so the UI sees a 0 % tick.
+const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const PROGRESS_MIN_DELTA: f32 = 0.5;
 
 // ── Shared types ───────────────────────────────────────────────────────────────
 
@@ -116,6 +125,18 @@ pub(crate) fn parse_streams(json: &serde_json::Value) -> Vec<StreamInfo> {
         .collect()
 }
 
+/// Compute a clamped completion percent for a `job-progress` event.
+///
+/// `duration == None` (unknown total) → 0.0; known duration → percent
+/// capped at 99.0 so the in-flight progress loop never reports completion
+/// — the terminal 100 % flips to a `job-done` event instead.
+fn clamped_percent(elapsed: f64, duration: Option<f64>) -> f32 {
+    match duration {
+        Some(dur) if dur > 0.0 => ((elapsed / dur) * 100.0).min(99.0) as f32,
+        _ => 0.0,
+    }
+}
+
 /// Return duration in seconds from ffprobe JSON.
 pub(crate) fn duration_from_probe(json: &serde_json::Value) -> Option<f64> {
     json["format"]["duration"]
@@ -163,21 +184,20 @@ pub(crate) fn run_ffmpeg(
 
     if let Some(stdout) = stdout {
         let reader = BufReader::new(stdout);
+        let mut limiter = RateLimiter::new(PROGRESS_MIN_INTERVAL, PROGRESS_MIN_DELTA);
         for line in reader.lines().map_while(Result::ok) {
             if let Some(elapsed) = parse_out_time_ms(&line) {
-                let percent = if let Some(dur) = duration {
-                    ((elapsed / dur) * 100.0).min(99.0) as f32
-                } else {
-                    0.0
-                };
-                let _ = window.emit(
-                    "job-progress",
-                    JobProgress {
-                        job_id: job_id.to_string(),
-                        percent,
-                        message: format!("{:.0}s elapsed", elapsed),
-                    },
-                );
+                let percent = clamped_percent(elapsed, duration);
+                if limiter.should_emit(Instant::now(), percent) {
+                    let _ = window.emit(
+                        "job-progress",
+                        JobProgress {
+                            job_id: job_id.to_string(),
+                            percent,
+                            message: format!("{:.0}s elapsed", elapsed),
+                        },
+                    );
+                }
             }
         }
     }
@@ -270,4 +290,69 @@ pub(crate) fn ext_of(path: &str) -> String {
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn clamped_percent_returns_zero_when_duration_unknown() {
+        assert_eq!(clamped_percent(42.0, None), 0.0);
+    }
+
+    #[test]
+    fn clamped_percent_returns_zero_when_duration_zero() {
+        assert_eq!(clamped_percent(42.0, Some(0.0)), 0.0);
+    }
+
+    #[test]
+    fn clamped_percent_caps_at_ninety_nine() {
+        // elapsed > duration must still report 99, never 100.
+        assert_eq!(clamped_percent(120.0, Some(60.0)), 99.0);
+        assert_eq!(clamped_percent(60.0, Some(60.0)), 99.0);
+    }
+
+    #[test]
+    fn clamped_percent_scales_proportionally_below_cap() {
+        assert_eq!(clamped_percent(30.0, Some(60.0)), 50.0);
+        assert_eq!(clamped_percent(0.0, Some(60.0)), 0.0);
+    }
+
+    #[test]
+    fn progress_rate_limiter_constants_match_canonical_use() {
+        // Guard the wired-in cadence: B7 RateLimiter + canonical run_ffmpeg
+        // must agree on the throttle. If a future change loosens these,
+        // re-baseline this test deliberately.
+        assert_eq!(PROGRESS_MIN_INTERVAL, Duration::from_millis(100));
+        assert!((PROGRESS_MIN_DELTA - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn rate_limiter_dampens_high_frequency_progress_stream() {
+        // Simulate a 60 fps ffmpeg progress stream with monotonic percent
+        // ticks of 0.1% per frame. Without throttling: 60 emits per second.
+        // With the canonical 100 ms / 0.5% gates: at most ~6 per second
+        // (interval-bound) and only when the 0.5% delta is also crossed.
+        let mut limiter = RateLimiter::new(PROGRESS_MIN_INTERVAL, PROGRESS_MIN_DELTA);
+        let t0 = std::time::Instant::now();
+        let mut accepted = 0usize;
+        for frame in 0..60u32 {
+            let now = t0 + Duration::from_millis(frame as u64 * 16); // ~16ms per frame
+            let percent = (frame as f32) * 0.1; // 0.0 .. 5.9
+            if limiter.should_emit(now, percent) {
+                accepted += 1;
+            }
+        }
+        // Expected: 1st frame always accepts, then ~every 5th frame
+        // crosses the 0.5%-delta gate (5 × 0.1 = 0.5) and the ~80 ms
+        // interval since the prior accept (5 × 16 = 80ms). The 100 ms
+        // interval gate dominates → roughly 1 accept per 7 frames.
+        assert!(
+            accepted <= 12,
+            "expected heavy dampening, got {accepted} of 60"
+        );
+        assert!(accepted >= 1, "must accept at least the initial frame");
+    }
 }

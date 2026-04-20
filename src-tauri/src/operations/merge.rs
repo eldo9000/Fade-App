@@ -10,14 +10,14 @@
 //!
 //! The temp concat-list file is cleaned up after the job completes (or fails).
 
-use super::{duration_from_probe, parse_streams, run_ffprobe, write_temp_concat_list};
-use crate::{parse_out_time_ms, truncate_stderr, JobProgress};
+use super::{
+    duration_from_probe, parse_streams, run_ffmpeg, run_ffprobe, write_temp_concat_list,
+};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::Child;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Window};
+use tauri::Window;
 
 pub fn run(
     window: &Window,
@@ -190,92 +190,5 @@ pub fn run(
         args
     };
 
-    // Run FFmpeg inline (same pattern as run_ffmpeg helper but we need the
-    // concat-list cleanup to happen after the process exits, not in a thread)
-    run_ffmpeg_merge(window, job_id, &args, total_duration, processes, cancelled)
-}
-
-/// Identical to the shared `run_ffmpeg` helper; duplicated here so the merge
-/// module can be self-contained and the concat-list cleanup can happen after
-/// the process exits cleanly.
-fn run_ffmpeg_merge(
-    window: &Window,
-    job_id: &str,
-    args: &[String],
-    duration: Option<f64>,
-    processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
-    let mut child = Command::new("ffmpeg")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("ffmpeg not found: {e}"))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
-    {
-        let mut map = processes.lock().expect("processes mutex poisoned");
-        map.insert(job_id.to_string(), child);
-    }
-
-    let stderr_thread = std::thread::spawn(move || {
-        let mut lines = Vec::new();
-        if let Some(s) = stderr {
-            let reader = BufReader::new(s);
-            for line in reader.lines().map_while(Result::ok) {
-                lines.push(line);
-            }
-        }
-        lines.join("\n")
-    });
-
-    if let Some(stdout) = stdout {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            if let Some(elapsed) = parse_out_time_ms(&line) {
-                let percent = if let Some(dur) = duration {
-                    ((elapsed / dur) * 100.0).min(99.0) as f32
-                } else {
-                    0.0
-                };
-                let _ = window.emit(
-                    "job-progress",
-                    JobProgress {
-                        job_id: job_id.to_string(),
-                        percent,
-                        message: format!("{:.0}s elapsed", elapsed),
-                    },
-                );
-            }
-        }
-    }
-
-    let error_output = stderr_thread.join().unwrap_or_default();
-
-    let child_opt = {
-        let mut map = processes.lock().expect("processes mutex poisoned");
-        map.remove(job_id)
-    };
-
-    let success = match child_opt {
-        Some(mut child) => child.wait().map(|s| s.success()).unwrap_or(false),
-        None => false,
-    };
-
-    if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
-    }
-
-    if success {
-        Ok(())
-    } else {
-        Err(if error_output.trim().is_empty() {
-            "FFmpeg merge failed".to_string()
-        } else {
-            truncate_stderr(&error_output)
-        })
-    }
+    run_ffmpeg(window, job_id, &args, total_duration, processes, cancelled)
 }

@@ -7,13 +7,13 @@
 //! Subtitle files are tiny and instant — no progress parsing, just
 //! 0% then 100%.
 
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::operations::run_ffmpeg as op_run_ffmpeg;
+use crate::{ConvertOptions, JobProgress};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::Child;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Window};
 
@@ -115,76 +115,25 @@ fn sbv_to_srt(sbv: &str) -> String {
     out
 }
 
-/// Spawn ffmpeg with the standard `-y -i INPUT OUTPUT` args and block until
-/// completion, streaming stderr for error reporting and honouring the
-/// cancellation flag. Shared by the ffmpeg-handled paths.
+/// Build the ffmpeg arg list and delegate to the canonical `run_ffmpeg`
+/// helper. Subtitle conversions don't pass `-progress pipe:1`, so the
+/// canonical's per-line emit path stays silent — start/done events come
+/// from `run` below.
 fn run_ffmpeg(
+    window: &Window,
     job_id: &str,
     input: &str,
     output: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let mut child = Command::new("ffmpeg")
-        .args(["-y", "-i", input, output])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("ffmpeg not found: {e}"))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
-    {
-        let mut map = processes.lock().unwrap();
-        map.insert(job_id.to_string(), child);
-    }
-
-    let stdout_handle = stdout.map(|s| {
-        std::thread::spawn(move || {
-            let reader = BufReader::new(s);
-            for _ in reader.lines().map_while(Result::ok) {}
-        })
-    });
-
-    let stderr_content = {
-        let mut lines = Vec::new();
-        if let Some(s) = stderr {
-            let reader = BufReader::new(s);
-            for line in reader.lines().map_while(Result::ok) {
-                lines.push(line);
-            }
-        }
-        lines.join("\n")
-    };
-
-    if let Some(h) = stdout_handle {
-        let _ = h.join();
-    }
-
-    let child_opt = {
-        let mut map = processes.lock().unwrap();
-        map.remove(job_id)
-    };
-
-    let success = match child_opt {
-        Some(mut child) => child.wait().map(|s| s.success()).unwrap_or(false),
-        None => false,
-    };
-
-    if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
-    }
-
-    if success {
-        Ok(())
-    } else {
-        Err(if stderr_content.trim().is_empty() {
-            "ffmpeg subtitle conversion failed".to_string()
-        } else {
-            truncate_stderr(&stderr_content)
-        })
-    }
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+        output.to_string(),
+    ];
+    op_run_ffmpeg(window, job_id, &args, None, processes, cancelled)
 }
 
 pub fn run(
@@ -211,6 +160,7 @@ pub fn run(
     let result = match (in_ext.as_str(), out_ext.as_str()) {
         // Both sides ffmpeg-native — one-shot.
         ("srt" | "vtt" | "ass" | "ssa", "srt" | "vtt" | "ass" | "ssa" | "ttml") => run_ffmpeg(
+            window,
             job_id,
             input,
             output,
@@ -244,6 +194,7 @@ pub fn run(
             let tmp = std::env::temp_dir().join(format!("fade-{job_id}.srt"));
             fs::write(&tmp, srt).map_err(|e| e.to_string())?;
             let res = run_ffmpeg(
+                window,
                 job_id,
                 &tmp.to_string_lossy(),
                 output,
@@ -258,6 +209,7 @@ pub fn run(
         (_, "sbv") => {
             let tmp = std::env::temp_dir().join(format!("fade-{job_id}.srt"));
             let res = run_ffmpeg(
+                window,
                 job_id,
                 input,
                 &tmp.to_string_lossy(),
@@ -277,6 +229,7 @@ pub fn run(
 
         // Fallback — let ffmpeg try. Covers ttml/vtt/ass/ssa on either side.
         _ => run_ffmpeg(
+            window,
             job_id,
             input,
             output,
