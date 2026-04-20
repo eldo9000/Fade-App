@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted UpdateManager from App.svelte into src/lib/UpdateManager.svelte
+deferred: none
+fragile: App.svelte prop drilling to UpdateManager — any new state additions must be passed through
+ci: unknown
