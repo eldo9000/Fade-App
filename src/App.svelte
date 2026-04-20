@@ -19,9 +19,10 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { createSettings } from './lib/stores/settings.svelte.js';
   import { pushError, clearDiagnostics, getEntries as getDiagEntries, snapshotText as diagSnapshot, loadPersisted as loadPersistedDiag, uploadDiagnostics, BETA } from './lib/stores/diagnostics.svelte.js';
-  import { check as checkUpdate } from '@tauri-apps/plugin-updater';
-  import { relaunch } from '@tauri-apps/plugin-process';
   import { getVersion } from '@tauri-apps/api/app';
+  import UpdateManager from './lib/UpdateManager.svelte';
+  import PresetManager from './lib/PresetManager.svelte';
+  import CropEditor from './lib/CropEditor.svelte';
 
   const DOCUMENT_FORMATS = ['html', 'md', 'txt', 'pdf', 'docx'];
   const ARCHIVE_FORMATS = ['zip', 'tar.gz', 'tar.xz', '7z'];
@@ -273,30 +274,10 @@
   let toolWarnings = $state({});
 
   // ── Auto-updater ───────────────────────────────────────────────────────────
-  // 'idle' → 'available' → 'downloading' → 'ready' → (user clicks Restart now)
-  // Install runs silently in the background; the user chooses when to relaunch.
-  //
-  // Platform split: in-place auto-update only runs on Linux. macOS requires
-  // codesign + notarize for Gatekeeper to accept the swapped binary; Windows
-  // installs carry their own UAC / install-mode gotchas. Until we have those
-  // certs, mac/win fall back to a "Download update" button that opens the
-  // GitHub releases page in the browser — user installs manually.
-  const RELEASES_URL = 'https://github.com/eldo9000/Fade-App/releases/latest';
-  const isManualUpdatePlatform = typeof navigator !== 'undefined'
-    && /Mac|Windows/.test(navigator.userAgent);
+  // State is owned by UpdateManager; App.svelte binds to updateState so the
+  // tooltip bar notification can read it.
   let updateState = $state('idle');
-  let updateVersion = $state('');
-  let updateProgress = $state(0); // 0..100, downloading only
-  let _pendingUpdate = null;
-
-  async function openReleasesPage() {
-    await _uploadBeforeUpdate();
-    try { await invoke('open_url', { url: RELEASES_URL }); }
-    catch (e) {
-      pushError('updater', 'Could not open the releases page', e);
-      setStatus('Could not open the releases page — check your browser', 'error');
-    }
-  }
+  let updateManagerEl = $state(null);
 
   /** Piggyback diagnostics upload onto the update action. Runs before the
    *  actual download/open so the user has already consented to this server
@@ -313,8 +294,6 @@
     });
   }
 
-  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
   // App version — read from Cargo manifest via Tauri at runtime so the footer
   // and diagnostics report stay in sync with what actually shipped.
   let appVersion = $state('');
@@ -322,74 +301,6 @@
   // doesn't dominate the small Settings popover.
   let diagnosticsExpanded = $state(false);
   const diagEntries = getDiagEntries();
-
-  async function checkForUpdate() {
-    try {
-      const update = await checkUpdate();
-      settings.lastUpdateCheck = Date.now();
-      if (update) {
-        _pendingUpdate = update;
-        updateVersion = update.version ?? '';
-        updateState = 'available';
-      } else {
-        updateState = 'idle';
-      }
-    } catch (e) {
-      // Check failures stay quiet in the status bar — most users don't care
-      // when there's no connectivity — but we log for diagnostics.
-      pushError('updater', 'Update check failed', e);
-      updateState = 'idle';
-    }
-  }
-
-  /** Launch-gated check — runs at most once per week. Manual "Update Now" bypasses. */
-  function maybeCheckForUpdate() {
-    const last = Number(settings.lastUpdateCheck) || 0;
-    if (Date.now() - last >= WEEK_MS) checkForUpdate();
-  }
-
-  async function installUpdate() {
-    if (!_pendingUpdate) return;
-    await _uploadBeforeUpdate();
-    updateState = 'downloading';
-    updateProgress = 0;
-    let downloaded = 0;
-    let contentLength = 0;
-    try {
-      await _pendingUpdate.downloadAndInstall((event) => {
-        switch (event.event) {
-          case 'Started':
-            contentLength = event.data?.contentLength ?? 0;
-            break;
-          case 'Progress':
-            downloaded += event.data?.chunkLength ?? 0;
-            if (contentLength > 0) {
-              updateProgress = Math.min(100, Math.round((downloaded / contentLength) * 100));
-            }
-            break;
-          case 'Finished':
-            updateProgress = 100;
-            break;
-        }
-      });
-      // Do NOT relaunch automatically — user decides when to restart.
-      updateState = 'ready';
-    } catch (e) {
-      // Install failures are user-visible — they just clicked a button and
-      // expected something to happen. Surface in the status bar + log.
-      pushError('updater', 'Update install failed', e);
-      setStatus('Update install failed — see Diagnostics in Settings', 'error');
-      updateState = 'idle';
-    }
-  }
-
-  async function restartNow() {
-    try { await relaunch(); }
-    catch (e) {
-      pushError('updater', 'Relaunch failed', e);
-      setStatus('Could not restart — quit and reopen manually', 'error');
-    }
-  }
 
   // ── Diagnostics helpers ────────────────────────────────────────────────────
   let _diagCopyNote = $state('');
@@ -656,101 +567,18 @@
   $effect(() => { imageOptions.output_format; _clearImageDiff(); });
 
   // ── Crop state ─────────────────────────────────────────────────────────────
+  // Owned by CropEditor; App.svelte holds refs for passing into the component.
   let previewAreaEl  = $state(null);
   let imgEl          = $state(null);
   let imgNaturalW    = $state(0);
   let imgNaturalH    = $state(0);
   let cropActive     = $state(false);
   let cropAspect     = $state(null);
-  let cropRect       = $state({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
-  let cropDrag       = $state(null);
-
-  $effect(() => { selectedId; cropActive = false; imgNaturalW = 0; imgNaturalH = 0; });
+  let cropEditorEl   = $state(null);
 
   function onImgLoad(e) {
     imgNaturalW = e.currentTarget.naturalWidth;
     imgNaturalH = e.currentTarget.naturalHeight;
-  }
-
-  function getImgBounds() {
-    if (!imgEl || !previewAreaEl) return null;
-    const ir = imgEl.getBoundingClientRect();
-    const pr = previewAreaEl.getBoundingClientRect();
-    return { x: ir.left - pr.left, y: ir.top - pr.top, w: ir.width, h: ir.height };
-  }
-
-  function initCropRect(aspect) {
-    if (!aspect || !imgNaturalW || !imgNaturalH) return { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
-    const nr = aspect * imgNaturalH / imgNaturalW;
-    if (nr <= 1) {
-      const rw = 0.8, rh = rw / nr;
-      if (rh <= 1) return { x: 0.1, y: (1 - rh) / 2, w: rw, h: rh };
-      const rh2 = 0.8, rw2 = rh2 * nr;
-      return { x: (1 - rw2) / 2, y: 0.1, w: rw2, h: rh2 };
-    }
-    const rh = 0.8, rw = rh * nr;
-    if (rw <= 1) return { x: (1 - rw) / 2, y: 0.1, w: rw, h: rh };
-    const rw2 = 0.8, rh2 = rw2 / nr;
-    return { x: 0.1, y: (1 - rh2) / 2, w: rw2, h: rh2 };
-  }
-
-  function activateCrop(aspect) {
-    cropAspect = aspect;
-    cropRect = initCropRect(aspect);
-    cropActive = true;
-  }
-
-  const CROP_MIN = 0.04;
-
-  function startCropDrag(e, type) {
-    e.stopPropagation();
-    const b = getImgBounds();
-    if (!b) return;
-    cropDrag = { type, sx: e.clientX, sy: e.clientY, r0: { ...cropRect }, b };
-  }
-
-  function onCropDragMove(e) {
-    if (!cropDrag) return;
-    const { type, sx, sy, r0, b } = cropDrag;
-    const dx = (e.clientX - sx) / b.w;
-    const dy = (e.clientY - sy) / b.h;
-    let { x, y, w, h } = r0;
-
-    if (type === 'move') {
-      x = Math.max(0, Math.min(1 - w, x + dx));
-      y = Math.max(0, Math.min(1 - h, y + dy));
-    } else {
-      if (type.includes('w')) { const nx = Math.max(0, Math.min(x + w - CROP_MIN, x + dx)); w = x + w - nx; x = nx; }
-      if (type.includes('e')) w = Math.max(CROP_MIN, Math.min(1 - x, w + dx));
-      if (type.includes('n')) { const ny = Math.max(0, Math.min(y + h - CROP_MIN, y + dy)); h = y + h - ny; y = ny; }
-      if (type.includes('s')) h = Math.max(CROP_MIN, Math.min(1 - y, h + dy));
-      if (cropAspect && imgNaturalW && imgNaturalH) {
-        const nr = cropAspect * imgNaturalH / imgNaturalW;
-        if (type.includes('n') || type === 's') { w = Math.min(1 - x, Math.max(CROP_MIN, h * nr)); }
-        else { h = Math.min(1 - y, Math.max(CROP_MIN, w / nr)); }
-      }
-    }
-    cropRect = { x, y, w, h };
-  }
-
-  function onCropDragEnd() { cropDrag = null; }
-
-  function applyCrop() {
-    if (imgNaturalW && imgNaturalH) {
-      imageOptions.crop_x = Math.round(cropRect.x * imgNaturalW);
-      imageOptions.crop_y = Math.round(cropRect.y * imgNaturalH);
-      imageOptions.crop_width = Math.round(cropRect.w * imgNaturalW);
-      imageOptions.crop_height = Math.round(cropRect.h * imgNaturalH);
-    }
-    cropActive = false;
-  }
-
-  function cancelCrop() { cropActive = false; }
-
-  function clearCropValues() {
-    imageOptions.crop_x = 0; imageOptions.crop_y = 0;
-    imageOptions.crop_width = null; imageOptions.crop_height = null;
-    cropActive = false;
   }
 
   // Clear any diff preview when the selected file changes
@@ -1058,11 +886,11 @@
       checkAllDone();
     });
 
-    loadPresets();
+    presetManagerEl?.loadPresets();
     checkTools();
 
     // Fire-and-forget update check after a short delay so startup isn't blocked.
-    setTimeout(() => { maybeCheckForUpdate(); }, 2000);
+    setTimeout(() => { updateManagerEl?.maybeCheckForUpdate(); }, 2000);
   });
 
   onDestroy(() => {
@@ -2253,23 +2081,8 @@
   }
 
   // ── Presets ────────────────────────────────────────────────────────────────
-
-  let presets          = $state([]);
-  let headerPresetId   = $state('');
-  let headerAdding     = $state(false);
-  let headerPresetName = $state('');
-  let _hpSuppressReset = false; // plain bool, prevents auto-reset during apply
-
-  // Auto-reset to "Presets" placeholder when the active settings change
-  $effect(() => {
-    void [
-      imageOptions.output_format, imageOptions.quality,
-      videoOptions.output_format, videoOptions.codec, videoOptions.bitrate, videoOptions.sample_rate,
-      audioOptions.output_format, audioOptions.bitrate, audioOptions.sample_rate,
-      activeOutputCategory,
-    ];
-    if (!_hpSuppressReset) headerPresetId = '';
-  });
+  // Owned by PresetManager; loadPresets() is called via bind:this after mount.
+  let presetManagerEl = $state(null);
 
   // Sync globalOutputFormat into the relevant options object
   $effect(() => {
@@ -2288,79 +2101,6 @@
     else if (cat === 'ebook')    ebookOptions.output_format    = globalOutputFormat;
     else if (cat === 'email')    emailOptions.output_format    = globalOutputFormat;
   });
-
-  // Built-in presets — always available, never persisted to backend
-  const BUILTIN_PRESETS = {
-    audio: [
-      { id: '__b_streaming',   name: 'Streaming',    media_type: 'audio', output_format: 'mp3',  bitrate: 192,  sample_rate: 44100, normalize_loudness: false },
-      { id: '__b_voice',       name: 'Voice only',   media_type: 'audio', output_format: 'mp3',  bitrate: 64,   sample_rate: 44100, normalize_loudness: true  },
-      { id: '__b_cd',          name: 'CD quality',   media_type: 'audio', output_format: 'mp3',  bitrate: 320,  sample_rate: 44100, normalize_loudness: false },
-      { id: '__b_lossless',    name: 'Lossless',     media_type: 'audio', output_format: 'flac', bitrate: null, sample_rate: 44100, normalize_loudness: false },
-      { id: '__b_podcast',     name: 'Podcast',      media_type: 'audio', output_format: 'mp3',  bitrate: 128,  sample_rate: 44100, normalize_loudness: true  },
-      { id: '__b_opus',        name: 'Opus (small)', media_type: 'audio', output_format: 'opus', bitrate: 96,   sample_rate: 48000, normalize_loudness: false },
-    ],
-    video: [],
-    image: [],
-  };
-  const ALL_BUILTINS = Object.values(BUILTIN_PRESETS).flat();
-
-  async function loadPresets() {
-    try { presets = await invoke('list_presets'); } catch { /* no-op */ }
-  }
-
-  function applyPreset(id) {
-    _hpSuppressReset = true;
-    const p = ALL_BUILTINS.find(b => b.id === id) ?? presets.find(p => p.id === id);
-    if (!p) return;
-    if (p.media_type === 'image') {
-      imageOptions.output_format = p.output_format;
-      if (p.quality != null) imageOptions.quality = p.quality;
-    } else if (p.media_type === 'video') {
-      videoOptions.output_format = p.output_format;
-      if (p.codec != null) videoOptions.codec = p.codec;
-      if (p.bitrate != null) videoOptions.bitrate = p.bitrate;
-      if (p.sample_rate != null) videoOptions.sample_rate = p.sample_rate;
-    } else {
-      audioOptions.output_format = p.output_format;
-      if (p.bitrate != null) audioOptions.bitrate = p.bitrate;
-      if (p.sample_rate != null) audioOptions.sample_rate = p.sample_rate;
-      if (p.normalize_loudness != null) audioOptions.normalize_loudness = p.normalize_loudness;
-    }
-    // Also sync globalOutputFormat so the header button reflects the preset's format
-    globalOutputFormat = p.output_format;
-    queueMicrotask(() => { _hpSuppressReset = false; });
-  }
-
-  async function saveHeaderPreset() {
-    const name = headerPresetName.trim();
-    if (!name || !activeOutputCategory) return;
-    const tab = activeOutputCategory;
-    const src = tab === 'image' ? imageOptions : tab === 'video' ? videoOptions : audioOptions;
-    try {
-      const saved = await invoke('save_preset', {
-        name, mediaType: tab,
-        outputFormat: src.output_format,
-        quality: tab === 'image' ? (src.quality ?? null) : null,
-        codec: tab === 'video' ? (src.codec ?? null) : null,
-        bitrate: (tab === 'video' || tab === 'audio') ? (src.bitrate ?? null) : null,
-        sampleRate: (tab === 'video' || tab === 'audio') ? (src.sample_rate ?? null) : null,
-      });
-      presets = [...presets, saved];
-      headerPresetName = '';
-      headerAdding = false;
-      _hpSuppressReset = true;
-      headerPresetId = saved.id;
-      queueMicrotask(() => { _hpSuppressReset = false; });
-    } catch (e) { console.error('Save preset failed:', e); }
-  }
-
-  async function deletePreset(id) {
-    try {
-      await invoke('delete_preset', { id });
-      presets = presets.filter(p => p.id !== id);
-      if (headerPresetId === id) headerPresetId = '';
-    } catch (e) { console.error('Delete preset failed:', e); }
-  }
 
   // ── Tooltip bar ────────────────────────────────────────────────────────────
   function onPanelMouseOver(e) {
@@ -2854,8 +2594,8 @@
 </script>
 
 <svelte:window
-  onmousemove={(e) => { onDiffWindowMouseMove(e); onCropDragMove(e); }}
-  onmouseup={() => { onDiffWindowMouseUp(); onCropDragEnd(); }}
+  onmousemove={(e) => { onDiffWindowMouseMove(e); }}
+  onmouseup={() => { onDiffWindowMouseUp(); }}
 />
 
 <!-- Hidden file input for Browse button -->
@@ -3171,78 +2911,13 @@
                      overflow-y:auto; z-index:500"
               onmousedown={(e) => e.stopPropagation()}
             >
-              <!-- Section: Updates -->
-              <div class="px-4 pt-4 pb-3 border-b border-[var(--border)]">
-                <!-- Header row: "Updates" + inline progress bar filling the rest -->
-                <div class="flex items-center gap-3 mb-3">
-                  <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)] shrink-0">Updates</p>
-                  <div class="flex-1 h-1.5 rounded-full overflow-hidden bg-[var(--border)]">
-                    <div class="h-full bg-[var(--accent)] transition-all duration-200"
-                         style="width:{updateState === 'downloading' ? updateProgress : (updateState === 'ready' ? 100 : (updateState === 'available' ? 100 : 0))}%"></div>
-                  </div>
-                  {#if updateState === 'downloading'}
-                    <span class="text-[10px] font-mono text-[var(--text-secondary)] shrink-0 tabular-nums">{updateProgress}%</span>
-                  {:else if updateState === 'available' || updateState === 'ready'}
-                    <span class="text-[10px] font-mono text-[var(--accent)] shrink-0">v{updateVersion}</span>
-                  {/if}
-                </div>
-                <!-- Left-justified checkboxes + stateful action button -->
-                <div class="flex items-center gap-4">
-                  <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" bind:checked={settings.notifyUpdates}
-                           class="w-3.5 h-3.5 accent-[var(--accent)]" />
-                    <span class="text-[12px] text-[var(--text-primary)]">Notify</span>
-                  </label>
-                  {#if !isManualUpdatePlatform}
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" bind:checked={settings.autoUpdate}
-                             class="w-3.5 h-3.5 accent-[var(--accent)]" />
-                      <span class="text-[12px] text-[var(--text-primary)]">Auto-update</span>
-                    </label>
-                  {/if}
-                  {#if updateState === 'available' && isManualUpdatePlatform}
-                    <button onclick={openReleasesPage}
-                            title="Opens the GitHub releases page in your browser"
-                            class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
-                                   bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
-                                   hover:opacity-90 transition-opacity">
-                      Download update
-                    </button>
-                  {:else if updateState === 'available'}
-                    <button onclick={installUpdate}
-                            class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
-                                   bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
-                                   hover:opacity-90 transition-opacity">
-                      Update Now
-                    </button>
-                  {:else if updateState === 'downloading'}
-                    <button disabled
-                            class="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] shrink-0
-                                   border border-[var(--border)] text-[var(--text-secondary)]
-                                   bg-transparent opacity-70 cursor-not-allowed">
-                      <svg class="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none"
-                           stroke="currentColor" stroke-width="3" stroke-linecap="round">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                      </svg>
-                      Updating
-                    </button>
-                  {:else if updateState === 'ready'}
-                    <button onclick={restartNow}
-                            class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
-                                   bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
-                                   hover:opacity-90 transition-opacity">
-                      Restart now
-                    </button>
-                  {:else}
-                    <button onclick={checkForUpdate}
-                            class="ml-auto px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
-                                   text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                                   hover:border-[var(--accent)] transition-colors shrink-0">
-                      Update Now
-                    </button>
-                  {/if}
-                </div>
-              </div>
+              <UpdateManager
+                bind:this={updateManagerEl}
+                bind:updateState
+                {settings}
+                {setStatus}
+                onUploadBeforeUpdate={_uploadBeforeUpdate}
+              />
 
               <!-- Section: Diagnostics ──────────────────────────────────────
                    Lists errors captured this and prior sessions (updater
@@ -5193,73 +4868,17 @@
             {/if}
 
             <!-- Crop overlay -->
-            {#if cropActive && imgEl}
-              {@const ib = getImgBounds()}
-              {#if ib}
-                {@const cx = ib.x + cropRect.x * ib.w}
-                {@const cy = ib.y + cropRect.y * ib.h}
-                {@const cw = cropRect.w * ib.w}
-                {@const ch = cropRect.h * ib.h}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="absolute inset-0 z-30 select-none" style="cursor:default">
-                  <!-- Dim: top -->
-                  <div class="absolute bg-black/50 pointer-events-none"
-                       style="left:{ib.x}px; top:{ib.y}px; width:{ib.w}px; height:{cropRect.y * ib.h}px"></div>
-                  <!-- Dim: bottom -->
-                  <div class="absolute bg-black/50 pointer-events-none"
-                       style="left:{ib.x}px; top:{cy + ch}px; width:{ib.w}px; height:{ib.h - (cropRect.y + cropRect.h) * ib.h}px"></div>
-                  <!-- Dim: left -->
-                  <div class="absolute bg-black/50 pointer-events-none"
-                       style="left:{ib.x}px; top:{cy}px; width:{cropRect.x * ib.w}px; height:{ch}px"></div>
-                  <!-- Dim: right -->
-                  <div class="absolute bg-black/50 pointer-events-none"
-                       style="left:{cx + cw}px; top:{cy}px; width:{ib.w - (cropRect.x + cropRect.w) * ib.w}px; height:{ch}px"></div>
-
-                  <!-- Crop border -->
-                  <div class="absolute pointer-events-none"
-                       style="left:{cx}px; top:{cy}px; width:{cw}px; height:{ch}px; border:1.5px solid rgba(255,255,255,0.85); box-sizing:border-box">
-                    <!-- Rule-of-thirds grid -->
-                    <div class="absolute inset-y-0" style="left:33.33%; border-left:1px solid rgba(255,255,255,0.3)"></div>
-                    <div class="absolute inset-y-0" style="left:66.66%; border-left:1px solid rgba(255,255,255,0.3)"></div>
-                    <div class="absolute inset-x-0" style="top:33.33%; border-top:1px solid rgba(255,255,255,0.3)"></div>
-                    <div class="absolute inset-x-0" style="top:66.66%; border-top:1px solid rgba(255,255,255,0.3)"></div>
-                  </div>
-
-                  <!-- Move area -->
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div class="absolute" style="left:{cx}px; top:{cy}px; width:{cw}px; height:{ch}px; cursor:move; z-index:1"
-                       onmousedown={(e) => startCropDrag(e, 'move')}></div>
-
-                  <!-- Corner handles -->
-                  {#each [['nw',cx,cy,'nwse-resize'],['ne',cx+cw,cy,'nesw-resize'],['sw',cx,cy+ch,'nesw-resize'],['se',cx+cw,cy+ch,'nwse-resize']] as [type,hx,hy,cur]}
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div class="absolute w-3 h-3 bg-white rounded-sm shadow"
-                         style="left:{hx}px; top:{hy}px; transform:translate(-50%,-50%); cursor:{cur}; z-index:3"
-                         onmousedown={(e) => startCropDrag(e, type)}></div>
-                  {/each}
-
-                  <!-- Edge handles -->
-                  {#each [['n',cx+cw/2,cy,'ns-resize'],['s',cx+cw/2,cy+ch,'ns-resize'],['w',cx,cy+ch/2,'ew-resize'],['e',cx+cw,cy+ch/2,'ew-resize']] as [type,hx,hy,cur]}
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div class="absolute w-3 h-3 bg-white rounded-sm shadow"
-                         style="left:{hx}px; top:{hy}px; transform:translate(-50%,-50%); cursor:{cur}; z-index:3"
-                         onmousedown={(e) => startCropDrag(e, type)}></div>
-                  {/each}
-
-                  <!-- Apply / Cancel — always visible inside the overlay -->
-                  <div class="absolute bottom-3 right-3 flex gap-2" style="z-index:10">
-                    <button onclick={cancelCrop}
-                            class="px-3 py-1 rounded bg-black/60 border border-white/15 text-white text-[11px] hover:bg-black/80 transition-colors">
-                      Cancel
-                    </button>
-                    <button onclick={applyCrop}
-                            class="px-3 py-1 rounded bg-[var(--accent)] text-white text-[11px] font-medium hover:opacity-90 transition-opacity">
-                      Apply
-                    </button>
-                  </div>
-                </div>
-              {/if}
-            {/if}
+            <CropEditor
+              bind:this={cropEditorEl}
+              bind:imageOptions
+              bind:cropActive
+              bind:cropAspect
+              {imgEl}
+              {imgNaturalW}
+              {imgNaturalH}
+              {previewAreaEl}
+              {selectedId}
+            />
           {:else if selectedItem && selectedItem.kind !== 'folder' && !['video','audio','image'].includes(selectedItem.mediaType)}
             <!-- Non-media types: show file info -->
             <div class="text-center select-none">
@@ -5472,79 +5091,15 @@
         {/if}
 
         <!-- Presets selector — always visible; filtered to active category when one is selected -->
-        {#if headerAdding}
-          <div class="flex gap-1 ml-auto">
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              type="text"
-              bind:value={headerPresetName}
-              placeholder="Name…"
-              data-tooltip="Name the preset — Enter saves, Esc cancels."
-              autofocus
-              onkeydown={(e) => { if (e.key === 'Enter') saveHeaderPreset(); if (e.key === 'Escape') { headerAdding = false; headerPresetName = ''; } }}
-              class="w-24 px-3 py-1 rounded-l text-[13px] border border-[var(--border)]
-                     bg-[var(--surface)] text-[var(--text-primary)] outline-none
-                     focus:border-[var(--accent)] transition-colors"
-            />
-            <button onclick={saveHeaderPreset}
-                    class="px-3 py-1 text-[13px] font-semibold border -ml-px border-[var(--accent)]
-                           bg-[var(--accent)] text-white rounded-r hover:opacity-90 transition-opacity">
-              Save
-            </button>
-            <button onclick={() => { headerAdding = false; headerPresetName = ''; }}
-                    class="px-3 py-1 text-[13px] border border-[var(--border)] rounded
-                           text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
-              ✕
-            </button>
-          </div>
-        {:else}
-          <div class="flex gap-1 ml-auto">
-            <select
-              bind:value={headerPresetId}
-              data-tooltip="Preset picker — one-click load a saved or built-in bundle of settings. Filtered to the current output category."
-              onchange={(e) => { const id = e.currentTarget.value; if (id) applyPreset(id); }}
-              class="px-3 py-1 rounded text-[13px] font-semibold border border-[var(--border)]
-                     bg-[var(--surface)] outline-none transition-colors cursor-pointer
-                     hover:border-[var(--accent)]
-                     {headerPresetId ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}"
-            >
-              <option value="">Presets</option>
-              {#if activeOutputCategory}
-                {#each (BUILTIN_PRESETS[activeOutputCategory] ?? []) as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-                {#each presets.filter(p => p.media_type === activeOutputCategory) as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-              {:else}
-                {#each ALL_BUILTINS as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-                {#each presets as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-              {/if}
-            </select>
-            <button
-              onclick={() => { headerAdding = true; headerPresetName = ''; }}
-              disabled={!activeOutputCategory || !['image','video','audio'].includes(activeOutputCategory)}
-              data-tooltip="Save the current panel settings as a named preset — reusable across files and sessions."
-              title="Save current settings as preset"
-              class="w-9 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
-                     text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]
-                     transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
-            >+</button>
-            <button
-              onclick={() => deletePreset(headerPresetId)}
-              disabled={!headerPresetId || headerPresetId.startsWith('__b_')}
-              data-tooltip="Delete the selected preset — only works on your saved presets, not built-ins."
-              title="Delete this preset"
-              class="w-9 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
-                     text-[var(--text-secondary)] hover:text-red-400 hover:border-red-500
-                     transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
-            >−</button>
-          </div>
-        {/if}
+        <PresetManager
+          bind:this={presetManagerEl}
+          bind:imageOptions
+          bind:videoOptions
+          bind:audioOptions
+          bind:globalOutputFormat
+          {activeOutputCategory}
+          {setStatus}
+        />
       </div>
 
       <!-- Active-format page title: large, centered, only when a format is
@@ -5791,10 +5346,10 @@
           <ImageOptions bind:options={imageOptions}
             onqualitystart={onQualityStart}
             onqualityinput={onQualityInput}
-            oncropstart={activateCrop}
-            oncropclear={clearCropValues}
-            cropActive={cropActive}
-            cropAspect={cropAspect}
+            oncropstart={(aspect) => cropEditorEl?.activate(aspect)}
+            oncropclear={() => cropEditorEl?.clear()}
+            {cropActive}
+            {cropAspect}
           />
         {:else if activeOutputCategory === 'video'}
           <VideoOptions bind:options={videoOptions} errors={validationErrors} />
