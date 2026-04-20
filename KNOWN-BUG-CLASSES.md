@@ -6,15 +6,6 @@
 **Description:** SVG chevron paths assigned to the wrong `{#if}` / `{:else}` branch, causing the icon to show the opposite direction from what the current state requires. When `vizExpanded=true` the chevrons pointed down (suggesting the panel would expand below) instead of up (suggesting it can be collapsed). Swap the `<path d="...">` values between the two branches to fix.
 **Pattern:** Any boolean-toggled SVG where paths are authored in `{#if open}` / `{:else}` blocks — verify each branch's visual meaning matches the state label.
 
----
-
-## BC-003: librewin-common pinned past latest Libre-Apps tag
-**First observed:** 2026-04-20
-**File:** `src-tauri/Cargo.toml`
-**Description:** `librewin-common` is pinned to git rev `d55e89df`, which is newer than the latest tag `v0.1.2` in eldo9000/Libre-Apps. Until a new tag is cut in Libre-Apps, this dep cannot move to a semver pin and will stay opaque. No runtime impact; affects maintainability.
-**Fix:** Cut a new tag in Libre-Apps at or past `d55e89df`, then switch the Cargo.toml dep to `tag = "vX.Y.Z"`.
-
----
 
 ## BC-002: Audio analysers black / silent before first playback
 **First observed:** 2026-04-17
