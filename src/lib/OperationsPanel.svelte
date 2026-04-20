@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import ChromaKeyPanel from './ChromaKeyPanel.svelte';
   import AnalysisTools from './AnalysisTools.svelte';
+  import { markConverting, markError } from './itemStatus.js';
 
   // ── Props API ──────────────────────────────────────────────────────────────
   let {
@@ -175,17 +176,14 @@
     }
     const ext = outExt || selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
     const outPath = expectedOutputPath(selectedItem, ext, suffix, outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
         operation: { ...payload, input_path: selectedItem.path, output_path: outPath },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`${label} failed: ${err}`, 'error');
     }
   }
@@ -196,17 +194,14 @@
     if (!selectedItem) { setStatus?.('Select a file first', 'error'); return; }
     if (selectedItem.status === 'converting') return;
     const outPath = expectedOutputPath(selectedItem, rewrapFormat, 'rewrap', outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
         operation: { type: 'rewrap', input_path: selectedItem.path, output_path: outPath },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Rewrap failed: ${err}`, 'error');
     }
   }
@@ -217,9 +212,7 @@
     const opts = selectedItem.mediaType === 'video' ? videoOptions : audioOptions;
     const outExt = selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
     const outPath = expectedOutputPath(selectedItem, outExt, 'cut', outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -232,8 +225,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Cut failed: ${err}`, 'error');
     }
   }
@@ -245,9 +237,7 @@
     if (!replaceAudioPath) { setStatus?.('Pick a replacement audio file', 'error'); return; }
     if (selectedItem.status === 'converting') return;
     const outPath = expectedOutputPath(selectedItem, selectedItem.ext || 'mp4', 'replaced', outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -259,8 +249,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Replace audio failed: ${err}`, 'error');
     }
   }
@@ -278,9 +267,7 @@
     const outExt = first.ext || 'mp4';
     const outPath = expectedOutputPath(first, outExt, 'merged', outputDir, outputSeparator);
 
-    first.status = 'converting';
-    first.percent = 0;
-    first.error = null;
+    markConverting(first);
     try {
       await invoke('run_operation', {
         jobId: first.id,
@@ -291,8 +278,7 @@
         },
       });
     } catch (err) {
-      first.status = 'error';
-      first.error = String(err);
+      markError(first, err);
       setStatus?.(`Merge failed: ${err}`, 'error');
     }
   }
@@ -320,9 +306,7 @@
       setStatus?.(`No ${extractMode} streams found`, 'error'); return;
     }
 
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
 
     for (const s of targets) {
       const ext = s.stream_type === 'video'
@@ -364,10 +348,7 @@
     if (selectedItem.status === 'converting') return;
 
     const outPath = expectedOutputPath(selectedItem, 'mp4', 'conformed', outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
-
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -384,8 +365,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Conform failed: ${err}`, 'error');
     }
   }
@@ -395,9 +375,7 @@
     if (selectedItem.status === 'converting') return;
     const outExt = selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
     const outPath = expectedOutputPath(selectedItem, outExt, 'unsilenced', outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -411,8 +389,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Silence remove failed: ${err}`, 'error');
     }
   }
@@ -521,7 +498,7 @@
     const dir = outputDir ?? parentDir;
     const outPath = `${dir}/${stem}${outputSeparator}thumb.${ext}`;
     if (!selectedItem) { setStatus?.('Select a file first', 'error'); return; }
-    selectedItem.status = 'converting'; selectedItem.percent = 0; selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -534,7 +511,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error'; selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Thumbnail failed: ${err}`, 'error');
     }
   }
@@ -565,7 +542,7 @@
     const value = frameExportMode === 'fps'
       ? Math.max(0.01, Number(frameExportFps) || 1)
       : Math.max(0.01, Number(frameExportInterval) || 5);
-    selectedItem.status = 'converting'; selectedItem.percent = 0; selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -579,7 +556,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error'; selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus?.(`Frame export failed: ${err}`, 'error');
     }
   }

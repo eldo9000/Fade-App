@@ -1,5 +1,6 @@
 <script>
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import { markConverting, markError } from './itemStatus.js';
 
   let {
     selectedItem = $bindable(null),
@@ -109,9 +110,7 @@
       outPath = expectedOutputPath(selectedItem, meta.ext, meta.suffix, outputDir, outputSeparator);
     }
 
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -132,8 +131,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus(`Chroma key failed: ${err}`, 'error');
     }
   }

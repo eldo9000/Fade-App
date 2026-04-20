@@ -1,5 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { markConverting, markError } from './itemStatus.js';
 
   let {
     selectedItem = $bindable(null),   // $bindable for runAudioNorm which mutates status
@@ -88,9 +89,7 @@
     if (selectedItem.status === 'converting') return;
     const outExt = selectedItem.ext || (selectedItem.mediaType === 'video' ? 'mp4' : 'wav');
     const outPath = expectedOutputPath(selectedItem, outExt, 'normalized', outputDir, outputSeparator);
-    selectedItem.status = 'converting';
-    selectedItem.percent = 0;
-    selectedItem.error = null;
+    markConverting(selectedItem);
     try {
       await invoke('run_operation', {
         jobId: selectedItem.id,
@@ -106,8 +105,7 @@
         },
       });
     } catch (err) {
-      selectedItem.status = 'error';
-      selectedItem.error = String(err);
+      markError(selectedItem, err);
       setStatus(`Audio normalize failed: ${err}`, 'error');
     }
   }

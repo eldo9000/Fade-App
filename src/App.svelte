@@ -14,6 +14,7 @@
   import FormatPicker from './lib/FormatPicker.svelte';
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
   import { validateOptions } from './lib/utils.js';
+  import { markConverting, markError, markDone, markProgress, markCancelled } from './lib/itemStatus.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -668,38 +669,27 @@
     unlistenProgress = await listen('job-progress', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
       if (item) {
-        item.status = 'converting';
-        item.percent = payload.percent;
+        markProgress(item, payload.percent);
         setStatus(payload.message, 'info');
       }
     });
 
     unlistenDone = await listen('job-done', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
-      if (item) {
-        item.status = 'done';
-        item.percent = 100;
-        item.outputPath = payload.output_path;
-      }
+      if (item) markDone(item, payload.output_path);
       checkAllDone();
     });
 
     unlistenError = await listen('job-error', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
-      if (item) {
-        item.status = 'error';
-        item.error = payload.message;
-      }
+      if (item) markError(item, payload.message);
       pushError('job', `Conversion failed: ${item?.name ?? payload.job_id}`, payload.message);
       checkAllDone();
     });
 
     unlistenCancelled = await listen('job-cancelled', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
-      if (item) {
-        item.status = 'cancelled';
-        item.percent = 0;
-      }
+      if (item) markCancelled(item);
       checkAllDone();
     });
 
@@ -919,8 +909,7 @@
 
     for (const item of willRun) {
       if (paused) break;
-      item.status = 'converting';
-      item.percent = 0;
+      markConverting(item);
 
       const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
@@ -936,7 +925,7 @@
              :                                 { ...fontOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
 
       invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
-        .catch(err => { item.status = 'error'; item.error = String(err); checkAllDone(); });
+        .catch(err => { markError(item, err); checkAllDone(); });
     }
   }
 
@@ -2713,7 +2702,7 @@
               {#if !settings.conversionCollapsed}
                 <div class="space-y-4">
                   {#each conversionGroups as group (group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || import.meta.env.DEV) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures)) && matchesSearch(f))}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -2783,7 +2772,7 @@
                 <div class="space-y-4">
                   {#each toolGroups as group (group.cat)}
                     {@const isOpsGroup = OPS_CATS.includes(group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || import.meta.env.DEV || isOpsGroup || f.ops) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || isOpsGroup || f.ops) && matchesSearch(f))}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -2844,8 +2833,8 @@
               </button>
               {#if !settings.filesCollapsed}
                 <div class="space-y-4">
-                  {#each fileGroups.filter(g => !g.todo || import.meta.env.DEV || settings.showDevFeatures) as group (group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || import.meta.env.DEV) && matchesSearch(f))}
+                  {#each fileGroups.filter(g => !g.todo || settings.showDevFeatures) as group (group.cat)}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures)) && matchesSearch(f))}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
