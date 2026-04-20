@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: shipped B3 of attack plan — IPC input caps on scan_dir, get_filmstrip, diff_subtitle/lint_subtitle (findings F-16/F-17/F-18)
+deferred: B4 capability narrows (assetProtocol + open_url) is next natural parallel-safe Phase 1 batch
+fragile: none — caps are additive with early-exit; in-app callers stay under limits
+ci: unknown
