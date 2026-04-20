@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mediaTypeFor, validateOptions } from '../lib/utils.js';
+import { markCancelled, applyProgressIfActive, isTerminal } from '../lib/itemStatus.js';
 import { mount, unmount, flushSync } from 'svelte';
 
 // ── QueueManager component mocks ──────────────────────────────────────────────
@@ -122,6 +123,130 @@ describe('queue state transitions', () => {
     queue[0].status = 'cancelled';
     queue[0].percent = 0;
     expect(queue[0].status).toBe('cancelled');
+  });
+});
+
+// ── Post-cancel flicker guard (F-19) ─────────────────────────────────────────
+// Regression: job-progress events arriving after cancel_job must not flip the
+// item back to 'converting'. applyProgressIfActive is the guard used by the
+// App.svelte job-progress listener.
+
+describe('applyProgressIfActive — post-cancel flicker guard', () => {
+  function makeItem(status = 'converting', percent = 10) {
+    return { id: 'x', path: '/p', name: 'n', ext: 'mp4', mediaType: 'video',
+             status, percent, error: null };
+  }
+
+  it('applies progress while the item is still converting', () => {
+    const item = makeItem('converting', 10);
+    expect(applyProgressIfActive(item, 42)).toBe(true);
+    expect(item.status).toBe('converting');
+    expect(item.percent).toBe(42);
+  });
+
+  it('applies progress to a pending item and flips it to converting', () => {
+    const item = makeItem('pending', 0);
+    expect(applyProgressIfActive(item, 5)).toBe(true);
+    expect(item.status).toBe('converting');
+    expect(item.percent).toBe(5);
+  });
+
+  it('does NOT overwrite a cancelled item (the bug F-19 is about)', () => {
+    const item = makeItem('cancelled', 0);
+    expect(applyProgressIfActive(item, 75)).toBe(false);
+    expect(item.status).toBe('cancelled');
+    expect(item.percent).toBe(0);
+  });
+
+  it('does NOT overwrite a done item', () => {
+    const item = makeItem('done', 100);
+    expect(applyProgressIfActive(item, 50)).toBe(false);
+    expect(item.status).toBe('done');
+    expect(item.percent).toBe(100);
+  });
+
+  it('does NOT overwrite an errored item', () => {
+    const item = makeItem('error', 30);
+    item.error = 'boom';
+    expect(applyProgressIfActive(item, 60)).toBe(false);
+    expect(item.status).toBe('error');
+    expect(item.error).toBe('boom');
+  });
+
+  it('isTerminal reports terminal states', () => {
+    expect(isTerminal(makeItem('pending'))).toBe(false);
+    expect(isTerminal(makeItem('converting'))).toBe(false);
+    expect(isTerminal(makeItem('done'))).toBe(true);
+    expect(isTerminal(makeItem('error'))).toBe(true);
+    expect(isTerminal(makeItem('cancelled'))).toBe(true);
+  });
+
+  it('full cancel sequence: late progress after cancel is ignored', () => {
+    const item = makeItem('converting', 20);
+    // User clicks cancel → backend emits job-cancelled
+    markCancelled(item);
+    expect(item.status).toBe('cancelled');
+    // Late ffmpeg stderr line arrives → job-progress fires
+    const applied = applyProgressIfActive(item, 88);
+    expect(applied).toBe(false);
+    expect(item.status).toBe('cancelled');
+    expect(item.percent).toBe(0);
+  });
+});
+
+// ── Preview stale-result discard (F-21) ──────────────────────────────────────
+// Regression: rapid slider drags issue overlapping preview_* invocations; an
+// older result that resolves after a newer one must not overwrite the UI.
+// The pattern used inline in ChromaKeyPanel / _runImageDiff / runDiffPreview
+// is a monotonic generation counter captured at invoke time and re-checked
+// before writing to state.
+
+describe('generation-token pattern for preview stale-result guard', () => {
+  it('older result that resolves last is discarded', async () => {
+    let gen = 0;
+    let applied = null;
+    async function runPreview(value, delayMs) {
+      const myGen = ++gen;
+      await new Promise(r => setTimeout(r, delayMs));
+      if (myGen !== gen) return;  // stale — newer invoke superseded this one
+      applied = value;
+    }
+    // Old invoke is slow; new invoke fires after it and resolves first.
+    const slow = runPreview('old', 30);
+    await new Promise(r => setTimeout(r, 5));
+    const fast = runPreview('new', 5);
+    await Promise.all([slow, fast]);
+    expect(applied).toBe('new');
+  });
+
+  it('sequential non-overlapping invokes all apply', async () => {
+    let gen = 0;
+    let applied = null;
+    async function runPreview(value) {
+      const myGen = ++gen;
+      await Promise.resolve();
+      if (myGen !== gen) return;
+      applied = value;
+    }
+    await runPreview('a');
+    expect(applied).toBe('a');
+    await runPreview('b');
+    expect(applied).toBe('b');
+  });
+
+  it('N concurrent invokes: only the last-issued one wins', async () => {
+    let gen = 0;
+    let applied = null;
+    const results = ['one', 'two', 'three', 'four', 'five'];
+    const delays  = [40, 10, 35, 5, 20];
+    async function runPreview(value, delayMs) {
+      const myGen = ++gen;
+      await new Promise(r => setTimeout(r, delayMs));
+      if (myGen !== gen) return;
+      applied = value;
+    }
+    await Promise.all(results.map((v, i) => runPreview(v, delays[i])));
+    expect(applied).toBe('five');
   });
 });
 

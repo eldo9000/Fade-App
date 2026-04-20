@@ -24,6 +24,7 @@
   let chromaPreviewError = $state(null);
   let _chromaPreviewTimer = null;
   let _chromaPreviewKey  = null;                 // last-rendered param hash
+  let _chromaPreviewGen  = 0;                    // generation token — newest invoke wins
 
   // Cleanup debounce timer on component teardown
   $effect(() => {
@@ -68,6 +69,7 @@
     if (key === _chromaPreviewKey && chromaPreviewUrl) return;
     if (_chromaPreviewTimer) clearTimeout(_chromaPreviewTimer);
     _chromaPreviewTimer = setTimeout(async () => {
+      const gen = ++_chromaPreviewGen;
       chromaPreviewLoading = true;
       chromaPreviewError = null;
       try {
@@ -85,13 +87,15 @@
           despillMix: Number(chromaDespillMix),
           upsample: !!chromaUpsample,
         });
+        if (gen !== _chromaPreviewGen) return;  // stale — newer invoke already in flight
         // Cache-bust so the <img> refreshes when the same path is rewritten.
         chromaPreviewUrl = convertFileSrc(path) + '?t=' + Date.now();
         _chromaPreviewKey = key;
       } catch (err) {
+        if (gen !== _chromaPreviewGen) return;
         chromaPreviewError = String(err);
       } finally {
-        chromaPreviewLoading = false;
+        if (gen === _chromaPreviewGen) chromaPreviewLoading = false;
       }
     }, 250);
   }

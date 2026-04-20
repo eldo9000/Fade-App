@@ -14,7 +14,7 @@
   import FormatPicker from './lib/FormatPicker.svelte';
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
   import { validateOptions } from './lib/utils.js';
-  import { markConverting, markError, markDone, markProgress, markCancelled } from './lib/itemStatus.js';
+  import { markConverting, markError, markDone, markCancelled, applyProgressIfActive } from './lib/itemStatus.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -304,6 +304,7 @@
   let diffLoading    = $state(false);
   let diffError      = $state(null);
   let diffNote       = $state(null);
+  let _diffPreviewGen = 0;
   let diffHandleSecs = $state(3); // 1 = fast, 3 = accurate, 10 = AV1-safe
 
   // Mini scrubber state for the diff clip
@@ -349,6 +350,7 @@
   let imgCompressedPath = $state(null);
   let imgDiffLoading    = $state(false);
   let _imgDiffTimer     = null;
+  let _imgDiffGen       = 0;
   let _qualityDragging  = false;
 
   function _clearImageDiff() {
@@ -357,6 +359,7 @@
 
   async function _runImageDiff() {
     if (!selectedItem || selectedItem.mediaType !== 'image') return;
+    const gen = ++_imgDiffGen;
     imgDiffLoading = true;
     try {
       const result = await invoke('preview_image_quality', {
@@ -364,10 +367,11 @@
         quality: imageOptions.quality,
         outputFormat: imageOptions.output_format,
       });
+      if (gen !== _imgDiffGen) return;  // stale — newer slider tick in flight
       imgDiffPath       = result.diff_path;
       imgCompressedPath = result.compressed_path;
     } catch { /* non-fatal — lossless format or magick missing */ }
-    finally { imgDiffLoading = false; }
+    finally { if (gen === _imgDiffGen) imgDiffLoading = false; }
   }
 
   function onQualityStart() {
@@ -419,6 +423,7 @@
     if (!selectedItem || selectedItem.mediaType !== 'video') return;
     const at = videoEl?.currentTime ?? 0;
     try { videoEl?.pause(); } catch { /* non-fatal */ }
+    const gen = ++_diffPreviewGen;
     diffLoading = true;
     diffError = null;
     diffClipPath = null;
@@ -433,12 +438,14 @@
         handleSecs: diffHandleSecs,
         amplify: 8.0,
       });
+      if (gen !== _diffPreviewGen) return;  // stale — newer diff request in flight
       diffClipPath = result.path;
       diffNote = result.note;
     } catch (e) {
+      if (gen !== _diffPreviewGen) return;
       diffError = String(e);
     } finally {
-      diffLoading = false;
+      if (gen === _diffPreviewGen) diffLoading = false;
     }
   }
 
@@ -668,22 +675,25 @@
 
     unlistenProgress = await listen('job-progress', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
-      if (item) {
-        markProgress(item, payload.percent);
-        setStatus(payload.message, 'info');
-      }
+      if (!item) return;
+      // Terminal states win: a late progress line from ffmpeg stderr must
+      // not flip a cancelled/done/error item back to 'converting'.
+      if (!applyProgressIfActive(item, payload.percent)) return;
+      setStatus(payload.message, 'info');
     });
 
     unlistenDone = await listen('job-done', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
-      if (item) markDone(item, payload.output_path);
+      if (item && item.status !== 'cancelled') markDone(item, payload.output_path);
       checkAllDone();
     });
 
     unlistenError = await listen('job-error', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
-      if (item) markError(item, payload.message);
-      pushError('job', `Conversion failed: ${item?.name ?? payload.job_id}`, payload.message);
+      if (item && item.status !== 'cancelled') {
+        markError(item, payload.message);
+        pushError('job', `Conversion failed: ${item.name ?? payload.job_id}`, payload.message);
+      }
       checkAllDone();
     });
 

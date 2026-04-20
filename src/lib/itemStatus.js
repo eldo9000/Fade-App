@@ -48,3 +48,23 @@ export function markCancelled(item) {
   item.status  = 'cancelled';
   item.percent = 0;
 }
+
+/** @param {QueueFileItem} item */
+export function isTerminal(item) {
+  return item.status === 'done' || item.status === 'error' || item.status === 'cancelled';
+}
+
+/**
+ * Apply an incoming progress update unless the item has already reached a
+ * terminal state. Late job-progress events (e.g. an ffmpeg stderr line that
+ * arrives after cancel_job kills the child) must not flip the item back to
+ * 'converting'.
+ * @param {QueueFileItem} item
+ * @param {number} percent
+ * @returns {boolean} true if progress was applied
+ */
+export function applyProgressIfActive(item, percent) {
+  if (isTerminal(item)) return false;
+  markProgress(item, percent);
+  return true;
+}
