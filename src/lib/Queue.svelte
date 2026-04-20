@@ -293,7 +293,7 @@
         onclick={(e) => onRowClick(e, item, _incompat)}
         onmouseenter={(e) => onItemEnter(e, item)}
         onmouseleave={onItemLeave}
-        class="relative overflow-hidden flex items-center gap-2 py-1 border-b border-[var(--border)] group transition-colors
+        class="relative overflow-hidden flex items-center gap-2 py-1.5 border-b border-[var(--border)] group transition-colors
                {indent ? 'pl-8 pr-3' : 'px-3'}
                {_incompat ? 'cursor-default' : 'cursor-pointer'}
                {_incompat && !isSelected(item.id) ? 'bg-black/40 text-[var(--text-secondary)]/60' : ''}
