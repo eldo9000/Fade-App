@@ -6,20 +6,28 @@ Last updated: 2026-04-20
 
 ## Current Focus
 
-Pre-1.0 polish phase. v0.6.x series shipping incremental UX fixes and dev-feature gating. Recent work: chromakey/colorkey, codec presets, sidebar search, settings panel fixes, macOS Gatekeeper signing.
+Housekeeping + App.svelte split sprint. TASK-6 (mutex cleanup) and TASK-5a (UpdateManager / PresetManager / CropEditor extractions) are complete. Remaining: TASK-5b (QueueManager) and TASK-5c (OperationsPanel / AnalysisTools / ChromaKeyPanel).
 
 ## Next action
 
-**Fix the v0.6.1 release.** The Release workflow failed on tag v0.6.1 because `src-tauri/tauri.conf.json` version (`0.6.0`) doesn't match the git tag (`0.6.1`). Either bump `tauri.conf.json` to `0.6.1` and re-tag, or cut a fresh `0.6.2` that bundles the Gatekeeper signing fix.
+**Dispatch TASK-5b in a fresh agent session.** The brief lives at `tasks/TASK-5b-queue-manager.md` and is self-contained. Must run before TASK-5c — 5c's operation runners mutate `selectedItem`, which 5b moves into QueueManager's ownership as a `$bindable` prop.
 
-Success signal: Release workflow run completes green and binaries appear on the GitHub Releases page.
+Success signal: `src/lib/QueueManager.svelte` exists, App.svelte no longer declares `queue` or `handleSelect`, multiselect + pipeline cancellation still work, CI green.
 
 ## Known Risks
 
-- **Release workflow brittle.** The version skew check is strict — every release must bump `src-tauri/tauri.conf.json` in the same commit as the tag, or the workflow dies on "tag version does not match". Document the release ritual or add a bump-and-tag script.
-- **Release pipeline uses Node.js 20 actions.** Deprecation warning from GitHub; `actions/checkout@v4` flagged. Node 24 becomes default on 2026-06-02. Not urgent, but on the clock.
-- **CI on main is green** (run 24648547365). Release workflow is the only broken pipeline.
+- **Release workflow still broken** — `v0.6.1` tag points at a commit where `src-tauri/tauri.conf.json` reads `0.6.0`. Deferred by user. When unfrozen, cut v0.6.2 bundling the Gatekeeper fix and bump config in the same commit as the tag.
+- **`$bindable` chain fragility** — 5a established the pattern. If 5b or 5c breaks it (e.g., makes `selectedItem` read-only), operation progress updates silently stop. Manual smoke-test after each extraction is mandatory.
+- **Async pipeline cancellation in 5b** — `_loadGen` generation counter in `runLoadPipeline` must be preserved exactly. Rapid file selection without it would attach the wrong waveform to the wrong file.
+
+## Recent progress (2026-04-20)
+
+- Node 20 → 22 in both CI workflows
+- `serde_yaml` (abandoned) → `serde_yml` drop-in
+- `librewin-common` pinned to tag `v0.1.3` (was bare git hash)
+- Mutex `.unwrap()` → `.expect()` at 10 sites (TASK-6 ✓)
+- Extracted UpdateManager, PresetManager, CropEditor (TASK-5a ✓) — App.svelte 6014 → 5569
 
 ## Mode
 
-Pre-ship polish. Feature surface is functionally complete; remaining work is stability, release hygiene, and final UX passes before 1.0.
+Pre-ship polish + architectural cleanup. No new features; focus is splitting the God component and removing dependency debt before 1.0.
