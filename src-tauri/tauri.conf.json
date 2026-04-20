@@ -1,6 +1,6 @@
 {
   "productName": "Fade",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "identifier": "io.librewin.fade",
   "build": {
     "frontendDist": "../dist",
