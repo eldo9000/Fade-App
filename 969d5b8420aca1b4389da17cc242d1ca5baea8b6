@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: batch B7 landed — memoized seven_zip_bin + RateLimiter scaffolding for B8
+deferred: RateLimiter integration into consolidated run_ffmpeg (B8)
+fragile: none
+ci: unknown
