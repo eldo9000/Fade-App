@@ -1598,11 +1598,62 @@ fn get_streams(input_path: String) -> Result<Vec<operations::StreamInfo>, String
     operations::extract::get_streams(&input_path)
 }
 
+/// Maximum accepted URL length for `open_url`. Generous for real-world links.
+const OPEN_URL_MAX_LEN: usize = 4096;
+
+/// Schemes accepted by `open_url`. Anything else (file://, javascript:,
+/// vbscript:, custom URI handlers, …) is rejected before spawning a process.
+const OPEN_URL_ALLOWED_SCHEMES: &[&str] = &["http", "https", "mailto"];
+
+/// Validate a URL handed to `open_url`: enforce a length cap, reject control
+/// characters and whitespace, and require an allowlisted scheme. Defense in
+/// depth — even though `Command::arg` doesn't shell-interpret on Unix, the
+/// Windows path goes through `cmd /C start` which re-parses the argument.
+fn validate_url_scheme(url: &str) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("URL is empty".to_string());
+    }
+    if url.len() > OPEN_URL_MAX_LEN {
+        return Err(format!(
+            "URL exceeds maximum length ({} > {} bytes)",
+            url.len(),
+            OPEN_URL_MAX_LEN
+        ));
+    }
+    if url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err("URL contains whitespace or control characters".to_string());
+    }
+    let scheme_end = url
+        .find(':')
+        .ok_or_else(|| "URL has no scheme".to_string())?;
+    let scheme = &url[..scheme_end];
+    if scheme.is_empty() {
+        return Err("URL has empty scheme".to_string());
+    }
+    let scheme_lower = scheme.to_ascii_lowercase();
+    if !OPEN_URL_ALLOWED_SCHEMES.contains(&scheme_lower.as_str()) {
+        return Err(format!(
+            "URL scheme '{}' not allowed (allowed: {})",
+            scheme,
+            OPEN_URL_ALLOWED_SCHEMES.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 /// Open a URL in the user's default browser.
 /// Used for "download update" on platforms where in-place updates
 /// are disabled (macOS/Windows without codesigning).
+///
+/// Only `http`, `https`, and `mailto` schemes are accepted; other schemes
+/// (`file://`, `javascript:`, custom protocol handlers) are rejected
+/// before any process is spawned.
 #[command]
 fn open_url(url: String) -> Result<(), String> {
+    validate_url_scheme(&url)?;
     #[cfg(target_os = "macos")]
     let res = Command::new("open").arg(&url).spawn();
     #[cfg(target_os = "windows")]
@@ -2762,5 +2813,48 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&rotated);
+    }
+
+    // ── validate_url_scheme ───────────────────────────────────────────────────
+
+    #[test]
+    fn url_scheme_accepts_allowed_schemes() {
+        assert!(validate_url_scheme("https://example.com").is_ok());
+        assert!(validate_url_scheme("http://example.com/path?x=1&y=2").is_ok());
+        assert!(validate_url_scheme("mailto:foo@bar.com").is_ok());
+        // Scheme match is case-insensitive.
+        assert!(validate_url_scheme("HTTPS://example.com").is_ok());
+    }
+
+    #[test]
+    fn url_scheme_rejects_file_and_script_schemes() {
+        assert!(validate_url_scheme("file:///etc/passwd").is_err());
+        assert!(validate_url_scheme("javascript:alert(1)").is_err());
+        assert!(validate_url_scheme("vbscript:msgbox(1)").is_err());
+        assert!(validate_url_scheme("ftp://example.com").is_err());
+        assert!(validate_url_scheme("data:text/html,<script>").is_err());
+        // Custom URI handlers (e.g. slack://, steam://) also rejected.
+        assert!(validate_url_scheme("slack://open").is_err());
+    }
+
+    #[test]
+    fn url_scheme_rejects_malformed() {
+        assert!(validate_url_scheme("").is_err());
+        assert!(validate_url_scheme("no-scheme-here").is_err());
+        assert!(validate_url_scheme(":empty-scheme").is_err());
+    }
+
+    #[test]
+    fn url_scheme_rejects_whitespace_and_control_chars() {
+        assert!(validate_url_scheme("https://example.com/ evil").is_err());
+        assert!(validate_url_scheme("https://example.com\nfoo").is_err());
+        assert!(validate_url_scheme("https://example.com\tfoo").is_err());
+        assert!(validate_url_scheme("https://example.com\0foo").is_err());
+    }
+
+    #[test]
+    fn url_scheme_rejects_oversized() {
+        let long = format!("https://example.com/{}", "a".repeat(OPEN_URL_MAX_LEN));
+        assert!(validate_url_scheme(&long).is_err());
     }
 }
