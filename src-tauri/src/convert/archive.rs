@@ -4,19 +4,29 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{Emitter, Window};
 
 /// 7-Zip ships under two binary names depending on platform/packaging:
 /// `7z` (classic p7zip, Linux distros, Windows installer) vs `7zz` (modern
 /// sevenzip project, Homebrew on macOS). Return whichever exists in PATH,
-/// preferring `7z` when both are available.
-fn seven_zip_bin() -> &'static str {
-    if Command::new("7z").arg("i").output().is_ok() {
+/// preferring `7z` when both are available. Result is memoized for the
+/// process lifetime — probing spawns a subprocess and we call this on every
+/// archive op.
+static SEVEN_ZIP_BIN: OnceLock<&'static str> = OnceLock::new();
+
+fn resolve_seven_zip_bin(probe: impl Fn(&str) -> bool) -> &'static str {
+    if probe("7z") {
         "7z"
     } else {
         "7zz"
     }
+}
+
+fn seven_zip_bin() -> &'static str {
+    SEVEN_ZIP_BIN.get_or_init(|| {
+        resolve_seven_zip_bin(|name| Command::new(name).arg("i").output().is_ok())
+    })
 }
 
 fn tool_in_path(name: &str) -> bool {
@@ -531,4 +541,27 @@ fn parse_7z_percent(line: &str) -> Option<f32> {
     let trimmed = line.trim();
     let pct_end = trimmed.find('%')?;
     trimmed[..pct_end].trim().parse::<f32>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_seven_zip_bin_prefers_7z_when_present() {
+        assert_eq!(resolve_seven_zip_bin(|name| name == "7z"), "7z");
+    }
+
+    #[test]
+    fn resolve_seven_zip_bin_falls_back_to_7zz() {
+        assert_eq!(resolve_seven_zip_bin(|_| false), "7zz");
+    }
+
+    #[test]
+    fn seven_zip_bin_memoizes() {
+        let a = seven_zip_bin();
+        let b = seven_zip_bin();
+        assert_eq!(a, b);
+        assert!(matches!(a, "7z" | "7zz"));
+    }
 }

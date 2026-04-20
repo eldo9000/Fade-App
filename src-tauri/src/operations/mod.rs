@@ -15,6 +15,7 @@ pub mod frame_ops;
 pub mod loop_op;
 pub mod merge;
 pub mod metadata_strip;
+pub mod rate_limiter;
 pub mod remove_audio;
 pub mod remove_video;
 pub mod replace_audio;
