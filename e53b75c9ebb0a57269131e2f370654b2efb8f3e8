@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: marked B6 DONE in audits/04-attack-plan.md with commit 01299c5
+deferred: none
+fragile: none
+ci: unknown
