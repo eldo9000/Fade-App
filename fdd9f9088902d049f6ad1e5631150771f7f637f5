@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: removed BC-003 (librewin-common tag debt) — resolved by v0.1.3 tag
+deferred: none
+fragile: release pipeline still broken (v0.6.1 tag/config skew)
+ci: unknown
