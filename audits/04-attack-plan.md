@@ -151,13 +151,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** trivial.
 - **Status:** DONE — commit `cea4a39`. Switched to `OpenOptions::append(true)` + 64 KB byte-threshold rotation (→ `fade.log.1`), matching `diag_append`. Pre-assembled line buffer so concurrent O_APPEND writes don't interleave. 20×10 concurrency test lands all 200 lines; rotation test green. 162 rust + 30 vitest tests pass; clippy clean; cargo audit clean.
 
-### B3 — `fix(security): IPC input caps — scan_dir, filmstrip count, diff_subtitle`
+### B3 — `fix(security): IPC input caps — scan_dir, filmstrip count, diff_subtitle` — **DONE** (dc998e3)
 - **Findings:** F-16, F-17, F-18
 - **Rationale:** All three are "frontend-supplied unbounded input reaches blocking syscall/spawn". Shared mental model — bound at command entry.
 - **Effort:** S
 - **Risk:** LOW — caps are generous (scan: `max_depth=8`, `max_entries=10000`; filmstrip: `count.min(128)`; diff: `32 MB`).
 - **Test:** Unit tests per command with oversized input; manual verify normal usage unaffected.
 - **Rollback:** trivial; per-command `.min()` lines.
+- **Status:** DONE — commit `dc998e3`. `scan_dir` gained `SCAN_MAX_DEPTH=8` + `SCAN_MAX_ENTRIES=10_000` with early-exit; `get_filmstrip` clamps via extracted `clamp_count()`; `diff_subtitle`+`lint_subtitle` now route through shared `read_subtitle_capped()` (32 MiB). 169 rust + 30 vitest tests green; clippy clean; cargo audit unchanged.
 
 ### B4 — `fix(security): narrow IPC trust surface — assetProtocol, open_url`
 - **Findings:** F-08, F-09
