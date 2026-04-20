@@ -142,13 +142,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** revert Cargo.toml pin; one commit.
 - **Status:** DONE — commit `50cbf80`. Both advisories confirmed absent in `cargo audit`; 160 rust tests + 30 vitest tests green; clippy clean.
 
-### B2 — `fix(logging): write_fade_log atomic append + rotation`
+### B2 — `fix(logging): write_fade_log atomic append + rotation` — **DONE** (cea4a39)
 - **Findings:** F-15
 - **Rationale:** RMW race drops observability under batch; sibling `diag_append` shows correct idiom.
 - **Effort:** XS
 - **Risk:** LOW
 - **Test:** Concurrent-write stress test (spawn 20 threads writing entries, assert line count).
 - **Rollback:** trivial.
+- **Status:** DONE — commit `cea4a39`. Switched to `OpenOptions::append(true)` + 64 KB byte-threshold rotation (→ `fade.log.1`), matching `diag_append`. Pre-assembled line buffer so concurrent O_APPEND writes don't interleave. 20×10 concurrency test lands all 200 lines; rotation test green. 162 rust + 30 vitest tests pass; clippy clean; cargo audit clean.
 
 ### B3 — `fix(security): IPC input caps — scan_dir, filmstrip count, diff_subtitle`
 - **Findings:** F-16, F-17, F-18
