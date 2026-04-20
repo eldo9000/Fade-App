@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: committed pending UI style fixes (input focus outline removal, queue row padding)
+deferred: release versioning (v0.6.1 tag/config skew not yet resolved)
+fragile: release pipeline still broken — tauri.conf.json=0.6.0 vs tag v0.6.1
+ci: unknown
