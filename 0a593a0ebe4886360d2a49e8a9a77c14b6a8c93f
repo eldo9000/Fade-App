@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted PresetManager from App.svelte into src/lib/PresetManager.svelte
+deferred: none
+fragile: App.svelte prop drilling to PresetManager — any new state additions must be passed through
+ci: unknown
