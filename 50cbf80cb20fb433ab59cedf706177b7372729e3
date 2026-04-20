@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: executed B1 from audits/04-attack-plan.md — migrated serde_yml → serde_yaml_ng to close RUSTSEC-2025-0067/0068
+deferred: cargo tauri build --debug skipped — CLI not installed locally; covered by cargo build --release
+fragile: none — drop-in swap, 2 call sites, 160 rust tests + 30 vitest tests green, new YAML roundtrip tests added
+ci: unknown
