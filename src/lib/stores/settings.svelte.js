@@ -11,6 +11,7 @@ const DEFAULTS = {
   fileTypeColumn: true,
   lastUpdateCheck: 0,            // epoch ms; 0 = never. Gates the weekly check.
   sendDiagnostics: true,         // opt-in after 1.0; forced-on during beta (see BETA flag).
+  showDevFeatures: true,         // show preview/todo items (green) in the format picker; disable for a clean production view
   conversionCollapsed: false,    // right-sidebar "Conversion" super-section fold state
   toolsCollapsed: false,         // right-sidebar "Tools" super-section fold state
   filesCollapsed: true,          // right-sidebar "Files" super-section fold state (data / doc / archive)

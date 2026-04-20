@@ -3320,6 +3320,19 @@
                 </label>
               </div>
 
+              <!-- Section: Developer -->
+              <div class="px-4 pt-3 pb-3 border-b border-[var(--border)] flex flex-col gap-2.5">
+                <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Developer</p>
+                <label class="flex items-start gap-2 p-1.5 rounded border border-red-600/70 bg-red-900/10">
+                  <input type="checkbox"
+                         bind:checked={settings.showDevFeatures}
+                         class="w-3.5 h-3.5 accent-[var(--accent)] mt-0.5" />
+                  <span class="text-[11px] leading-snug text-red-200">
+                    <strong>Show developer features</strong> — displays unfinished formats and tools (green items) in the format picker. Uncheck to preview what ships to users.
+                  </span>
+                </label>
+              </div>
+
               <!-- Section: Output -->
               <div class="px-4 pt-3 pb-3 border-b border-[var(--border)] flex flex-col gap-2.5">
                 <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">Output</p>
@@ -5611,7 +5624,7 @@
               {#if !settings.conversionCollapsed}
                 <div class="space-y-4">
                   {#each conversionGroups as group (group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || f.preview || import.meta.env.DEV) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || import.meta.env.DEV) && matchesSearch(f))}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -5681,7 +5694,7 @@
                 <div class="space-y-4">
                   {#each toolGroups as group (group.cat)}
                     {@const isOpsGroup = OPS_CATS.includes(group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || f.preview || import.meta.env.DEV || isOpsGroup || f.ops) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || import.meta.env.DEV || isOpsGroup || f.ops) && matchesSearch(f))}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -5742,8 +5755,8 @@
               </button>
               {#if !settings.filesCollapsed}
                 <div class="space-y-4">
-                  {#each fileGroups.filter(g => !g.todo || import.meta.env.DEV) as group (group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || f.preview || import.meta.env.DEV) && matchesSearch(f))}
+                  {#each fileGroups.filter(g => !g.todo || import.meta.env.DEV || settings.showDevFeatures) as group (group.cat)}
+                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || import.meta.env.DEV) && matchesSearch(f))}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
