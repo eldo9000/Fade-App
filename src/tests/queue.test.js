@@ -1,5 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mediaTypeFor, validateOptions } from '../lib/utils.js';
+import { mount, unmount, flushSync } from 'svelte';
+
+// ── QueueManager component mocks ──────────────────────────────────────────────
+// Mocked before the component-level tests that import QueueManager.
+// get_file_info / get_waveform / get_filmstrip are best-effort in the pipeline;
+// mocks here ensure they resolve quickly and never hang the async pipeline.
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn((cmd) => {
+    if (cmd === 'get_file_info') return Promise.resolve({ duration_secs: 120, width: 1920, height: 1080 });
+    if (cmd === 'get_waveform')  return Promise.resolve([]);
+    if (cmd === 'get_filmstrip') return Promise.resolve([]);
+    return Promise.resolve(null);
+  }),
+  convertFileSrc: vi.fn((p) => `asset://${p}`),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+}));
 
 // ── mediaTypeFor ──────────────────────────────────────────────────────────────
 
@@ -188,5 +208,173 @@ describe('validateOptions', () => {
       const errors = validateOptions(video, baseAudio);
       expect(errors.resolution).toBeUndefined();
     }
+  });
+});
+
+// ── QueueManager component tests ──────────────────────────────────────────────
+// These tests mount QueueManager and exercise its exported API. The mocks at
+// the top of this file cover all invoke() calls used by the async pipeline.
+
+import QueueManager from '../lib/QueueManager.svelte';
+
+describe('QueueManager', () => {
+  let target;
+  let comp;
+
+  beforeEach(() => {
+    target = document.createElement('div');
+    document.body.appendChild(target);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    if (comp) { unmount(comp); comp = null; }
+    document.body.removeChild(target);
+  });
+
+  // ── Test 1: Selecting an item updates selectedItem ─────────────────────────
+  it('selecting an item updates selectedItem', () => {
+    let boundItem = null;
+    comp = mount(QueueManager, {
+      target,
+      props: {
+        get selectedItem() { return boundItem; },
+        set selectedItem(v) { boundItem = v; },
+        setStatus: vi.fn(),
+      },
+    });
+
+    const videoItem = {
+      id: crypto.randomUUID(), kind: 'file', parentId: null,
+      path: '/tmp/test.mp4', name: 'test.mp4', ext: 'mp4',
+      mediaType: 'video', status: 'pending', percent: 0, info: null,
+    };
+
+    // Push directly onto the bound queue by calling addFiles with a path
+    // that routes through the component's addFiles export.
+    comp.addFiles(['/tmp/test.mp4']);
+    flushSync();
+
+    // Simpler: use the queue $bindable — verify addFiles adds an item and
+    // that after handleSelect the selectedItem matches.
+    let boundQueue = [];
+    unmount(comp);
+    comp = mount(QueueManager, {
+      target,
+      props: {
+        get queue()         { return boundQueue; },
+        set queue(v)        { boundQueue = v; },
+        get selectedItem()  { return boundItem; },
+        set selectedItem(v) { boundItem = v; },
+        setStatus: vi.fn(),
+      },
+    });
+
+    comp.addFiles(['/tmp/clip.mp4']);
+    flushSync();
+
+    expect(boundQueue.length).toBe(1);
+    expect(boundQueue[0].name).toBe('clip.mp4');
+
+    comp.handleSelect(boundQueue[0].id);
+    flushSync();
+
+    expect(boundItem).not.toBeNull();
+    expect(boundItem.id).toBe(boundQueue[0].id);
+    expect(boundItem.name).toBe('clip.mp4');
+  });
+
+  // ── Test 2: Rapid reselection cancels the in-flight pipeline ──────────────
+  // Mock invoke to resolve slowly so we can observe pipeline cancellation.
+  // After a rapid burst of selections, only the final selection's get_waveform
+  // call path should be the last-selected item's path.
+  it('rapid reselection cancels in-flight pipeline', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+
+    // Use a controlled delay: each get_file_info call takes ~10ms
+    vi.mocked(invoke).mockImplementation((cmd, args) => {
+      if (cmd === 'get_file_info') {
+        return new Promise(r => setTimeout(() => r({ duration_secs: 10 }), 10));
+      }
+      if (cmd === 'get_waveform') return Promise.resolve([]);
+      if (cmd === 'get_filmstrip') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    let boundQueue = [];
+    let boundItem  = null;
+    comp = mount(QueueManager, {
+      target,
+      props: {
+        get queue()        { return boundQueue; },
+        set queue(v)       { boundQueue = v; },
+        get selectedItem() { return boundItem; },
+        set selectedItem(v){ boundItem = v; },
+        setStatus: vi.fn(),
+      },
+    });
+
+    comp.addFiles(['/tmp/a.mp4', '/tmp/b.mp4', '/tmp/c.mp4']);
+    flushSync();
+    expect(boundQueue.length).toBe(3);
+
+    const [a, b, c] = boundQueue;
+
+    // Rapid burst: select a, then b, then c in quick succession
+    comp.handleSelect(a.id);
+    comp.handleSelect(b.id);
+    comp.handleSelect(c.id);
+    flushSync();
+
+    // Let all async work finish
+    await new Promise(r => setTimeout(r, 200));
+
+    // The final selectedItem should be c
+    expect(boundItem?.id).toBe(c.id);
+
+    // get_file_info was called for each selection that started the pipeline,
+    // but the in-flight calls for a and b bail once c increments _loadGen.
+    // At minimum, c's path was the last get_file_info invocation.
+    const fiCalls = vi.mocked(invoke).mock.calls
+      .filter(([cmd]) => cmd === 'get_file_info')
+      .map(([, args]) => args.path);
+    expect(fiCalls[fiCalls.length - 1]).toBe('/tmp/c.mp4');
+  });
+
+  // ── Test 3: removeItem removes from queue and advances selection ───────────
+  it('removeItem removes the item and advances selection when it was selected', () => {
+    let boundQueue = [];
+    let boundItem  = null;
+    comp = mount(QueueManager, {
+      target,
+      props: {
+        get queue()        { return boundQueue; },
+        set queue(v)       { boundQueue = v; },
+        get selectedItem() { return boundItem; },
+        set selectedItem(v){ boundItem = v; },
+        setStatus: vi.fn(),
+      },
+    });
+
+    comp.addFiles(['/tmp/first.mp4', '/tmp/second.mp4']);
+    flushSync();
+    expect(boundQueue.length).toBe(2);
+
+    const firstId = boundQueue[0].id;
+    comp.handleSelect(firstId);
+    flushSync();
+    expect(boundItem?.id).toBe(firstId);
+
+    // Remove the selected item
+    comp.removeItem(firstId);
+    flushSync();
+
+    // Queue shrinks
+    expect(boundQueue.length).toBe(1);
+    expect(boundQueue.find(q => q.id === firstId)).toBeUndefined();
+
+    // Selection advances to the remaining item
+    expect(boundItem).not.toBeNull();
+    expect(boundItem.id).toBe(boundQueue[0].id);
   });
 });

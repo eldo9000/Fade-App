@@ -4,7 +4,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { initTheme } from '@libre/ui/src/theme.js';
   import { ProgressBar } from '@libre/ui';
-  import Queue from './lib/Queue.svelte';
+  import QueueManager from './lib/QueueManager.svelte';
   import Timeline from './lib/Timeline.svelte';
   import ImageOptions from './lib/ImageOptions.svelte';
   import VideoOptions from './lib/VideoOptions.svelte';
@@ -13,7 +13,7 @@
   import DataOptions from './lib/DataOptions.svelte';
   import FormatPicker from './lib/FormatPicker.svelte';
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
-  import { mediaTypeFor, validateOptions } from './lib/utils.js';
+  import { validateOptions } from './lib/utils.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -62,13 +62,17 @@
 
   const zoom = createZoom();
 
-  let queue = $state([]);
-  let selectedId = $state(null);                  // primary selection — drives the centre panel
-  let selectedIds = $state(new Set());            // full multi-selection set (highlighted)
-  let selectAnchorId = $state(null);              // shift-range anchor
-  let draggingFileId = $state(null);              // intra-app drag (file → folder)
-  let folderDropHover = $state(false);            // centre-panel drop-zone hover state
-  let selectedItem = $derived(queue.find(q => q.id === selectedId) ?? null);
+  // ── QueueManager component ref ────────────────────────────────────────────
+  // Queue state, selection, drag, and the async preview pipeline all live in
+  // QueueManager.svelte. App.svelte binds to the outputs it needs.
+  let queueManagerEl = $state(null);
+
+  // $bindable outputs from QueueManager — read/write by App.svelte
+  let queue          = $state([]);
+  let selectedItem   = $state(null);
+  let selectedMediaType = $state(null);
+  let selectedIds    = $state(new Set());
+  let draggingFileId = $state(null);
 
   // ── Operations mode ────────────────────────────────────────────────────────
   let operationsMode = $state(false);
@@ -327,40 +331,18 @@
     }
   }
 
-  // ── Sequential load pipeline ────────────────────────────────────────────────
-  //
-  //  Click → handleSelect (synchronous, one Svelte batch):
-  //    liveSrc = null, all gates false, selectedId = newId
-  //    → browser paints: black preview + "Loading" + queue highlight
-  //
-  //  Then runLoadPipeline (async, each step awaits the previous):
-  //    Step 1  (50ms yield)   — let browser paint the cleared state
-  //    Step 2  get_file_info  — fast ffprobe metadata → selectedDuration
-  //    Step 3  liveSrc        — set video/image src → browser starts decode
-  //    Step 4  mediaReady     — Timeline creates Audio / connects to <video>
-  //    Step 5  waveformReady  — get_waveform (ffmpeg, medium)
-  //    Step 6  spectrogramReady — get_spectrogram (ffmpeg, heaviest)
-  //
-  //  Each step checks _generation to bail if a newer click has started.
-
-  let selectedDuration    = $state(null);
-  let selectedWidth       = $state(null);
-  let selectedHeight      = $state(null);
-  let previewLoading      = $state(false);
-  let liveSrc             = $state(null);
-  let tlMediaReady        = $state(false);
-  let tlWaveformReady     = $state(false);
-  let tlSpectrogramReady  = $state(false);
-  let tlFilmstripReady    = $state(false);
-  let _generation         = 0;
-
-  // ── Pre-load cache ─────────────────────────────────────────────────────────
-  // Loads waveform + filmstrip for queue items in the background, one at a time.
-  // Priority slot: the existing pipeline serves items the user clicks immediately.
-  let preloadCache = new Map(); // id → { waveform?, filmstripFrames? }
-  let _bgBusy = false;
-  let _unlistenBgFilmstrip = null;
-  let cachedWaveformForTimeline = $state(null);
+  // ── Preview pipeline state — owned by QueueManager, bound here ──────────────
+  // QueueManager.runLoadPipeline writes these; App.svelte template reads them.
+  let selectedDuration       = $state(null);
+  let selectedWidth          = $state(null);
+  let selectedHeight         = $state(null);
+  let previewLoading         = $state(false);
+  let liveSrc                = $state(null);
+  let tlMediaReady           = $state(false);
+  let tlWaveformReady        = $state(false);
+  let tlSpectrogramReady     = $state(false);
+  let tlFilmstripReady       = $state(false);
+  let cachedWaveformForTimeline  = $state(null);
   let cachedFilmstripForTimeline = $state(null);
 
   function onPreviewLoaded() { previewLoading = false; }
@@ -370,69 +352,30 @@
     if (videoEl) videoEl.currentTime = 0.001;
   }
 
-  /** Yield to browser for one frame — returns a Promise that resolves after paint */
-  function frameYield(ms = 50) { return new Promise(r => setTimeout(r, ms)); }
+  /** Called by QueueManager when the user selects a new item. App.svelte clears
+   *  preview state synchronously so the browser paints a blank frame before the
+   *  async pipeline fills it in. Also handles vizExpanded auto-expand. */
+  function onSelectionChange(newItem, { isMedia }) {
+    settingsOpen = false;
+    liveSrc            = null;
+    selectedDuration   = null;
+    selectedWidth      = null;
+    selectedHeight     = null;
+    tlMediaReady       = false;
+    tlWaveformReady    = false;
+    tlSpectrogramReady = false;
+    tlFilmstripReady   = false;
+    previewLoading     = isMedia;
+    videoEl?.load();   // flash existing video to black immediately
 
-  async function runLoadPipeline(gen, newItem) {
-    const isMedia = newItem && ['video', 'audio', 'image'].includes(newItem.mediaType);
-    if (!newItem || !isMedia) return;
-
-    const stale = () => _generation !== gen;
-    const mt = newItem.mediaType;
-
-    // ── Step 1: yield so the browser paints the cleared state ──
-    await frameYield(50);
-    if (stale()) return;
-
-    // ── Step 2: get_file_info (ffprobe, fast) ──
-    if (mt === 'video' || mt === 'audio') {
-      try {
-        const info = await invoke('get_file_info', { path: newItem.path });
-        if (stale()) return;
-        selectedDuration = info.duration_secs ?? null;
-        selectedWidth    = info.width         ?? null;
-        selectedHeight   = info.height        ?? null;
-      } catch {
-        if (stale()) return;
-        selectedDuration = null;
-      }
-    }
-    if (stale()) return;
-
-    // ── Step 3: set liveSrc (video / image decode starts) ──
-    if (mt === 'video' || mt === 'image') {
-      liveSrc = convertFileSrc(newItem.path);
-    } else {
-      // Audio — no visual preview, clear loading
-      previewLoading = false;
-    }
-    if (stale()) return;
-
-    // ── Step 4: unlock Timeline media element ──
-    await frameYield(0);  // one more yield so liveSrc paints before Audio setup
-    if (stale()) return;
-    tlMediaReady = true;
-    if (stale()) return;
-
-    // ── Step 5: unlock waveform (ffmpeg, medium cost) ──
-    await frameYield(0);
-    if (stale()) return;
-    tlWaveformReady = true;
-    if (stale()) return;
-
-    // ── Step 6: unlock spectrogram (ffmpeg, heaviest) ──
-    // Wait a small beat so waveform invoke dispatches before spectrogram starts
-    await frameYield(100);
-    if (stale()) return;
-    tlSpectrogramReady = true;
-
-    // ── Step 7: unlock filmstrip (ffmpeg, background, lowest priority) ──
-    // Skip the delay if filmstrip is already cached (instant display).
-    if (!cachedFilmstripForTimeline) {
-      await frameYield(800);
-    }
-    if (stale()) return;
-    tlFilmstripReady = true;
+    // Auto-expand viz based on setting — only ever set to true, never force-collapse.
+    const vd = settings.vizDefault;
+    const shouldExpand = newItem?.mediaType === 'video'
+      ? vd === 'av'
+      : newItem?.mediaType === 'audio'
+        ? vd === 'audio' || vd === 'av'
+        : false;
+    if (shouldExpand) vizExpanded = true;
   }
 
   // File info dialog
@@ -563,7 +506,7 @@
   }
 
   // Clear image diff when the selected file or output format changes
-  $effect(() => { selectedId; _clearImageDiff(); });
+  $effect(() => { selectedItem?.id; _clearImageDiff(); });
   $effect(() => { imageOptions.output_format; _clearImageDiff(); });
 
   // ── Crop state ─────────────────────────────────────────────────────────────
@@ -583,7 +526,7 @@
 
   // Clear any diff preview when the selected file changes
   $effect(() => {
-    selectedId;
+    selectedItem?.id;
     diffClipPath = null; diffError = null; diffNote = null;
   });
 
@@ -826,7 +769,7 @@
       const testDir = '/Users/eldo/Desktop/Test-Files';
       const files = await invoke('scan_dir', { path: testDir, recursive: recurseSubfolders });
       if (files.length > 0) {
-        addFiles(files);
+        queueManagerEl?.addFiles(files);
         imageOptions.output_dir = testDir;
         videoOptions.output_dir = testDir;
         audioOptions.output_dir = testDir;
@@ -836,17 +779,7 @@
       }
     } catch { /* non-fatal — folder may not exist */ }
 
-    // Background filmstrip preload accumulator — listens for '-bg' suffixed events
-    _unlistenBgFilmstrip = await listen('filmstrip-frame', (ev) => {
-      const { id, index, data } = ev.payload;
-      if (!id.endsWith('-bg')) return;
-      const realId = id.slice(0, -3);
-      const cached = preloadCache.get(realId);
-      if (!cached) return;
-      if (!cached.filmstripFrames) cached.filmstripFrames = new Array(20).fill(null);
-      cached.filmstripFrames[index] = data;
-      preloadCache.set(realId, cached);
-    });
+    // Note: bg filmstrip listener now lives in QueueManager.$effect
 
     unlistenProgress = await listen('job-progress', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
@@ -895,58 +828,12 @@
 
   onDestroy(() => {
     window.removeEventListener('keydown', zoom.handleKey);
-    _unlistenBgFilmstrip?.();
+    // Note: bg filmstrip listener cleaned up by QueueManager.$effect teardown
     unlistenProgress?.();
     unlistenDone?.();
     unlistenError?.();
     unlistenCancelled?.();
   });
-
-  // ── Background preloader ───────────────────────────────────────────────────
-  // Processes queue items one at a time: waveform first (sequential), then fires
-  // filmstrip in the background (events accumulate via _unlistenBgFilmstrip).
-  // Priority slot: existing pipeline handles whichever item the user clicks.
-  async function _bgPreloadNext() {
-    if (_bgBusy) return;
-
-    // Find the first uncached media item that isn't currently selected
-    const nextItem = queue.find(item =>
-      item.id !== selectedId &&
-      ['video', 'audio'].includes(item.mediaType) &&
-      !preloadCache.has(item.id)
-    );
-    if (!nextItem) return;
-
-    _bgBusy = true;
-    const cached = {};
-    preloadCache.set(nextItem.id, cached); // mark as in-progress
-
-    // Waveform (blocking — one at a time). Heavy audio *or* video flips draft
-    // (e.g. a 3-hour high-fidelity recording — size or duration either trips).
-    try {
-      const data = await invoke('get_waveform', { path: nextItem.path, draft: isHeavyItem(nextItem) });
-      cached.waveform = data;
-      preloadCache.set(nextItem.id, cached);
-    } catch { /* non-fatal */ }
-
-    // Filmstrip (video only) — fire-and-forget; frames arrive via bg listener.
-    // 20 frames either way; heavy flips to scale=30 for a ~75% per-frame cut.
-    if (nextItem.mediaType === 'video') {
-      const dur = nextItem.info?.duration_secs ?? null;
-      if (dur) {
-        const draft = isHeavyItem(nextItem);
-        cached.filmstripFrames = new Array(20).fill(null);
-        preloadCache.set(nextItem.id, cached);
-        invoke('get_filmstrip', {
-          path: nextItem.path, id: nextItem.id + '-bg',
-          count: 20, duration: dur, draft
-        }).catch(() => {});
-      }
-    }
-
-    _bgBusy = false;
-    setTimeout(_bgPreloadNext, 100); // chain to next item
-  }
 
   // ── Tool detection ─────────────────────────────────────────────────────────
 
@@ -1004,93 +891,12 @@
     }
   }
 
-  function addFiles(paths) {
-    for (const path of paths) {
-      const name = path.split('/').pop() ?? path;
-      const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
-      const mt = mediaTypeFor(ext);
-      const id = crypto.randomUUID();
-      const item = { id, kind: 'file', parentId: null, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
-      queue.push(item);
-      // Fetch file stats in the background for display in the queue
-      if (['video', 'audio', 'image'].includes(mt)) {
-        invoke('get_file_info', { path }).then(info => {
-          const q = queue.find(q => q.id === id);
-          if (q) q.info = info;
-        }).catch(() => {});
-      }
-    }
-    // Start background preloading for newly added items (small delay so queue renders first)
-    setTimeout(_bgPreloadNext, 500);
-  }
+  // addFiles / removeItem / addBatchFolder / moveItemToFolder / toggleFolderExpanded
+  // live in QueueManager — call via queueManagerEl.methodName(...)
 
-  function removeItem(id) {
-    queue = queue.filter(q => q.id !== id);
-    if (selectedId === id) handleSelect(queue.length > 0 ? queue[0].id : null);
-  }
-
-  // ── Batch folders ─────────────────────────────────────────────────────────
-  // UI-only scaffolding for grouping files into a batch-output folder. Each
-  // folder carries its own output options (rename rules, mirror structure,
-  // in-place proxy). Wiring up the actual rendering pipeline is a follow-up.
-
-  let batchFolderCounter = $state(0);
-
-  function addBatchFolder() {
-    batchFolderCounter += 1;
-    const id = crypto.randomUUID();
-    queue.push({
-      id,
-      kind: 'folder',
-      name: `Proxy Node ${batchFolderCounter}`,
-      expanded: true,
-      status: 'pending',
-      // Placeholder option shape — values are not wired to the render pipeline yet.
-      batchOptions: {
-        renameMode: 'suffix',          // 'suffix' | 'prefix' | 'pattern' | 'keep'
-        renameToken: '_proxy',
-        renamePattern: '{name}_{n}',
-        outputMode: 'mirror',          // 'mirror' | 'inplace' | 'flat'
-        outputRoot: '',
-        preserveStructure: true,
-      },
-    });
-    handleSelect(id);
-  }
-
-  /** Move a queued file into a batch folder (or to root when targetFolderId is null).
-   *  Hard-noop on any unsafe shape — folders never nest, an item never targets
-   *  itself, and a missing/non-folder target is silently ignored. */
-  function moveItemToFolder(itemId, targetFolderId) {
-    if (!itemId || itemId === targetFolderId) return;
-    const idx = queue.findIndex(q => q.id === itemId);
-    if (idx === -1) return;
-    const item = queue[idx];
-    if (item.kind !== 'file') return;             // folders cannot be moved
-    if (targetFolderId) {
-      const target = queue.find(q => q.id === targetFolderId);
-      if (!target || target.kind !== 'folder') return;
-    }
-    if (item.parentId === targetFolderId) return; // already there
-    item.parentId = targetFolderId;
-    if (targetFolderId) {
-      queue.splice(idx, 1);
-      const fIdx = queue.findIndex(q => q.id === targetFolderId);
-      queue.splice(fIdx + 1, 0, item);
-    }
-  }
-
-  function toggleFolderExpanded(id) {
-    const f = queue.find(q => q.id === id);
-    if (f && f.kind === 'folder') f.expanded = !f.expanded;
-  }
-
+  /** Wrapper: clears the queue via QueueManager then resets App-level op state. */
   function clearQueue() {
-    queue = [];
-    selectedId = null;
-    selectedIds = new Set();
-    selectAnchorId = null;
-    setStatus('', 'info');
+    queueManagerEl?.clearQueue();
     converting = false;
     paused = false;
     validationErrors = {};
@@ -1103,7 +909,7 @@
 
   function onFileInputChange(e) {
     const paths = Array.from(e.target.files ?? []).map(f => f.path ?? f.name);
-    if (paths.length) addFiles(paths);
+    if (paths.length) queueManagerEl?.addFiles(paths);
     e.target.value = '';
   }
 
@@ -2077,7 +1883,7 @@
         expanded.push(p);
       }
     }
-    if (expanded.length) addFiles(expanded);
+    if (expanded.length) queueManagerEl?.addFiles(expanded);
   }
 
   // ── Presets ────────────────────────────────────────────────────────────────
@@ -2499,97 +2305,14 @@
   $effect(() => {
     if (!selectedItem) return;
     if (compatibleTypes.length > 0 && !compatibleTypes.includes(selectedItem.mediaType)) {
-      handleSelect(null);
+      queueManagerEl?.handleSelect(null);
     }
   });
 
-  // ── Selection handler ──────────────────────────────────────────────────────
-  // All mutations happen synchronously in the same call so Svelte batches them
-  // into ONE DOM flush — guaranteed clear before any file I/O begins.
-  // Then the async pipeline runs each loading stage in sequence.
-  function deselectAll() {
-    selectedIds = new Set();
-    selectAnchorId = null;
-    handleSelect(null);
-  }
+  // handleSelect / deselectAll / _selectableIds live in QueueManager.
+  // App.svelte callers delegate via queueManagerEl.
 
-  /** Items the user is allowed to select (skips folders' incompatible status — folders always selectable). */
-  function _selectableIds() {
-    return visibleQueue
-      .filter(q => q.kind === 'folder' || compatibleTypes.length === 0 || compatibleTypes.includes(q.mediaType))
-      .map(q => q.id);
-  }
-
-  function handleSelect(id, mods = null) {
-    settingsOpen = false;
-
-    // Modifier-aware multi-select. Updates selectedIds + anchor, then falls
-    // through to the existing single-selection pipeline using the most-recent id.
-    if (mods && id) {
-      if (mods.shift && selectAnchorId) {
-        const order = _selectableIds();
-        const a = order.indexOf(selectAnchorId);
-        const b = order.indexOf(id);
-        if (a !== -1 && b !== -1) {
-          const [lo, hi] = a < b ? [a, b] : [b, a];
-          const range = order.slice(lo, hi + 1);
-          selectedIds = new Set(range);
-        } else {
-          selectedIds = new Set([id]);
-          selectAnchorId = id;
-        }
-      } else if (mods.meta || mods.ctrl) {
-        const next = new Set(selectedIds);
-        if (next.has(id)) next.delete(id); else next.add(id);
-        selectedIds = next;
-        selectAnchorId = id;
-      } else {
-        selectedIds = new Set([id]);
-        selectAnchorId = id;
-      }
-    } else if (id) {
-      selectedIds = new Set([id]);
-      selectAnchorId = id;
-    } else {
-      selectedIds = new Set();
-      selectAnchorId = null;
-    }
-
-    const gen = ++_generation;  // cancel any in-flight pipeline
-    const newItem = id ? queue.find(q => q.id === id) : null;
-    const isMedia = !!(newItem && ['video', 'audio', 'image'].includes(newItem.mediaType));
-
-    // ── Synchronous batch: clears everything in one Svelte flush ──
-    liveSrc            = null;
-    selectedDuration   = null;
-    selectedWidth      = null;
-    selectedHeight     = null;
-    tlMediaReady       = false;
-    tlWaveformReady    = false;
-    tlSpectrogramReady = false;
-    tlFilmstripReady   = false;
-    previewLoading     = isMedia;
-    videoEl?.load();   // flash existing video to black immediately
-    selectedId         = id ?? null;
-
-    // Auto-expand viz based on setting — only ever set to true, never force-collapse.
-    // User's manual expand/collapse state is preserved across file switches.
-    const vd = settings.vizDefault;
-    const shouldExpand = newItem?.mediaType === 'video'
-      ? vd === 'av'
-      : newItem?.mediaType === 'audio'
-        ? vd === 'audio' || vd === 'av'
-        : false;
-    if (shouldExpand) vizExpanded = true;
-
-    // Serve pre-loaded data to Timeline immediately (avoids re-invoking ffmpeg)
-    const _cached = preloadCache.get(id ?? '');
-    cachedWaveformForTimeline = _cached?.waveform ?? null;
-    cachedFilmstripForTimeline = _cached?.filmstripFrames ?? null;
-
-    // ── Async pipeline: stages run sequentially after browser paints ──
-    runLoadPipeline(gen, newItem);
-  }
+  function deselectAll() { queueManagerEl?.deselectAll(); }
 
 </script>
 
@@ -2643,7 +2366,7 @@
                   border-bottom:1px solid color-mix(in srgb, var(--accent) 45%, var(--border))">
         <!-- Left: Proxy Node (flipped from right) -->
         <button
-          onclick={addBatchFolder}
+          onclick={() => queueManagerEl?.addBatchFolder()}
           title="Add a proxy node — batch files together for matched rename / output routing"
           class="btn-bevel flex items-center gap-1 px-2 py-0.5 text-[11px] shrink-0"
         >
@@ -2729,20 +2452,30 @@
         </div>
       {/if}
 
-      <!-- File list -->
-      <Queue
-        queue={visibleQueue}
-        {selectedId}
-        {selectedIds}
-        onselect={handleSelect}
-        onremove={(id) => removeItem(id)}
-        oncancel={(id) => cancelJob(id)}
-        ontogglefolder={toggleFolderExpanded}
-        onmovetofolder={moveItemToFolder}
-        ondragstartfile={(id) => draggingFileId = id}
-        ondragendfile={() => draggingFileId = null}
-        disableHoverInfo={selectedItem?.kind === 'folder'}
-        compatibleTypes={compatibleTypes}
+      <!-- File list — rendered by QueueManager which owns queue state, selection,
+           drag handlers, and the async preview pipeline (runLoadPipeline / _loadGen) -->
+      <QueueManager
+        bind:this={queueManagerEl}
+        bind:queue
+        bind:selectedItem
+        bind:selectedMediaType
+        bind:selectedIds
+        bind:draggingFileId
+        bind:liveSrc
+        bind:selectedDuration
+        bind:selectedWidth
+        bind:selectedHeight
+        bind:previewLoading
+        bind:tlMediaReady
+        bind:tlWaveformReady
+        bind:tlSpectrogramReady
+        bind:tlFilmstripReady
+        bind:cachedWaveformForTimeline
+        bind:cachedFilmstripForTimeline
+        visibleQueue={visibleQueue}
+        {setStatus}
+        {compatibleTypes}
+        {onSelectionChange}
         compact={queueCompact}
         showExtColumn={settings.fileTypeColumn}
       />
@@ -3138,7 +2871,7 @@
                   <span class="text-[10px] text-[var(--text-secondary)]/60 select-none">Fade{appVersion ? ` v${appVersion}` : ''}</span>
                 </div>
                 <button
-                  onclick={() => { preloadCache.clear(); cachedWaveformForTimeline = null; cachedFilmstripForTimeline = null; }}
+                  onclick={() => { queueManagerEl?.clearPreloadCache(); }}
                   class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
                          text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
                          transition-colors">
@@ -4445,11 +4178,12 @@
                   <div class="flex flex-wrap items-center gap-2 w-full">
                     <button
                       onclick={() => {
-                        if (selectedId && !mergeSelection.includes(selectedId)) {
-                          mergeSelection = [...mergeSelection, selectedId];
+                        const _sid = selectedItem?.id;
+                        if (_sid && !mergeSelection.includes(_sid)) {
+                          mergeSelection = [...mergeSelection, _sid];
                         }
                       }}
-                      disabled={!selectedId || mergeSelection.includes(selectedId)}
+                      disabled={!selectedItem?.id || mergeSelection.includes(selectedItem?.id)}
                       class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
                     >Add selected</button>
                     <button
@@ -4679,7 +4413,7 @@
 
         <!-- ── NON-VIDEO content: key block remounts on each selection ── -->
         {#if !operationsMode}
-        {#key selectedId}
+        {#key selectedItem?.id}
           {#if selectedItem?.kind === 'folder'}
             <!-- Batch folder configuration panel — UI only. Wiring up rename
                  and output-routing logic happens in a follow-up. -->
@@ -4877,7 +4611,7 @@
               {imgNaturalW}
               {imgNaturalH}
               {previewAreaEl}
-              {selectedId}
+              selectedId={selectedItem?.id ?? null}
             />
           {:else if selectedItem && selectedItem.kind !== 'folder' && !['video','audio','image'].includes(selectedItem.mediaType)}
             <!-- Non-media types: show file info -->
