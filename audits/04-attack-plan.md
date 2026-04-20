@@ -133,13 +133,14 @@ Higher score = ship sooner.
 
 Each batch: coherent subsystem or invariant. Land independently.
 
-### B1 — `fix(deps): migrate serde_yml → serde_yaml_ng`
+### B1 — `fix(deps): migrate serde_yml → serde_yaml_ng` — **DONE** (50cbf80)
 - **Findings:** F-07
 - **Rationale:** Single-file dep swap; kills RUSTSEC-2025-0067/0068 live surface.
 - **Effort:** XS
 - **Risk:** LOW — API-compatible fork.
 - **Test:** Unit test `convert/data.rs` YAML roundtrip (existing fixtures); manual drop of sample `.yaml` into queue.
 - **Rollback:** revert Cargo.toml pin; one commit.
+- **Status:** DONE — commit `50cbf80`. Both advisories confirmed absent in `cargo audit`; 160 rust tests + 30 vitest tests green; clippy clean.
 
 ### B2 — `fix(logging): write_fade_log atomic append + rotation`
 - **Findings:** F-15
