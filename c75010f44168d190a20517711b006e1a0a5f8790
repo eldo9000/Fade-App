@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: status bookkeeping for B1 completion in audits/04-attack-plan.md
+deferred: none
+fragile: none
+ci: unknown
