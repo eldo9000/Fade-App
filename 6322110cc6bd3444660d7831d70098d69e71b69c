@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted ChromaKeyPanel from App.svelte — all chroma key state and logic now in component
+deferred: none
+fragile: $bindable chain — selectedItem mutation must propagate through binding layers
+ci: unknown
