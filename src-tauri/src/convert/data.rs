@@ -221,7 +221,9 @@ fn parse_input(in_ext: &str, raw: &str) -> Result<serde_json::Value, String> {
         "json" | "ndjson" | "jsonl" => {
             serde_json::from_str(raw).map_err(|e| format!("JSON parse error: {e}"))
         }
-        "yaml" | "yml" => serde_yml::from_str(raw).map_err(|e| format!("YAML parse error: {e}")),
+        "yaml" | "yml" => {
+            serde_yaml_ng::from_str(raw).map_err(|e| format!("YAML parse error: {e}"))
+        }
         "toml" => {
             let v: toml::Value =
                 toml::from_str(raw).map_err(|e| format!("TOML parse error: {e}"))?;
@@ -309,7 +311,7 @@ fn write_output(
                 serde_json::to_string(value).map_err(|e| e.to_string())
             }
         }
-        "yaml" => serde_yml::to_string(value).map_err(|e| e.to_string()),
+        "yaml" => serde_yaml_ng::to_string(value).map_err(|e| e.to_string()),
         "toml" => write_toml(value),
         "csv" | "tsv" => write_csv(value, delim_byte),
         "xml" => Ok(write_xml(value, pretty)),
@@ -405,5 +407,28 @@ fn value_to_xml(key: &str, val: &serde_json::Value, out: &mut String, indent: &s
         other => {
             out.push_str(&format!("{}<{}>{}</{}>{}", indent, key, other, key, nl));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_input, write_output};
+
+    #[test]
+    fn yaml_roundtrip_preserves_structure() {
+        let src = "name: fade\ncount: 3\nitems:\n  - a\n  - b\n";
+        let value = parse_input("yaml", src).expect("yaml parses");
+        let out = write_output("yaml", &value, true, b',').expect("yaml writes");
+        let reparsed = parse_input("yaml", &out).expect("yaml reparses");
+        assert_eq!(value, reparsed);
+        assert_eq!(reparsed["name"], "fade");
+        assert_eq!(reparsed["count"], 3);
+        assert_eq!(reparsed["items"][1], "b");
+    }
+
+    #[test]
+    fn yml_extension_accepted() {
+        let value = parse_input("yml", "k: v\n").expect("yml parses");
+        assert_eq!(value["k"], "v");
     }
 }
