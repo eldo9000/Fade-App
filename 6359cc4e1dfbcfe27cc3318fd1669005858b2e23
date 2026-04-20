@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted AnalysisTools from App.svelte — loudness, cut-detect, black-detect, vmaf, framemd5, audio-norm now in component
+deferred: runSubLint/runSubDiff/runSubProbe remain in App.svelte, move to OperationsPanel in step 3
+fragile: $bindable chain — selectedItem mutation must propagate through binding layers
+ci: unknown
