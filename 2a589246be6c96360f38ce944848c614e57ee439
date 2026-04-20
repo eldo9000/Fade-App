@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: B4 IPC trust surface narrow — assetProtocol scope + open_url scheme allowlist
+deferred: runtime asset_protocol_scope expansion for non-HOME drives (Windows D:/E:/, Linux non-/media mount points) — follow-up
+fragile: scope narrow may break preview for files outside $HOME on Windows secondary drives
+ci: unknown
