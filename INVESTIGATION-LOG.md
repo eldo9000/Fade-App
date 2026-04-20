@@ -4,3 +4,4 @@
 2026-04-20 | CONFIRMED | 10 mutex .lock().unwrap() sites → .expect() — dispatch 1 green, commit c547715
 2026-04-20 | CONFIRMED | extract UpdateManager, PresetManager, CropEditor from App.svelte — dispatch 1 green, commits 5ca633a 0a593a0 a13e6c1
 2026-04-20 | CONFIRMED | extract QueueManager from App.svelte — dispatch 1 green, commit d0dedaf
+2026-04-20 | OPEN | dispatch 1/3 — extract ChromaKeyPanel, AnalysisTools, OperationsPanel from App.svelte (TASK-5c)
