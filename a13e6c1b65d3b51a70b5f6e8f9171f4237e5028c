@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: extracted CropEditor from App.svelte into src/lib/CropEditor.svelte; also wired UpdateManager and PresetManager into App.svelte template
+deferred: none
+fragile: App.svelte prop drilling to CropEditor — any new state additions must be passed through
+ci: unknown
