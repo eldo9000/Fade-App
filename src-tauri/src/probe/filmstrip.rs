@@ -2,6 +2,18 @@ use serde::Serialize;
 use std::process::Command;
 use tauri::{command, Emitter, Window};
 
+/// Hard ceiling on frames per `get_filmstrip` call. Each frame is a separate
+/// ffmpeg seek+decode + a base64-JPEG IPC event; unbounded `count` from the
+/// frontend can pin the spawn thread and flood the IPC channel. All in-app
+/// callers request ≤ 20 today, so this is purely a safety valve.
+const FILMSTRIP_MAX_COUNT: usize = 128;
+
+/// Clamp a caller-supplied frame count to [`FILMSTRIP_MAX_COUNT`]. Extracted
+/// so the cap stays unit-testable without spinning up a Tauri `Window`.
+fn clamp_count(requested: usize) -> usize {
+    requested.min(FILMSTRIP_MAX_COUNT)
+}
+
 #[derive(Serialize, Clone)]
 struct FilmstripFrameEvent {
     id: String,
@@ -33,6 +45,7 @@ pub fn get_filmstrip(
     if count == 0 || duration <= 0.0 {
         return Ok(());
     }
+    let count = clamp_count(count);
 
     let scale_filter = if draft {
         "scale=30:-2:flags=fast_bilinear"
@@ -94,4 +107,23 @@ pub fn get_filmstrip(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_count_passes_through_below_ceiling() {
+        assert_eq!(clamp_count(0), 0);
+        assert_eq!(clamp_count(20), 20);
+        assert_eq!(clamp_count(FILMSTRIP_MAX_COUNT), FILMSTRIP_MAX_COUNT);
+    }
+
+    #[test]
+    fn clamp_count_bounds_oversized_requests() {
+        assert_eq!(clamp_count(FILMSTRIP_MAX_COUNT + 1), FILMSTRIP_MAX_COUNT);
+        assert_eq!(clamp_count(10_000), FILMSTRIP_MAX_COUNT);
+        assert_eq!(clamp_count(usize::MAX), FILMSTRIP_MAX_COUNT);
+    }
 }

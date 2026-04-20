@@ -2,6 +2,16 @@
 
 use tauri::command;
 
+/// Max directories to descend into below the root in recursive mode.
+/// Chosen to cover realistic media-project trees (season/episode/takes/etc.)
+/// without letting a `/` or `$HOME` walk enumerate the whole machine.
+const SCAN_MAX_DEPTH: usize = 8;
+
+/// Cap on total files returned by a single `scan_dir` call. A multi-hundred-
+/// MB JSON payload through IPC is never a feature; drop-target UX works fine
+/// at this size.
+const SCAN_MAX_ENTRIES: usize = 10_000;
+
 /// Return true if a file or directory exists at `path`.
 #[command]
 pub fn file_exists(path: String) -> bool {
@@ -10,7 +20,11 @@ pub fn file_exists(path: String) -> bool {
 
 /// List files in a directory. When `recursive` is true, descends into all
 /// subdirectories (dotfiles and dot-dirs skipped). Returns full paths, sorted.
-/// Falls back to the current working directory if the given path fails to open.
+///
+/// Depth capped at `SCAN_MAX_DEPTH` directories below the root; total results
+/// capped at `SCAN_MAX_ENTRIES`. Past either ceiling the walk stops early and
+/// returns whatever was collected so far — callers see a partial list rather
+/// than a hang or an IPC payload blowout.
 #[command]
 pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
     let recurse = recursive.unwrap_or(false);
@@ -21,8 +35,8 @@ pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
     if !root.is_dir() {
         return files;
     }
-    let mut stack: Vec<std::path::PathBuf> = vec![root];
-    while let Some(dir) = stack.pop() {
+    let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(root, 0)];
+    'outer: while let Some((dir, depth)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -36,9 +50,12 @@ pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
             if p.is_file() {
                 if let Some(s) = p.to_str() {
                     files.push(s.to_owned());
+                    if files.len() >= SCAN_MAX_ENTRIES {
+                        break 'outer;
+                    }
                 }
-            } else if recurse && p.is_dir() {
-                stack.push(p);
+            } else if recurse && p.is_dir() && depth < SCAN_MAX_DEPTH {
+                stack.push((p, depth + 1));
             }
         }
     }
@@ -146,6 +163,49 @@ mod tests {
         assert_eq!(files.len(), 2, "files were: {files:?}");
         assert!(files.iter().any(|f| f.ends_with("inside.txt")));
         assert!(files.iter().any(|f| f.ends_with("top.txt")));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_dir_recursive_stops_at_max_depth() {
+        // Build a chain root/d1/d2/.../dN each containing one file. Depth cap
+        // is SCAN_MAX_DEPTH — descending deeper must not find `beyond.txt`.
+        let dir = unique_tmp("scan-depth");
+        let mut cur = dir.clone();
+        for i in 0..=SCAN_MAX_DEPTH + 2 {
+            fs::write(cur.join(format!("f{i}.txt")), b"").unwrap();
+            let next = cur.join(format!("d{i}"));
+            fs::create_dir(&next).unwrap();
+            cur = next;
+        }
+        fs::write(cur.join("beyond.txt"), b"").unwrap();
+
+        let files = scan_dir(dir.to_string_lossy().to_string(), Some(true));
+        // Depth 0 sees f0.txt; depths 1..=SCAN_MAX_DEPTH contribute fN.txt.
+        // Beyond SCAN_MAX_DEPTH the walk stops, so `beyond.txt` and deeper
+        // `fN.txt` sitting in dN-directories past the cap are excluded.
+        assert!(files.iter().any(|f| f.ends_with("f0.txt")));
+        assert!(
+            !files.iter().any(|f| f.ends_with("beyond.txt")),
+            "depth cap failed — returned: {files:?}"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_dir_caps_total_entries() {
+        let dir = unique_tmp("scan-cap");
+        let n = SCAN_MAX_ENTRIES + 50;
+        for i in 0..n {
+            fs::write(dir.join(format!("f{i:05}.txt")), b"").unwrap();
+        }
+        let files = scan_dir(dir.to_string_lossy().to_string(), Some(false));
+        assert!(
+            files.len() <= SCAN_MAX_ENTRIES,
+            "entry cap exceeded: got {}",
+            files.len()
+        );
+        assert_eq!(files.len(), SCAN_MAX_ENTRIES);
         fs::remove_dir_all(&dir).ok();
     }
 }

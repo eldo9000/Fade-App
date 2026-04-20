@@ -174,7 +174,7 @@ pub fn lint_subtitle(
     input_path: String,
     thresholds: LintThresholds,
 ) -> Result<Vec<LintIssue>, String> {
-    let body = std::fs::read_to_string(&input_path).map_err(|e| format!("read subtitle: {e}"))?;
+    let body = super::read_subtitle_capped(&input_path)?;
     let ext = Path::new(&input_path)
         .extension()
         .and_then(|e| e.to_str())

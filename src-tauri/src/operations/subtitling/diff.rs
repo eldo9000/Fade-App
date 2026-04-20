@@ -30,8 +30,8 @@ fn lcs_table(a: &[&str], b: &[&str]) -> Vec<Vec<u32>> {
 
 #[tauri::command]
 pub fn diff_subtitle(a_path: String, b_path: String) -> Result<Vec<SubDiffLine>, String> {
-    let a_body = std::fs::read_to_string(&a_path).map_err(|e| format!("read a: {e}"))?;
-    let b_body = std::fs::read_to_string(&b_path).map_err(|e| format!("read b: {e}"))?;
+    let a_body = super::read_subtitle_capped(&a_path).map_err(|e| format!("a: {e}"))?;
+    let b_body = super::read_subtitle_capped(&b_path).map_err(|e| format!("b: {e}"))?;
     let a: Vec<&str> = a_body.lines().collect();
     let b: Vec<&str> = b_body.lines().collect();
     let t = lcs_table(&a, &b);
