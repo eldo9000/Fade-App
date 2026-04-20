@@ -178,13 +178,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** trivial.
 - **Status:** DONE — commit `c6c4254`. `FadePreset` is pinned in `librewin_common` via git tag so the field was added via a local `StoredPreset` superset that reads/writes the same JSON file (`fade-presets.json`); Shelf's narrower reader ignores the unknown field, so both apps round-trip cleanly. `PresetManager.svelte` now sends `normalizeLoudness` on the audio save path. Save/delete both run under an `fs2` exclusive advisory lock on a sidecar `fade-presets.json.lock` file, serializing RMW across threads and processes. Concurrency test (16 × 5 saves) lands all 80 rows with unique ids; legacy-JSON compat test verifies files predating the new field still load. 179 rust + 30 vitest tests pass; clippy clean; cargo audit unchanged.
 
-### B6 — `fix(ui): cancel + preview UX guards`
+### B6 — `fix(ui): cancel + preview UX guards` — **DONE** (01299c5)
 - **Findings:** F-19 (post-cancel flicker), F-21 (preview stale-result overwrite)
 - **Rationale:** Both frontend UX correctness; generation-token / status-guard pattern shared.
 - **Effort:** S
 - **Risk:** LOW — UI-only.
 - **Test:** Manual — rapid cancel→cancel, rapid slider-drag in ChromaKeyPanel.
 - **Rollback:** trivial.
+- **Status:** DONE — commit `01299c5`. F-19: new `applyProgressIfActive()` in `itemStatus.js` guards the terminal triad (done/error/cancelled) so a late `job-progress` event can no longer flip a cancelled item back to `converting`; `job-done`/`job-error` listeners also guard against overwriting a `cancelled` item (races the other direction). F-21: monotonic generation-token pattern added at all three preview call sites (`ChromaKeyPanel.generateChromaPreview`, `App._runImageDiff`, `App.runDiffPreview`) — each invoke captures `gen = ++counter` and discards its result if `counter` has moved on. 10 new vitest regressions (40 total, was 30) cover the terminal-state guard, the full cancel→late-progress sequence, and the generation-token pattern under concurrent + out-of-order resolution. 179 rust + 40 vitest tests pass; clippy clean; cargo audit unchanged.
 
 ### B7 — `perf(archive): memoize seven_zip_bin + progress rate-limit scaffolding`
 - **Findings:** F-25, F-26 (scaffolding only — real landing in B8)
