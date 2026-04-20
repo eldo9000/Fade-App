@@ -6,13 +6,11 @@ Last updated: 2026-04-20
 
 ## Current Focus
 
-Housekeeping + App.svelte split sprint. TASK-6 (mutex cleanup) and TASK-5a (UpdateManager / PresetManager / CropEditor extractions) are complete. Remaining: TASK-5b (QueueManager) and TASK-5c (OperationsPanel / AnalysisTools / ChromaKeyPanel).
+Housekeeping + App.svelte split sprint. TASK-6, TASK-5a, TASK-5b complete. Remaining: TASK-5c (OperationsPanel / AnalysisTools / ChromaKeyPanel).
 
 ## Next action
 
-**Dispatch TASK-5b in a fresh agent session.** The brief lives at `tasks/TASK-5b-queue-manager.md` and is self-contained. Must run before TASK-5c — 5c's operation runners mutate `selectedItem`, which 5b moves into QueueManager's ownership as a `$bindable` prop.
-
-Success signal: `src/lib/QueueManager.svelte` exists, App.svelte no longer declares `queue` or `handleSelect`, multiselect + pipeline cancellation still work, CI green.
+**Dispatch TASK-5c in a fresh agent session.** Brief at `tasks/TASK-5c-operations-panel.md`. Operation runners can now safely bind to `selectedItem` via QueueManager's $bindable prop.
 
 ## Known Risks
 
