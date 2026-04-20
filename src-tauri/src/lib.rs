@@ -541,7 +541,10 @@ fn convert_file(
     // Register cancellation flag before spawning the thread
     let cancelled = Arc::new(AtomicBool::new(false));
     {
-        let mut map = state.cancellations.lock().unwrap();
+        let mut map = state
+            .cancellations
+            .lock()
+            .expect("cancellations mutex poisoned");
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
 
@@ -660,7 +663,7 @@ fn convert_file(
 
         // Clean up cancellation registry entry
         {
-            let mut map = cancellations.lock().unwrap();
+            let mut map = cancellations.lock().expect("cancellations mutex poisoned");
             map.remove(&job_id);
         }
 
@@ -717,14 +720,17 @@ fn convert_file(
 fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
     // Set the cancelled flag first so the background thread knows why it stopped
     {
-        let map = state.cancellations.lock().unwrap();
+        let map = state
+            .cancellations
+            .lock()
+            .expect("cancellations mutex poisoned");
         if let Some(flag) = map.get(&job_id) {
             flag.store(true, Ordering::SeqCst);
         }
     }
     // Kill and remove the child process
     {
-        let mut map = state.processes.lock().unwrap();
+        let mut map = state.processes.lock().expect("processes mutex poisoned");
         if let Some(child) = map.get_mut(&job_id) {
             let _ = child.kill();
         }
@@ -1025,7 +1031,10 @@ fn run_operation(
 ) -> Result<(), String> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
-        let mut map = state.cancellations.lock().unwrap();
+        let mut map = state
+            .cancellations
+            .lock()
+            .expect("cancellations mutex poisoned");
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
 
@@ -1512,7 +1521,7 @@ fn run_operation(
         };
 
         {
-            let mut map = cancellations.lock().unwrap();
+            let mut map = cancellations.lock().expect("cancellations mutex poisoned");
             map.remove(&job_id);
         }
 

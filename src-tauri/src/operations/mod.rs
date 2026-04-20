@@ -145,7 +145,7 @@ pub(crate) fn run_ffmpeg(
     let stderr = child.stderr.take();
 
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock().expect("processes mutex poisoned");
         map.insert(job_id.to_string(), child);
     }
 
@@ -184,7 +184,7 @@ pub(crate) fn run_ffmpeg(
     let error_output = stderr_thread.join().unwrap_or_default();
 
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock().expect("processes mutex poisoned");
         map.remove(job_id)
     };
 

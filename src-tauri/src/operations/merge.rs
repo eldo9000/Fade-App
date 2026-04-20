@@ -217,7 +217,7 @@ fn run_ffmpeg_merge(
     let stderr = child.stderr.take();
 
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock().expect("processes mutex poisoned");
         map.insert(job_id.to_string(), child);
     }
 
@@ -256,7 +256,7 @@ fn run_ffmpeg_merge(
     let error_output = stderr_thread.join().unwrap_or_default();
 
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock().expect("processes mutex poisoned");
         map.remove(job_id)
     };
 
