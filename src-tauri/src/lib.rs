@@ -416,18 +416,48 @@ pub(crate) fn tool_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Append an entry to ~/.config/librewin/fade.log, keeping at most 100 lines.
-fn write_fade_log(entry: &str) {
+/// Byte-threshold for rotating `fade.log`. Roughly 200+ entries at ~300 B each.
+const FADE_LOG_MAX_BYTES: u64 = 64 * 1024;
+
+fn fade_log_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let log_path = format!("{}/.config/librewin/fade.log", home);
-    let existing = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
-    lines.push(entry.to_string());
-    if lines.len() > 100 {
-        let start = lines.len() - 100;
-        lines.drain(0..start);
+    std::path::PathBuf::from(home)
+        .join(".config")
+        .join("librewin")
+        .join("fade.log")
+}
+
+/// Append an entry to ~/.config/librewin/fade.log. Rotates to `fade.log.1` when the
+/// file exceeds FADE_LOG_MAX_BYTES. O_APPEND keeps concurrent finalizer writes safe.
+fn write_fade_log(entry: &str) {
+    append_fade_log_at(&fade_log_path(), entry);
+}
+
+fn append_fade_log_at(path: &std::path::Path, entry: &str) {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&log_path, lines.join("\n") + "\n");
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > FADE_LOG_MAX_BYTES {
+            let rotated = path.with_extension("log.1");
+            let _ = std::fs::remove_file(&rotated);
+            let _ = std::fs::rename(path, &rotated);
+        }
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        // Pre-assemble so the whole line lands in a single atomic write() on
+        // append-mode descriptors — `writeln!` splits the format string into
+        // multiple write_all calls, which interleave under concurrent finalizers.
+        let mut line = String::with_capacity(entry.len() + 1);
+        line.push_str(entry);
+        line.push('\n');
+        let _ = f.write_all(line.as_bytes());
+    }
 }
 
 fn format_log_entry(job_id: &str, input_path: &str, status: &str, detail: &str) -> String {
@@ -2664,5 +2694,73 @@ mod tests {
         assert!(status.success());
         assert!(Path::new(output).exists());
         let _ = std::fs::remove_file(output);
+    }
+
+    // ── write_fade_log ────────────────────────────────────────────────────────
+
+    fn unique_log_path(tag: &str) -> std::path::PathBuf {
+        let pid = std::process::id();
+        let nonce = uuid::Uuid::new_v4();
+        std::env::temp_dir().join(format!("fade-test-{tag}-{pid}-{nonce}.log"))
+    }
+
+    #[test]
+    fn append_fade_log_appends_without_rmw_drops_under_concurrency() {
+        let path = unique_log_path("concurrency");
+        let _ = std::fs::remove_file(&path);
+
+        let threads: Vec<_> = (0..20)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..10 {
+                        append_fade_log_at(&path, &format!("t{t}-i{i}"));
+                    }
+                })
+            })
+            .collect();
+        for h in threads {
+            h.join().expect("log writer thread panicked");
+        }
+
+        let contents = std::fs::read_to_string(&path).expect("log file written");
+        let lines: Vec<&str> = contents.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(
+            lines.len(),
+            200,
+            "expected 200 lines from 20×10 concurrent writers, got {}",
+            lines.len()
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn append_fade_log_rotates_when_over_threshold() {
+        let path = unique_log_path("rotate");
+        let rotated = path.with_extension("log.1");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&rotated);
+
+        let filler = "x".repeat(1024);
+        let target_lines = (FADE_LOG_MAX_BYTES / 1025) as usize + 4;
+        for _ in 0..target_lines {
+            append_fade_log_at(&path, &filler);
+        }
+        append_fade_log_at(&path, "post-rotation-marker");
+
+        assert!(rotated.exists(), "rotated file should exist after threshold crossed");
+        let live = std::fs::read_to_string(&path).expect("live log readable");
+        assert!(
+            live.contains("post-rotation-marker"),
+            "post-rotation write should land in fresh file"
+        );
+        assert!(
+            live.len() < FADE_LOG_MAX_BYTES as usize,
+            "fresh file should be well under threshold immediately after rotation"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&rotated);
     }
 }
