@@ -160,13 +160,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** trivial; per-command `.min()` lines.
 - **Status:** DONE — commit `dc998e3`. `scan_dir` gained `SCAN_MAX_DEPTH=8` + `SCAN_MAX_ENTRIES=10_000` with early-exit; `get_filmstrip` clamps via extracted `clamp_count()`; `diff_subtitle`+`lint_subtitle` now route through shared `read_subtitle_capped()` (32 MiB). 169 rust + 30 vitest tests green; clippy clean; cargo audit unchanged.
 
-### B4 — `fix(security): narrow IPC trust surface — assetProtocol, open_url`
+### B4 — `fix(security): narrow IPC trust surface — assetProtocol, open_url` — **DONE** (2a58924)
 - **Findings:** F-08, F-09
 - **Rationale:** Both are config-level capability narrows; ship together so a single capability-review PR lands.
 - **Effort:** XS
 - **Risk:** LOW — `open_url` scheme allowlist = `["http", "https", "mailto"]`; `assetProtocol.scope` = user-opened dirs (may require runtime capability update; see F-08 note).
 - **Test:** Manual — attempt `file://` through `open_url`, expect rejection; attempt `asset://` outside scope, expect fail.
 - **Rollback:** revert `tauri.conf.json` + `lib.rs:1574` diff.
+- **Status:** DONE — commit `2a58924`. `assetProtocol.scope` narrowed from `["**"]` to `["$HOME/**", "$TEMP/**", "/Volumes/**", "/media/**", "/mnt/**"]` — eliminates `/etc`, `/usr`, `/System`, `~/.ssh`, etc. from webview-reachable paths. `open_url` gained `validate_url_scheme()` enforcing http/https/mailto allowlist + 4096 byte cap + no whitespace/control chars; rejection happens before `Command::spawn`. 6 new unit tests; 175 rust + 30 vitest tests pass; clippy clean; cargo audit unchanged. **Deferred:** runtime `asset_protocol_scope().allow_file()` expansion for files outside `$HOME` on Windows secondary drives — follow-up.
 
 ### B5 — `fix(presets): add normalize_loudness + save_preset file lock`
 - **Findings:** F-10, F-20
