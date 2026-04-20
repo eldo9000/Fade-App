@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B2 landed — write_fade_log now O_APPEND + rotation, closing F-15
+deferred: batch B3 (IPC input caps — scan_dir/filmstrip/diff_subtitle)
+fragile: none; log path now matches diag_append idiom
+ci: unknown
