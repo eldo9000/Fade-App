@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: drafted 4 sprint task files for App.svelte split (5a/5b/5c) and mutex cleanup (6)
+deferred: execution of all 4 tasks (each in its own fresh-agent session)
+fragile: none
+ci: unknown
