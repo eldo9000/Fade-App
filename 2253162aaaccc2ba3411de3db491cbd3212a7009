@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: centralized item status mutations into itemStatus.js helpers + QueueFileItem typedef
+deferred: none
+fragile:  chain still present — helpers reduce callsite noise but don't eliminate structural risk
+ci: unknown
