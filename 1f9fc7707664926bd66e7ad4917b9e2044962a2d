@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: session 2 of 3-pass audit — concern-based review written to audits/02-concerns.md
+deferred: session 3 (adversarial) not yet run; no code fixes from this audit
+fragile: none
+ci: unknown
