@@ -82,6 +82,7 @@
         codec: tab === 'video' ? (src.codec ?? null) : null,
         bitrate: (tab === 'video' || tab === 'audio') ? (src.bitrate ?? null) : null,
         sampleRate: (tab === 'video' || tab === 'audio') ? (src.sample_rate ?? null) : null,
+        normalizeLoudness: tab === 'audio' ? (src.normalize_loudness ?? null) : null,
       });
       presets = [...presets, saved];
       headerPresetName = '';

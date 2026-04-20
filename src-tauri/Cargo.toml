@@ -47,3 +47,4 @@ base64          = "0.22"
 # SQLite reader for data-nerd lane (sqlite → csv/json/tsv/xml). `bundled`
 # links a vendored SQLite so we don't depend on the system library.
 rusqlite        = { version = "0.32", features = ["bundled"] }
+fs2             = "0.4"
