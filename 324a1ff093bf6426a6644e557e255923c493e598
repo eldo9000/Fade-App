@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: updated SESSION-STATUS — TASK-6 + TASK-5a done, TASK-5b queued
+deferred: TASK-5b (QueueManager), TASK-5c (OperationsPanel/AnalysisTools/ChromaKeyPanel), release re-tag
+fragile: bindable chain — 5b/5c must preserve selectedItem mutation path
+ci: unknown
