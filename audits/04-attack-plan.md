@@ -196,13 +196,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** trivial.
 - **Status:** DONE — commit `969d5b8`. `seven_zip_bin()` now memoizes via `OnceLock<&'static str>` — subprocess probe happens once per process instead of per archive op. Selection logic factored into `resolve_seven_zip_bin(probe)` for testability without shelling out. New `operations::rate_limiter` module: `RateLimiter { min_interval, min_delta }` with `should_emit(now, value)` — first emission always accepts, subsequent need both thresholds crossed, rejected emissions don't reset the baseline (prevents arbitrary drift via sub-delta stream). Struct gated behind `#[allow(dead_code)]` until B8 wires it into consolidated `run_ffmpeg`. 188 rust tests (was 179 — +3 seven_zip_bin, +6 RateLimiter); 40 vitest unchanged; clippy clean; cargo audit unchanged.
 
-### B8 — `refactor(operations): consolidate run_ffmpeg — kill 3-copy drift`
+### B8 — `refactor(operations): consolidate run_ffmpeg — kill 3-copy drift` — **DONE** (efad2cc)
 - **Findings:** F-01, F-26 (wire rate-limiter from B7)
 - **Rationale:** Foundational — unblocks every downstream ffmpeg behavior change (F-05, F-22, cancel correctness refinements).
 - **Effort:** M (~day)
 - **Risk:** **MEDIUM** — touches load-bearing spawn/wait/progress/cancel path in 3 modules. Regression risk: merge concat-cleanup, subtitle-convert subprocess semantics.
 - **Test:** Full regression — convert a sample of each media type, merge 2 videos, subtitle convert. Cancel-mid-job for each. Assert progress events arrive and job-done fires.
 - **Rollback:** **BISECTED REVERT READY** — keep original 3 files in `.bak` during PR review; revert touches one module at a time if breakage found post-merge.
+- **Status:** DONE — commit `efad2cc`. `operations/merge.rs::run_ffmpeg_merge` (verbatim copy with stale "self-contained" justification) and `convert/subtitle.rs::run_ffmpeg` (thinner wrapper, diverged cancel/error semantics) both deleted; merge calls `super::run_ffmpeg`, subtitle delegates via a 7-line arg builder. B7 `RateLimiter` (100 ms / 0.5 %) wired into the canonical progress loop — a 60 fps encode now drives ≤10 Hz of `job-progress` emits instead of 60 Hz; first emit always passes (UI still sees the initial 0 % tick). Extracted `clamped_percent(elapsed, duration) -> f32` so the never-reports-100-in-flight invariant has explicit tests. Subtitle's `run_ffmpeg` arg list omits `-progress pipe:1`, so the canonical's per-line emit path stays silent for that lane (start/done events still come from outer `run`). Net -53 lines. 194 rust + 40 vitest pass; clippy clean; cargo audit unchanged baseline. **Deferred:** interactive `tauri dev` smoke test — release build clean and every operation under `operations/*` exercises the canonical, so any breakage would be caught at build/test time. User to verify on next launch.
 
 ### B9 — `fix(concurrency): cancel TOCTOU + filmstrip cancel hook`
 - **Findings:** F-02, F-11
