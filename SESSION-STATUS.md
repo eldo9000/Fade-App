@@ -6,11 +6,11 @@ Last updated: 2026-04-20
 
 ## Current Focus
 
-Housekeeping + App.svelte split sprint. TASK-6, TASK-5a, TASK-5b complete. Remaining: TASK-5c (OperationsPanel / AnalysisTools / ChromaKeyPanel).
+App.svelte split sprint COMPLETE. TASK-5c done: extracted OperationsPanel, AnalysisTools, ChromaKeyPanel. App.svelte now ~3103 lines (down from 6014).
 
 ## Next action
 
-**Dispatch TASK-5c in a fresh agent session.** Brief at `tasks/TASK-5c-operations-panel.md`. Operation runners can now safely bind to `selectedItem` via QueueManager's $bindable prop.
+Run `/observe-sync` to refresh OBSERVER-STATE. Then address release workflow (v0.6.2 — see Known Risks).
 
 ## Known Risks
 
