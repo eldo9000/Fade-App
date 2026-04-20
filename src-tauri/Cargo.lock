@@ -1889,7 +1889,7 @@ dependencies = [
 [[package]]
 name = "librewin-common"
 version = "0.1.0"
-source = "git+https://github.com/eldo9000/Libre-Apps.git?rev=d55e89df876e02b572b0740556e16dbcbc7c1252#d55e89df876e02b572b0740556e16dbcbc7c1252"
+source = "git+https://github.com/eldo9000/Libre-Apps.git?tag=v0.1.3#e4f27e25054f598a256506c58569c467b352f144"
 dependencies = [
  "serde",
  "serde_json",
