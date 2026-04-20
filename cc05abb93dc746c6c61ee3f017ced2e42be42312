@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: added observer loop artifacts (CLAUDE.md project context, SESSION-STATUS, OBSERVER-STATE)
+deferred: release versioning fix
+fragile: release pipeline broken (v0.6.1 tag/config skew)
+ci: unknown
