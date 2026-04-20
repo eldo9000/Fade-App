@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B5 landed — preset normalize_loudness + save_preset/delete_preset advisory lock
+deferred: B6 (UI UX guards — post-cancel flicker, preview stale-result overwrite) next
+fragile: librewin_common FadePreset is narrower than StoredPreset; if Shelf ever writes presets the field drops on save
+ci: unknown
