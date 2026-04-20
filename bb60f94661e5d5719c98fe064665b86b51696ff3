@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: housekeeping — Node 22, serde_yml migration, librewin-common comment, BC-003
+deferred: librewin-common semver pin (needs new tag cut in Libre-Apps)
+fragile: release pipeline still broken (v0.6.1 tag/config skew)
+ci: unknown
