@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: B5 marked DONE in attack plan
+deferred: B6 next
+fragile: none
+ci: unknown
