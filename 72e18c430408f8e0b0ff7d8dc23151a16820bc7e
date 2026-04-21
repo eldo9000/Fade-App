@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: B18 polish batch — parking_lot mutex swap, return-shape drift, doc refresh
+deferred: none
+fragile: none — all changes are mechanical type-level or doc; no behavioral change
+ci: unknown
