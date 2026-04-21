@@ -359,7 +359,10 @@ mod tests {
         let w = acc.finish();
         assert_eq!(w.amplitudes.len(), 3);
         let peak = w.amplitudes.iter().copied().fold(0.0f32, f32::max);
-        assert!((peak - 1.0).abs() < 1e-6, "peak should be normalized to 1.0");
+        assert!(
+            (peak - 1.0).abs() < 1e-6,
+            "peak should be normalized to 1.0"
+        );
     }
 
     #[test]
@@ -407,7 +410,9 @@ mod tests {
             if self.pos >= self.data.len() {
                 return Ok(0);
             }
-            let end = (self.pos + self.chunk).min(self.data.len()).min(self.pos + buf.len());
+            let end = (self.pos + self.chunk)
+                .min(self.data.len())
+                .min(self.pos + buf.len());
             let n = end - self.pos;
             buf[..n].copy_from_slice(&self.data[self.pos..end]);
             self.pos = end;

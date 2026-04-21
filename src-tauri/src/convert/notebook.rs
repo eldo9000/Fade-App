@@ -9,13 +9,13 @@
 //! extension) and pass the parent dir via `--output-dir`.
 
 use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 pub fn run(

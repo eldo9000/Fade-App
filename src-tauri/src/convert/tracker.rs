@@ -18,13 +18,13 @@
 //! Kept as `todo: true` in FORMAT_GROUPS with an explanatory comment.
 
 use crate::{tool_available, truncate_stderr, ConvertOptions, JobProgress};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 /// Resolve a usable SoundFont path, or return an install-hint error.

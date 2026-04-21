@@ -25,13 +25,13 @@ pub mod split;
 pub mod subtitling;
 pub mod video_filters;
 
+use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 
@@ -380,8 +380,7 @@ mod tests {
 
     #[test]
     fn kill_if_cancelled_returns_false_when_flag_unset() {
-        let processes: Arc<Mutex<HashMap<String, Child>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let processes: Arc<Mutex<HashMap<String, Child>>> = Arc::new(Mutex::new(HashMap::new()));
         let cancelled = Arc::new(AtomicBool::new(false));
         // No child registered; flag unset — must be a no-op (returns false).
         assert!(!kill_if_cancelled(&processes, "missing", &cancelled));
@@ -389,8 +388,7 @@ mod tests {
 
     #[test]
     fn kill_if_cancelled_returns_false_when_no_child_registered() {
-        let processes: Arc<Mutex<HashMap<String, Child>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let processes: Arc<Mutex<HashMap<String, Child>>> = Arc::new(Mutex::new(HashMap::new()));
         let cancelled = Arc::new(AtomicBool::new(true));
         // Flag set but nothing to kill — returns false, does not panic.
         assert!(!kill_if_cancelled(&processes, "missing", &cancelled));
@@ -415,11 +413,8 @@ mod tests {
             .spawn()
             .expect("spawn a long-running child for the test");
 
-        let processes: Arc<Mutex<HashMap<String, Child>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        processes
-            .lock()
-            .insert("job-toctou".to_string(), child);
+        let processes: Arc<Mutex<HashMap<String, Child>>> = Arc::new(Mutex::new(HashMap::new()));
+        processes.lock().insert("job-toctou".to_string(), child);
 
         let cancelled = Arc::new(AtomicBool::new(true));
         assert!(kill_if_cancelled(&processes, "job-toctou", &cancelled));

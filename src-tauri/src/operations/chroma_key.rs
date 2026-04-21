@@ -7,12 +7,12 @@
 
 use super::run_ffmpeg;
 use crate::probe_duration;
+use parking_lot::Mutex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::{Child, Command};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{command, Window};
 use ts_rs::TS;
 

@@ -12,11 +12,11 @@
 
 use super::run_ffmpeg;
 use crate::probe_duration;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 
 fn image_codec_for_ext(ext: &str) -> &'static str {

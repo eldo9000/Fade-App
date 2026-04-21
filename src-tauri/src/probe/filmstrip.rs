@@ -1,9 +1,9 @@
+use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{command, Emitter, State, Window};
 
 /// Hard ceiling on frames per `get_filmstrip` call. Each frame is a separate

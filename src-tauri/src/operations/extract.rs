@@ -2,12 +2,12 @@
 
 use super::{parse_streams, run_ffmpeg, run_ffprobe, StreamInfo};
 use crate::probe_duration;
+use parking_lot::Mutex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 use ts_rs::TS;
 
@@ -126,7 +126,18 @@ mod tests {
         let args = build_multi_args("/in.mkv", &[spec(0, "video", "/out.h264")]);
         assert_eq!(
             args,
-            ["-y", "-i", "/in.mkv", "-progress", "pipe:1", "-map", "0:0", "-c:v", "copy", "/out.h264"]
+            [
+                "-y",
+                "-i",
+                "/in.mkv",
+                "-progress",
+                "pipe:1",
+                "-map",
+                "0:0",
+                "-c:v",
+                "copy",
+                "/out.h264"
+            ]
         );
     }
 
@@ -139,9 +150,21 @@ mod tests {
         assert_eq!(
             args,
             [
-                "-y", "-i", "/in.mkv", "-progress", "pipe:1",
-                "-map", "0:0", "-c:v", "copy", "/v.h264",
-                "-map", "0:1", "-c:a", "copy", "/a.aac",
+                "-y",
+                "-i",
+                "/in.mkv",
+                "-progress",
+                "pipe:1",
+                "-map",
+                "0:0",
+                "-c:v",
+                "copy",
+                "/v.h264",
+                "-map",
+                "0:1",
+                "-c:a",
+                "copy",
+                "/a.aac",
             ]
         );
     }
@@ -151,7 +174,18 @@ mod tests {
         let args = build_multi_args("/in.mkv", &[spec(2, "subtitle", "/sub.srt")]);
         assert_eq!(
             args,
-            ["-y", "-i", "/in.mkv", "-progress", "pipe:1", "-map", "0:2", "-c:s", "copy", "/sub.srt"]
+            [
+                "-y",
+                "-i",
+                "/in.mkv",
+                "-progress",
+                "pipe:1",
+                "-map",
+                "0:2",
+                "-c:s",
+                "copy",
+                "/sub.srt"
+            ]
         );
     }
 

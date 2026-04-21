@@ -4,12 +4,15 @@
 //! target container.  If any are incompatible, return an error before touching
 //! anything on disk.
 
-use super::{check_codec_container_compat, duration_from_probe, ext_of, parse_streams, run_ffmpeg, run_ffprobe};
+use super::{
+    check_codec_container_compat, duration_from_probe, ext_of, parse_streams, run_ffmpeg,
+    run_ffprobe,
+};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 
 pub fn run(

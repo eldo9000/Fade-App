@@ -6,11 +6,11 @@
 
 use super::{ext_of, parse_streams, run_ffmpeg, run_ffprobe};
 use crate::probe_duration;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 
 pub fn run(

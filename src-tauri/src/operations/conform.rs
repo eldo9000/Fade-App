@@ -11,11 +11,11 @@
 //! Audio: stream-copy (conform touches video only).
 
 use super::{duration_from_probe, run_ffmpeg, run_ffprobe};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 use ts_rs::TS;
 

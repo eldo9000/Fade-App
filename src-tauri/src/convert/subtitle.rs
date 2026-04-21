@@ -9,13 +9,13 @@
 
 use crate::operations::run_ffmpeg as op_run_ffmpeg;
 use crate::{ConvertOptions, JobProgress};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 fn ext_of(path: &str) -> String {

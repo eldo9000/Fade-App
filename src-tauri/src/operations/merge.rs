@@ -10,14 +10,12 @@
 //!
 //! The temp concat-list file is cleaned up after the job completes (or fails).
 
-use super::{
-    duration_from_probe, parse_streams, run_ffmpeg, run_ffprobe, write_temp_concat_list,
-};
+use super::{duration_from_probe, parse_streams, run_ffmpeg, run_ffprobe, write_temp_concat_list};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 
 pub fn run(

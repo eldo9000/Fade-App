@@ -41,8 +41,7 @@ impl RateLimiter {
         let accept = match (self.last_emit, self.last_value) {
             (None, _) | (_, None) => true,
             (Some(t), Some(v)) => {
-                now.duration_since(t) >= self.min_interval
-                    && (value - v).abs() >= self.min_delta
+                now.duration_since(t) >= self.min_interval && (value - v).abs() >= self.min_delta
             }
         };
         if accept {

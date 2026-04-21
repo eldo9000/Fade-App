@@ -1,14 +1,14 @@
 #[allow(unused_imports)]
 use librewin_common::media::media_type_for; // used in tests via super::*
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{command, AppHandle, Emitter, Manager, State, Window};
+use ts_rs::TS;
 
 pub mod args;
 pub mod convert;
@@ -32,8 +32,7 @@ pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
 pub use preview::{preview_diff, preview_image_quality};
 pub use probe::{
-    cancel_filmstrip, get_file_info, get_filmstrip, get_spectrogram, get_waveform,
-    FilmstripCancels,
+    cancel_filmstrip, get_file_info, get_filmstrip, get_spectrogram, get_waveform, FilmstripCancels,
 };
 pub use theme::{get_accent, get_theme};
 
@@ -153,19 +152,8 @@ fn finalize_job(window: &Window, job_id: String, input_path: &str, outcome: JobO
         }
         JobOutcome::Error { message } => {
             let first_line = message.lines().next().unwrap_or("").to_string();
-            write_fade_log(&format_log_entry(
-                &job_id,
-                input_path,
-                "error",
-                &first_line,
-            ));
-            let _ = window.emit(
-                "job-error",
-                JobError {
-                    job_id,
-                    message,
-                },
-            );
+            write_fade_log(&format_log_entry(&job_id, input_path, "error", &first_line));
+            let _ = window.emit("job-error", JobError { job_id, message });
         }
     }
 }
@@ -471,10 +459,7 @@ pub(crate) fn validate_output_name(path: &str) -> Result<(), String> {
     let p = Path::new(path);
     for component in p.components() {
         if component == Component::ParentDir {
-            return Err(format!(
-                "Path traversal rejected in output path: {}",
-                path
-            ));
+            return Err(format!("Path traversal rejected in output path: {}", path));
         }
     }
     let stem = p
@@ -757,9 +742,7 @@ fn convert_file(
     // Register cancellation flag before spawning the thread
     let cancelled = Arc::new(AtomicBool::new(false));
     {
-        let mut map = state
-            .cancellations
-            .lock();
+        let mut map = state.cancellations.lock();
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
 
@@ -902,9 +885,7 @@ fn convert_file(
 fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
     // Set the cancelled flag first so the background thread knows why it stopped
     {
-        let map = state
-            .cancellations
-            .lock();
+        let map = state.cancellations.lock();
         if let Some(flag) = map.get(&job_id) {
             flag.store(true, Ordering::SeqCst);
         }
@@ -1287,9 +1268,7 @@ impl OperationPayload {
             | PadSilence { input_path, .. }
             | ChromaKey { input_path, .. } => input_path,
             ReplaceAudio { video_path, .. } => video_path,
-            Merge { input_paths, .. } => {
-                input_paths.first().map(String::as_str).unwrap_or("")
-            }
+            Merge { input_paths, .. } => input_paths.first().map(String::as_str).unwrap_or(""),
         }
     }
 }
@@ -1305,9 +1284,7 @@ fn run_operation(
 ) -> Result<(), String> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
-        let mut map = state
-            .cancellations
-            .lock();
+        let mut map = state.cancellations.lock();
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
 
@@ -1321,33 +1298,45 @@ fn run_operation(
             OperationPayload::Rewrap {
                 input_path,
                 output_path,
-            } => op_result(operations::rewrap::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::rewrap::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Extract {
                 input_path,
                 stream_index,
                 stream_type,
                 output_path,
-            } => op_result(operations::extract::run(
-                &window,
-                &job_id,
-                input_path,
-                *stream_index,
-                stream_type,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::extract::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    *stream_index,
+                    stream_type,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
-            OperationPayload::ExtractMulti { input_path, streams } => {
-                let primary = streams.first().map(|s| s.output_path.clone()).unwrap_or_default();
+            OperationPayload::ExtractMulti {
+                input_path,
+                streams,
+            } => {
+                let primary = streams
+                    .first()
+                    .map(|s| s.output_path.clone())
+                    .unwrap_or_default();
                 op_result(
                     operations::extract::run_multi(
                         &window,
@@ -1366,70 +1355,85 @@ fn run_operation(
                 start_secs,
                 end_secs,
                 output_path,
-            } => op_result(operations::cut::run(
-                &window,
-                &job_id,
-                input_path,
-                *start_secs,
-                *end_secs,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::cut::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    *start_secs,
+                    *end_secs,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Split {
                 input_path,
                 timecodes_secs,
                 output_dir,
-            } => op_result(operations::split::run(
-                &window,
-                &job_id,
-                input_path,
-                timecodes_secs,
-                output_dir,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_dir.clone()),
+            } => op_result(
+                operations::split::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    timecodes_secs,
+                    output_dir,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_dir.clone(),
+            ),
 
             OperationPayload::AudioOffset {
                 input_path,
                 offset_ms,
                 output_path,
-            } => op_result(operations::audio_offset::run(
-                &window,
-                &job_id,
-                input_path,
-                *offset_ms,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::audio_offset::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    *offset_ms,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::ReplaceAudio {
                 video_path,
                 audio_path,
                 output_path,
-            } => op_result(operations::replace_audio::run(
-                &window,
-                &job_id,
-                video_path,
-                audio_path,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::replace_audio::run(
+                    &window,
+                    &job_id,
+                    video_path,
+                    audio_path,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Merge {
                 input_paths,
                 output_path,
-            } => op_result(operations::merge::run(
-                &window,
-                &job_id,
-                input_paths,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::merge::run(
+                    &window,
+                    &job_id,
+                    input_paths,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::AudioNormalize {
                 input_path,
@@ -1439,19 +1443,22 @@ fn run_operation(
                 target_tp,
                 target_lra,
                 linear,
-            } => op_result(operations::analysis::audio_norm::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *mode,
-                *target_i,
-                *target_tp,
-                *target_lra,
-                *linear,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::analysis::audio_norm::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *mode,
+                    *target_i,
+                    *target_tp,
+                    *target_lra,
+                    *linear,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::SilenceRemove {
                 input_path,
@@ -1459,171 +1466,207 @@ fn run_operation(
                 threshold_db,
                 min_silence_s,
                 pad_ms,
-            } => op_result(operations::silence_remove::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *threshold_db,
-                *min_silence_s,
-                *pad_ms,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::silence_remove::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *threshold_db,
+                    *min_silence_s,
+                    *pad_ms,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::RemoveAudio {
                 input_path,
                 output_path,
-            } => op_result(operations::remove_audio::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::remove_audio::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::RemoveVideo {
                 input_path,
                 output_path,
-            } => op_result(operations::remove_video::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::remove_video::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::MetadataStrip {
                 input_path,
                 output_path,
                 mode,
                 title_value,
-            } => op_result(operations::metadata_strip::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                mode,
-                title_value.as_deref(),
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::metadata_strip::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    mode,
+                    title_value.as_deref(),
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Loop {
                 input_path,
                 output_path,
                 count,
-            } => op_result(operations::loop_op::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *count,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::loop_op::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *count,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::RotateFlip {
                 input_path,
                 output_path,
                 mode,
-            } => op_result(operations::video_filters::run_rotate_flip(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                mode,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::video_filters::run_rotate_flip(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    mode,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Reverse {
                 input_path,
                 output_path,
-            } => op_result(operations::video_filters::run_reverse(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::video_filters::run_reverse(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Speed {
                 input_path,
                 output_path,
                 rate,
-            } => op_result(operations::video_filters::run_speed(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *rate,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::video_filters::run_speed(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *rate,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Fade {
                 input_path,
                 output_path,
                 fade_in,
                 fade_out,
-            } => op_result(operations::video_filters::run_fade(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *fade_in,
-                *fade_out,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::video_filters::run_fade(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *fade_in,
+                    *fade_out,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Deinterlace {
                 input_path,
                 output_path,
                 mode,
-            } => op_result(operations::video_filters::run_deinterlace(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                mode,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::video_filters::run_deinterlace(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    mode,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Denoise {
                 input_path,
                 output_path,
                 preset,
-            } => op_result(operations::video_filters::run_denoise(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                preset,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::video_filters::run_denoise(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    preset,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Thumbnail {
                 input_path,
                 output_path,
                 time_spec,
                 format,
-            } => op_result(operations::frame_ops::run_thumbnail(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                time_spec,
-                format,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::frame_ops::run_thumbnail(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    time_spec,
+                    format,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::ContactSheet {
                 input_path,
@@ -1631,17 +1674,20 @@ fn run_operation(
                 cols,
                 rows,
                 frames,
-            } => op_result(operations::frame_ops::run_contact_sheet(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *cols,
-                *rows,
-                *frames,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::frame_ops::run_contact_sheet(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *cols,
+                    *rows,
+                    *frames,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::FrameExport {
                 input_path,
@@ -1649,17 +1695,20 @@ fn run_operation(
                 mode,
                 value,
                 format,
-            } => op_result(operations::frame_ops::run_frame_export(
-                &window,
-                &job_id,
-                input_path,
-                output_dir,
-                mode,
-                *value,
-                format,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_dir.clone()),
+            } => op_result(
+                operations::frame_ops::run_frame_export(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_dir,
+                    mode,
+                    *value,
+                    format,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_dir.clone(),
+            ),
 
             OperationPayload::Watermark {
                 input_path,
@@ -1668,62 +1717,74 @@ fn run_operation(
                 corner,
                 opacity,
                 scale_pct,
-            } => op_result(operations::frame_ops::run_watermark(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                watermark_path,
-                corner,
-                *opacity,
-                *scale_pct,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::frame_ops::run_watermark(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    watermark_path,
+                    corner,
+                    *opacity,
+                    *scale_pct,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Volume {
                 input_path,
                 output_path,
                 gain_db,
-            } => op_result(operations::audio_filters::run_volume(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *gain_db,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::audio_filters::run_volume(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *gain_db,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::ChannelTools {
                 input_path,
                 output_path,
                 mode,
-            } => op_result(operations::audio_filters::run_channel_tools(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                mode,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::audio_filters::run_channel_tools(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    mode,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::PadSilence {
                 input_path,
                 output_path,
                 head_s,
                 tail_s,
-            } => op_result(operations::audio_filters::run_pad_silence(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *head_s,
-                *tail_s,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::audio_filters::run_pad_silence(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *head_s,
+                    *tail_s,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::Conform {
                 input_path,
@@ -1734,20 +1795,23 @@ fn run_operation(
                 fps_algo,
                 scale_algo,
                 dither,
-            } => op_result(operations::conform::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                fps.clone(),
-                resolution.clone(),
-                pix_fmt.clone(),
-                *fps_algo,
-                *scale_algo,
-                *dither,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::conform::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    fps.clone(),
+                    resolution.clone(),
+                    pix_fmt.clone(),
+                    *fps_algo,
+                    *scale_algo,
+                    *dither,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
 
             OperationPayload::ChromaKey {
                 input_path,
@@ -1762,24 +1826,27 @@ fn run_operation(
                 output_target,
                 trim_start,
                 trim_end,
-            } => op_result(operations::chroma_key::run(
-                &window,
-                &job_id,
-                input_path,
-                output_path,
-                *algo,
-                color_hex,
-                *similarity,
-                *blend,
-                *despill,
-                *despill_mix,
-                *upsample,
-                *output_target,
-                *trim_start,
-                *trim_end,
-                Arc::clone(&processes),
-                Arc::clone(&cancelled),
-            ), output_path.clone()),
+            } => op_result(
+                operations::chroma_key::run(
+                    &window,
+                    &job_id,
+                    input_path,
+                    output_path,
+                    *algo,
+                    color_hex,
+                    *similarity,
+                    *blend,
+                    *despill,
+                    *despill_mix,
+                    *upsample,
+                    *output_target,
+                    *trim_start,
+                    *trim_end,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                ),
+                output_path.clone(),
+            ),
         };
 
         {
@@ -1822,10 +1889,7 @@ fn validate_url_scheme(url: &str) -> Result<(), String> {
             OPEN_URL_MAX_LEN
         ));
     }
-    if url
-        .chars()
-        .any(|c| c.is_control() || c.is_whitespace())
-    {
+    if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err("URL contains whitespace or control characters".to_string());
     }
     let scheme_end = url
@@ -3004,7 +3068,10 @@ mod tests {
         }
         append_fade_log_at(&path, "post-rotation-marker");
 
-        assert!(rotated.exists(), "rotated file should exist after threshold crossed");
+        assert!(
+            rotated.exists(),
+            "rotated file should exist after threshold crossed"
+        );
         let live = std::fs::read_to_string(&path).expect("live log readable");
         assert!(
             live.contains("post-rotation-marker"),
@@ -3188,8 +3255,7 @@ mod tests {
         // Cancel sentinel is an exact match — a message containing
         // "CANCELLED" as a substring (e.g. from an ffmpeg stderr line)
         // must route to Error, not Cancelled.
-        let outcome =
-            JobOutcome::from_result(Err("ffmpeg: CANCELLED by signal".to_string()));
+        let outcome = JobOutcome::from_result(Err("ffmpeg: CANCELLED by signal".to_string()));
         assert!(matches!(outcome, JobOutcome::Error { .. }));
 
         let outcome = JobOutcome::from_result(Err("prefix __DONE__ suffix".to_string()));

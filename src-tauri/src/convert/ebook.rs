@@ -6,12 +6,12 @@
 //! drain stdout/stderr to avoid pipe deadlock, surface stderr on failure.
 
 use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 pub fn run(

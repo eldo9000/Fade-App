@@ -6,11 +6,11 @@
 
 use super::run_ffmpeg;
 use crate::probe_duration;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tauri::Window;
 
 fn audio_only_args(input_path: &str, af: &str, output_path: &str) -> Vec<String> {

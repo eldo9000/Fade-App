@@ -1,11 +1,11 @@
 use crate::{truncate_stderr, ConvertOptions, JobDone, JobProgress};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 /// 7-Zip ships under two binary names depending on platform/packaging:
@@ -25,9 +25,8 @@ fn resolve_seven_zip_bin(probe: impl Fn(&str) -> bool) -> &'static str {
 }
 
 fn seven_zip_bin() -> &'static str {
-    SEVEN_ZIP_BIN.get_or_init(|| {
-        resolve_seven_zip_bin(|name| Command::new(name).arg("i").output().is_ok())
-    })
+    SEVEN_ZIP_BIN
+        .get_or_init(|| resolve_seven_zip_bin(|name| Command::new(name).arg("i").output().is_ok()))
 }
 
 fn tool_in_path(name: &str) -> bool {
