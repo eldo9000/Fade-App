@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B16 — from_result sentinel bridge removed from run_operation dispatch; op_result() replaces legacy Result<Option<String>,String> shape for all 29 variants
+deferred: Err('CANCELLED') sentinel still lives in convert/ modules (convert_file path); async lifecycle for 14 analysis/probe/preview commands (B16 full plan scope, multi-session XL)
+fragile: from_result still used by convert_file path (lib.rs:867) — do not remove it until convert/ modules are migrated
+ci: unknown
