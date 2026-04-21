@@ -31,8 +31,7 @@ pub fn find_blender() -> Option<PathBuf> {
 
         // ~/Applications/Blender.app/Contents/MacOS/Blender
         if let Some(home) = std::env::var_os("HOME") {
-            let user = PathBuf::from(home)
-                .join("Applications/Blender.app/Contents/MacOS/Blender");
+            let user = PathBuf::from(home).join("Applications/Blender.app/Contents/MacOS/Blender");
             if user.exists() {
                 return Some(user);
             }
