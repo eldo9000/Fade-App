@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B13 — double-probe collapse (F-22) + loudnorm 3→2 spawns (F-23)
+deferred: extract.rs/replace_audio.rs double-probe needs probe cache (B32)
+fragile: audio_norm duration parsing depends on ffmpeg stderr format; N/A handled
+ci: unknown
