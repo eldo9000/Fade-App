@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B16 phase 1 DONE marker committed to attack plan; phase 2 (14 async analysis commands) remains
+deferred: B16 phase 2 — async lifecycle for analyze_*, preview_*, get_waveform, get_spectrogram, diff_subtitle, lint_subtitle, probe_subtitles, get_file_info, get_streams
+fragile: none
+ci: unknown
