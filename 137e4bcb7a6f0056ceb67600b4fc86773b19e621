@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B9 (F-02 cancel TOCTOU + F-11 filmstrip cancel hook) from audits/04-attack-plan.md
+deferred: none
+fragile: run_ffmpeg spawn/register order — post-spawn kill_if_cancelled relies on processes map entry being live when cancel_job runs; if a future refactor moves the insert or changes lock granularity the TOCTOU returns
+ci: unknown
