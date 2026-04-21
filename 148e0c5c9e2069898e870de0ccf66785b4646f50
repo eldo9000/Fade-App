@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: Chore — updated audits/04-attack-plan.md B10 entry with DONE status, commit SHA, and design-note on convert_file fire-and-forget semantics.
+deferred: none
+fragile: none
+ci: unknown
