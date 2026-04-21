@@ -689,7 +689,7 @@
     if (!it || !go) return;
     const id = it.id; _capturedId = id;
     mediaLoading = true;
-    invoke('get_waveform', { path: it.path, draft: isDraft, buckets: 4000 })
+    invoke('get_waveform', { path: it.path, draft: isDraft, buckets: 1600 })
       .then(d => { if (_capturedId === id) { waveformData = /** @type {any} */ (d); mediaLoading = false; } })
       .catch(e => { console.error('get_waveform failed:', e); if (_capturedId === id) mediaLoading = false; });
   });
