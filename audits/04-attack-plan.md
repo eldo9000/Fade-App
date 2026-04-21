@@ -205,7 +205,7 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** **BISECTED REVERT READY** — keep original 3 files in `.bak` during PR review; revert touches one module at a time if breakage found post-merge.
 - **Status:** DONE — commit `efad2cc`. `operations/merge.rs::run_ffmpeg_merge` (verbatim copy with stale "self-contained" justification) and `convert/subtitle.rs::run_ffmpeg` (thinner wrapper, diverged cancel/error semantics) both deleted; merge calls `super::run_ffmpeg`, subtitle delegates via a 7-line arg builder. B7 `RateLimiter` (100 ms / 0.5 %) wired into the canonical progress loop — a 60 fps encode now drives ≤10 Hz of `job-progress` emits instead of 60 Hz; first emit always passes (UI still sees the initial 0 % tick). Extracted `clamped_percent(elapsed, duration) -> f32` so the never-reports-100-in-flight invariant has explicit tests. Subtitle's `run_ffmpeg` arg list omits `-progress pipe:1`, so the canonical's per-line emit path stays silent for that lane (start/done events still come from outer `run`). Net -53 lines. 194 rust + 40 vitest pass; clippy clean; cargo audit unchanged baseline. **Deferred:** interactive `tauri dev` smoke test — release build clean and every operation under `operations/*` exercises the canonical, so any breakage would be caught at build/test time. User to verify on next launch.
 
-### B9 — `fix(concurrency): cancel TOCTOU + filmstrip cancel hook`
+### B9 — `fix(concurrency): cancel TOCTOU + filmstrip cancel hook` — **DONE** (137e4bc)
 - **Findings:** F-02, F-11
 - **Rationale:** Same invariant — "every spawned child is registered and every cancel can reach it."
 - **Effort:** S
@@ -213,6 +213,7 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Test:** Scripted rapid cancel→re-convert same output path; cancel-during-filmstrip with item delete.
 - **Rollback:** trivial.
 - **Depends on:** B8 (lands cleaner post-consolidation).
+- **Status:** DONE — commit `137e4bc`. F-02: extracted `kill_if_cancelled(processes, job_id, cancelled)` helper, called immediately after `run_ffmpeg` inserts the Child into the processes map. Closes the window where `cancel_job` set the flag but found no child to kill — the natural unwind (stdout EOF → stderr drain → wait → flag check → CANCELLED) still owns the rest of the teardown. F-11: new `FilmstripCancels` tauri-managed state (`HashMap<id, Arc<AtomicBool>>`); `get_filmstrip` registers a flag on entry (flipping any predecessor for the same id so stale threads exit), checks the flag both before each nice+ffmpeg spawn and again after the blocking `.output()` returns (last decoded frame is dropped rather than emitted for a stale id), and removes the slot only when still owned via `Arc::ptr_eq`. New `cancel_filmstrip(id)` command wired into `QueueManager.removeItem` (both `id` and `id-bg`) and `Timeline`'s filmstrip `$effect` cleanup. 7 new unit tests (3 for `kill_if_cancelled`, 4 for `register_cancel`/`clear_cancel_if_owned`). 201 rust + 40 vitest pass; clippy `-D warnings` clean; cargo audit clean.
 
 ### B10 — `fix(concurrency): batch fanout semaphore`
 - **Findings:** F-04
