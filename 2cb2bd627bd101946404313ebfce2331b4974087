@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B15 complete — validate_output_name trust gate across all run_operation variants + 6 read-only IPC entry points
+deferred: none
+fragile: none — additive validators, no existing code removed
+ci: unknown
