@@ -288,12 +288,13 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** keep hand-written types in-tree during transition.
 - **Status:** DONE — commit `95e7812`. ts-rs 10.1.0 added. `#[derive(TS)]` + `#[ts(export, export_to = "../../src/lib/types/generated/")]` on ConvertOptions, JobProgress, JobDone, JobError, JobCancelled, OperationPayload (lib.rs), NormMode, FpsAlgo, ScaleAlgo, ChromaAlgo, ChromaOutput, ExtractStreamSpec. 12 `.ts` files generated to `src/lib/types/generated/` (discriminated union for OperationPayload with all 29 variants, correct imports). tsconfig.json added (strict/noEmit). `typescript ^5` added to devDeps. `npm test` now runs `tsc --noEmit && vitest run`. `src/lib/types/ipc.ts` holds field-level assertions that make tsc fail on Rust field renames. 260 rust (was 248, +12 ts-rs export tests) + 56 vitest pass; clippy -D warnings clean; cargo build --release clean; cargo audit 0 vulnerabilities. **Advisory:** AudioOffset.offset_ms Rust i64 → TS bigint drift surfaced by codegen — frontend uses number; fix is a micro-patch candidate outside B17 scope.
 
-### B18 — `polish: parking_lot::Mutex + return-shape drift + doc refresh`
+### B18 — `polish: parking_lot::Mutex + return-shape drift + doc refresh` — **DONE** (72e18c4)
 - **Findings:** F-31, F-30, F-33
 - **Rationale:** Convention cleanup; no-cost principle fixes.
 - **Effort:** S
 - **Risk:** LOW
 - **Test:** `cargo test`, `cargo clippy -- -D warnings`.
+- **Status:** DONE — commit `72e18c4`. F-31: parking_lot 0.12 added; Mutex import swapped across 32 files; all .lock().expect()/.lock().unwrap() simplified to .lock() (presets.rs test code left as std::sync::Mutex — uses explicit poison-recovery). F-30: scan_dir/file_exists/check_tools/get_theme/get_accent migrated to Result<T, String>; frontend callers already have try/catch so JS contract unchanged; fs_commands tests updated; scan_dir_returns_ok_for_missing_path has explicit assert_eq! assertion. F-33: ARCHITECTURE.md LOC corrected (lib.rs ~850→~3300, App.svelte ~1960→~3100); all 13 undocumented frontend components and full operations/ subtree added. 260 rust + 56 vitest pass; clippy -D warnings clean; cargo build --release clean; cargo audit 0 vulnerabilities.
 
 ---
 
