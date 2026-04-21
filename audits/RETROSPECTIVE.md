@@ -58,6 +58,8 @@ These were confirmed real bugs that would have reached users:
 
 5. **GHA hardening.** `release.yml` interpolates `inputs.tag` directly into shell. Low urgency (write-access-gated) but the fix is one line per site. Pick it up in the next polish batch.
 
+6. **Include `.github/**` workflows in cycle 2's file globs** — GHA shell injection in `release.yml` surfaced only during verify pass because the original scope excluded CI configs.
+
 ---
 
 ## What the 4-session format got right vs. where it over/under-invested

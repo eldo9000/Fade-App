@@ -6,7 +6,7 @@ Last updated: 2026-04-20
 
 ## Current Focus
 
-4-session audit arc complete. All 18 PR batches shipped. Verify pass clean. Project in stable post-audit state.
+4-session audit arc complete. All 18 PR batches shipped. Verify pass clean. CI green on `main` after post-wrap fmt sweep (`7b8901d`). Project in stable post-audit state.
 
 ## Next action
 

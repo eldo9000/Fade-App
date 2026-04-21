@@ -469,6 +469,8 @@ These were surfaced during the 4-session arc but explicitly deferred as out-of-s
 - New finding vs baseline: **GHA shell injection** (`release.yml:110,365`) — not in original scope (baseline scanned `src-tauri/src/**` only, not `.github/`). LOW risk (write-access-gated). Added to §7 Promoted followups.
 - unwrap density: 69 → 67 (−2). expect density: 107 → 40 (−67, driven by B18 parking_lot + cleanup). async fn count: still 0 (B16 phase 2 explicitly deferred).
 
+**CI note:** wrap commit `daa854f2` went red on macOS aarch64 (`cargo fmt --check` failed on B18 parking_lot drift); fixed by `7b8901d` fmt sweep — CI run 24702207324 green.
+
 ---
 
 *End of attack plan. Fresh engineer pickup: §3 Batch B1, §5 Phase 1. All file:line anchors in-file; no external audit reads required.*
