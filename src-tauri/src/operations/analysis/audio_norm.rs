@@ -8,8 +8,7 @@
 //! goes through the `run_operation` dispatch.
 
 use crate::operations::analysis::run_ffmpeg_capture;
-use crate::operations::run_ffmpeg;
-use crate::probe_duration;
+use crate::operations::{parse_duration_from_ffmpeg_stderr, run_ffmpeg};
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
@@ -38,11 +37,9 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let duration = probe_duration(input_path);
-
     match mode {
         NormMode::Ebu => {
-            // Pass 1 — measure
+            // Pass 1 — measure; duration extracted from stderr for pass 2 progress
             let pass1_filter = format!(
                 "loudnorm=I={i}:TP={tp}:LRA={lra}:print_format=json",
                 i = target_i,
@@ -61,6 +58,7 @@ pub fn run(
                 "-".to_string(),
             ];
             let stderr = run_ffmpeg_capture(&pass1_args)?;
+            let duration = parse_duration_from_ffmpeg_stderr(&stderr);
             let start = stderr
                 .rfind('{')
                 .ok_or_else(|| "loudnorm pass1 produced no JSON block".to_string())?;
@@ -104,6 +102,7 @@ pub fn run(
         }
         NormMode::Peak => {
             // Peak: measure max_volume with volumedetect, then apply a gain.
+            // Duration extracted from detect-pass stderr for apply-pass progress.
             let detect_args = vec![
                 "-hide_banner".to_string(),
                 "-nostats".to_string(),
@@ -116,6 +115,7 @@ pub fn run(
                 "-".to_string(),
             ];
             let stderr = run_ffmpeg_capture(&detect_args)?;
+            let duration = parse_duration_from_ffmpeg_stderr(&stderr);
             // "max_volume: -3.5 dB"
             let max_db = stderr
                 .lines()
@@ -141,6 +141,7 @@ pub fn run(
         NormMode::Rg => {
             // ReplayGain: stream-copy and write track_gain tag based on measured LUFS.
             // We measure with a quick loudnorm pass and write REPLAYGAIN_TRACK_GAIN.
+            // Duration extracted from measure-pass stderr for tag-write pass progress.
             let pass1_filter = format!("loudnorm=I={:.1}:print_format=json", target_i);
             let pass1_args = vec![
                 "-hide_banner".to_string(),
@@ -154,6 +155,7 @@ pub fn run(
                 "-".to_string(),
             ];
             let stderr = run_ffmpeg_capture(&pass1_args)?;
+            let duration = parse_duration_from_ffmpeg_stderr(&stderr);
             let start = stderr
                 .rfind('{')
                 .ok_or_else(|| "loudnorm produced no JSON block".to_string())?;

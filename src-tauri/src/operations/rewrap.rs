@@ -4,8 +4,7 @@
 //! target container.  If any are incompatible, return an error before touching
 //! anything on disk.
 
-use super::{check_codec_container_compat, ext_of, parse_streams, run_ffmpeg, run_ffprobe};
-use crate::probe_duration;
+use super::{check_codec_container_compat, duration_from_probe, ext_of, parse_streams, run_ffmpeg, run_ffprobe};
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
@@ -33,7 +32,7 @@ pub fn run(
         }
     }
 
-    let duration = probe_duration(input_path);
+    let duration = duration_from_probe(&probe);
 
     // -c copy remuxes all streams; -map 0 keeps every stream
     let args = vec![

@@ -144,6 +144,25 @@ pub(crate) fn duration_from_probe(json: &serde_json::Value) -> Option<f64> {
         .and_then(|s| s.parse::<f64>().ok())
 }
 
+/// Parse wall-clock duration from the "Duration: HH:MM:SS.mmm" line that
+/// FFmpeg prints for the input file even under `-hide_banner -nostats`.
+/// Returns `None` if the line is absent or value is "N/A" (streaming inputs).
+pub(crate) fn parse_duration_from_ffmpeg_stderr(stderr: &str) -> Option<f64> {
+    let line = stderr
+        .lines()
+        .find(|l| l.trim_start().starts_with("Duration:"))?;
+    let after = line.trim_start().strip_prefix("Duration:")?.trim();
+    let ts = after.split(',').next()?.trim();
+    if ts == "N/A" {
+        return None;
+    }
+    let mut parts = ts.splitn(3, ':');
+    let h: f64 = parts.next()?.parse().ok()?;
+    let m: f64 = parts.next()?.parse().ok()?;
+    let s: f64 = parts.next()?.parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
+}
+
 // ── FFmpeg runner ──────────────────────────────────────────────────────────────
 
 /// Kill the child registered at `job_id` if `cancelled` is set.
@@ -411,6 +430,42 @@ mod tests {
         let mut child = processes.lock().unwrap().remove("job-toctou").unwrap();
         let status = child.wait().expect("child wait after kill");
         assert!(!status.success(), "killed child must not report success");
+    }
+
+    #[test]
+    fn duration_from_probe_extracts_seconds() {
+        let json = serde_json::json!({ "format": { "duration": "93.5" } });
+        assert_eq!(duration_from_probe(&json), Some(93.5));
+    }
+
+    #[test]
+    fn duration_from_probe_returns_none_on_missing_field() {
+        let json = serde_json::json!({ "format": {} });
+        assert_eq!(duration_from_probe(&json), None);
+    }
+
+    #[test]
+    fn parse_duration_from_ffmpeg_stderr_basic() {
+        let stderr = "  Duration: 00:01:30.50, start: 0.000000, bitrate: 1234 kb/s";
+        assert_eq!(parse_duration_from_ffmpeg_stderr(stderr), Some(90.5));
+    }
+
+    #[test]
+    fn parse_duration_from_ffmpeg_stderr_hours() {
+        let stderr = "Input #0, matroska\n  Duration: 01:00:00.00, start: 0.0\n";
+        assert_eq!(parse_duration_from_ffmpeg_stderr(stderr), Some(3600.0));
+    }
+
+    #[test]
+    fn parse_duration_from_ffmpeg_stderr_na_returns_none() {
+        let stderr = "  Duration: N/A, start: 0.000000, bitrate: N/A";
+        assert_eq!(parse_duration_from_ffmpeg_stderr(stderr), None);
+    }
+
+    #[test]
+    fn parse_duration_from_ffmpeg_stderr_absent_returns_none() {
+        let stderr = "ffmpeg version 6.0\nSome other output\n";
+        assert_eq!(parse_duration_from_ffmpeg_stderr(stderr), None);
     }
 
     #[test]

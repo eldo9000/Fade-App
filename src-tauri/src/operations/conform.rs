@@ -10,8 +10,7 @@
 //! Video codec: libx264 CRF 17 preset=slow (visually lossless-ish intermediate).
 //! Audio: stream-copy (conform touches video only).
 
-use super::{run_ffmpeg, run_ffprobe};
-use crate::probe_duration;
+use super::{duration_from_probe, run_ffmpeg, run_ffprobe};
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
@@ -78,8 +77,9 @@ struct SourceSpec {
     source_is_10bit: bool,
 }
 
-fn probe_source(input_path: &str) -> Result<SourceSpec, String> {
+fn probe_source(input_path: &str) -> Result<(SourceSpec, Option<f64>), String> {
     let json = run_ffprobe(input_path)?;
+    let duration = duration_from_probe(&json);
     let streams = json["streams"].as_array().cloned().unwrap_or_default();
     let v = streams
         .iter()
@@ -92,12 +92,15 @@ fn probe_source(input_path: &str) -> Result<SourceSpec, String> {
         .map(|p| p.contains("10le") || p.contains("10be") || p.contains("p010"))
         .unwrap_or(false);
 
-    Ok(SourceSpec {
-        width: v["width"].as_u64().map(|v| v as u32),
-        height: v["height"].as_u64().map(|v| v as u32),
-        pix_fmt,
-        source_is_10bit,
-    })
+    Ok((
+        SourceSpec {
+            width: v["width"].as_u64().map(|v| v as u32),
+            height: v["height"].as_u64().map(|v| v as u32),
+            pix_fmt,
+            source_is_10bit,
+        },
+        duration,
+    ))
 }
 
 fn target_is_8bit(pix_fmt: &str) -> bool {
@@ -119,8 +122,7 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let src = probe_source(input_path)?;
-    let duration = probe_duration(input_path);
+    let (src, duration) = probe_source(input_path)?;
 
     // ── Build filter chain ────────────────────────────────────────────────
     let mut filters: Vec<String> = Vec::new();
