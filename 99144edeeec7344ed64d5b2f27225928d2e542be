@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: fmt fix for model_blender.rs after CI failure
+deferred: none
+fragile: none
+ci: unknown
