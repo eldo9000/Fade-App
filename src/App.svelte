@@ -15,6 +15,7 @@
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
   import { validateOptions } from './lib/utils.js';
   import { markConverting, markError, markDone, markCancelled, applyProgressIfActive } from './lib/itemStatus.js';
+  import { createLimiter, defaultBatchConcurrency } from './lib/concurrency.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -139,6 +140,20 @@
   // newly-submitted item becomes terminal immediately (fast data conversions
   // flip 'pending' → 'done' in one event-loop tick with no visible interim).
   let batchIds = $state(new Set());
+  // Per-job completion resolvers. `convert_file` returns immediately after
+  // spawning its worker thread, so the `invoke` promise can't gate the
+  // batch limiter. Instead, each dispatched job parks here until the
+  // matching job-done/job-error/job-cancelled event fires (or the IPC call
+  // itself rejects before the thread starts).
+  /** @type {Map<string, () => void>} */
+  const batchCompletions = new Map();
+  function resolveBatchCompletion(jobId) {
+    const fn = batchCompletions.get(jobId);
+    if (fn) {
+      batchCompletions.delete(jobId);
+      fn();
+    }
+  }
   let currentPercent = $derived.by(() => {
     const active = queue.filter(q => q.status === 'converting');
     if (active.length === 0) return 0;
@@ -685,6 +700,7 @@
     unlistenDone = await listen('job-done', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
       if (item && item.status !== 'cancelled') markDone(item, payload.output_path);
+      resolveBatchCompletion(payload.job_id);
       checkAllDone();
     });
 
@@ -694,12 +710,14 @@
         markError(item, payload.message);
         pushError('job', `Conversion failed: ${item.name ?? payload.job_id}`, payload.message);
       }
+      resolveBatchCompletion(payload.job_id);
       checkAllDone();
     });
 
     unlistenCancelled = await listen('job-cancelled', ({ payload }) => {
       const item = queue.find(q => q.id === payload.job_id);
       if (item) markCancelled(item);
+      resolveBatchCompletion(payload.job_id);
       checkAllDone();
     });
 
@@ -917,9 +935,11 @@
     if (alreadyDone) parts.push(`${alreadyDone} already exist${alreadyDone === 1 ? 's' : ''}`);
     setStatus(parts.length ? `Converting… — skipped ${parts.join(', ')}` : 'Converting…', 'info');
 
+    // Cap concurrent ffmpeg fanout. Without this, a 100-item batch would
+    // launch 100 concurrent ffmpegs and thrash the CPU.
+    const limiter = createLimiter(defaultBatchConcurrency());
     for (const item of willRun) {
       if (paused) break;
-      markConverting(item);
 
       const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
@@ -934,8 +954,28 @@
              : item.mediaType === 'email'    ? { ...emailOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
              :                                 { ...fontOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
 
-      invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
-        .catch(err => { markError(item, err); checkAllDone(); });
+      limiter.run(() => {
+        // Re-check at slot-acquire time: user may have paused / cancelled / cleared
+        // the queue while this task was waiting for a free slot.
+        if (paused || item.status === 'cancelled' || !batchIds.has(item.id)) {
+          return Promise.resolve();
+        }
+        markConverting(item);
+        // `convert_file` spawns a worker thread and returns immediately, so
+        // we can't use the invoke promise to gate the slot. Park on a
+        // completion resolver that the job-done/error/cancelled listeners
+        // fire when the worker finishes.
+        const done = new Promise(resolve => batchCompletions.set(item.id, resolve));
+        invoke('convert_file', { jobId: item.id, inputPath: item.path, options: opts })
+          .catch(err => {
+            // IPC-level failure before the worker thread starts — no event
+            // will fire, so release the slot ourselves.
+            markError(item, err);
+            resolveBatchCompletion(item.id);
+            checkAllDone();
+          });
+        return done;
+      });
     }
   }
 
