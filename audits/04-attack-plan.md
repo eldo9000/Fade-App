@@ -269,14 +269,15 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** gate behind feature flag for one release cycle; revert if false-reject rate > 0.
 - **Status:** DONE — commit `2cb2bd6`. Three validators: `validate_output_name` (traversal + safe stem chars, no leading dot), `validate_output_dir` (traversal + HOME/TMPDIR/Volumes/media/mnt allowlist), `validate_no_traversal` (traversal-only for read inputs). `OperationPayload::validate_outputs()` dispatches across all 29 variants; `run_operation` calls it synchronously before thread spawn. `validate_no_traversal` added to diff_subtitle (a+b), lint_subtitle, probe_subtitles, chroma_key_preview, preview_diff, preview_image_quality. 10 new unit tests. 244 rust + 56 vitest pass; clippy `-D warnings` clean; cargo audit unchanged.
 
-### B16 — `refactor(arch): unify analysis/probe/preview lifecycle (ASYNC + CHILD REGISTRATION)`
-- **Findings:** F-06 (4 lenses converge)
+### B16 — `refactor(arch): unify analysis/probe/preview lifecycle (ASYNC + CHILD REGISTRATION)` — **DONE (phase 1)** (830d105)
+- **Findings:** F-06 (4 lenses converge); B11 deferred scope (F-29 sentinel bridge at run_operation)
 - **Rationale:** Closes ARCH-003, ARCH-007, CONC-011, half of CONV-003. Convert 14 sync commands (`analyze_*`, `preview_*`, `get_waveform`, `get_spectrogram`, `diff_subtitle`, `lint_subtitle`, `probe_subtitles`, `get_file_info`, `get_streams`) to `async fn` with shared `JobContext` (job_id, Child registry, progress/cancel hooks).
 - **Effort:** XL (multi-session)
 - **Risk:** **HIGH** — touches every analysis/probe/preview command + their frontend callers.
 - **Test:** Command-by-command regression. Phase this — convert in batches of 3-4 commands per sub-PR.
 - **Rollback:** phase per-command; each sub-PR individually revertable.
 - **Depends on:** B8 (consolidated `run_ffmpeg`), B11 (unified `JobOutcome`), B15 (trust gate on every IPC entry) — the whole foundational stack.
+- **Status (phase 1):** DONE — commit `830d105`. B11's deferred sentinel-bridge removal landed: added `op_result(result: Result<(), String>, output_path: String) -> JobOutcome` as the typed conversion point for all 29 `run_operation` dispatch arms. The dispatch block's intermediate `Result<Option<String>, String>` variable and `from_result` call are removed from the `run_operation` path; `from_result` is retained for the `convert_file` path (convert/ modules still use `Err("CANCELLED")` — B16 phase 2 scope). Invariant compile-enforced: exhaustive match on OperationPayload + `op_result` total function guarantees exactly one of Done/Cancelled/Error per dispatched job_id. 4 new invariant tests for `op_result`; 248 rust + 56 vitest pass; clippy `-D warnings` clean; cargo build --release clean; cargo audit unchanged. **Remaining B16 scope (phase 2, multi-session):** async lifecycle for 14 analysis/probe/preview commands + JobContext (cancel, progress, Child registration) — the original XL plan entry. `from_result` bridge removal in convert/ modules is a prerequisite for full sentinel cleanup.
 
 ### B17 — `refactor(types): typeshare/ts-rs codegen for IPC boundary`
 - **Findings:** F-28, F-27 (narrowed ConvertOptions)
