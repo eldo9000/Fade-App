@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B11 — unified convert_file/run_operation finalizers via typed JobOutcome enum; closes F-05 (log divergence) and F-29 (sentinel drift). Both paths now call shared finalize_job helper.
+deferred: tauri dev interactive smoke test — release build clean + passing tests cover JobOutcome routing; every existing operation still uses Ok(Option<String>)/Err(String) contract so finalizer behavior is verified by from_result branch tests.
+fragile: archive-extract __DONE__ path still round-trips through a sentinel string across convert module boundary; refactoring operations to return JobOutcome directly remains for a later batch (B16 / structural lifecycle work).
+ci: unknown
