@@ -14,9 +14,11 @@ use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::Window;
+use ts_rs::TS;
 
-#[derive(serde::Deserialize, Clone, Copy, Debug)]
+#[derive(serde::Deserialize, Clone, Copy, Debug, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub enum NormMode {
     Ebu,
     Peak,

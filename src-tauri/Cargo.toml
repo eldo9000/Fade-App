@@ -48,3 +48,4 @@ base64          = "0.22"
 # links a vendored SQLite so we don't depend on the system library.
 rusqlite        = { version = "0.32", features = ["bundled"] }
 fs2             = "0.4"
+ts-rs           = "10"

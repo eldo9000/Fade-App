@@ -13,10 +13,12 @@ use std::process::{Child, Command};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::{command, Window};
+use ts_rs::TS;
 
 /// Keying algorithm selector — maps 1:1 to an ffmpeg filter name.
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub enum ChromaAlgo {
     Chromakey,
     Colorkey,
@@ -24,8 +26,9 @@ pub enum ChromaAlgo {
 }
 
 /// Alpha-capable output target. Each variant pins codec + pix_fmt + ext.
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub enum ChromaOutput {
     MovQtrle,
     MovProres4444,

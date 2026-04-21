@@ -8,6 +8,7 @@ use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::Window;
+use ts_rs::TS;
 
 /// Return all streams found in `input_path`.
 pub fn get_streams(input_path: &str) -> Result<Vec<StreamInfo>, String> {
@@ -16,7 +17,8 @@ pub fn get_streams(input_path: &str) -> Result<Vec<StreamInfo>, String> {
 }
 
 /// One stream target for a multi-stream extract operation.
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub struct ExtractStreamSpec {
     pub index: u32,
     pub stream_type: String,

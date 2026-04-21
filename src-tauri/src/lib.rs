@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 use librewin_common::media::media_type_for; // used in tests via super::*
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command};
@@ -44,28 +45,32 @@ pub struct AppState {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub(crate) struct JobProgress {
     pub(crate) job_id: String,
     pub(crate) percent: f32,
     pub(crate) message: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub(crate) struct JobDone {
     pub(crate) job_id: String,
     pub(crate) output_path: String,
 }
 
-#[derive(Serialize, Clone)]
-struct JobError {
-    job_id: String,
-    message: String,
+#[derive(Serialize, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
+pub(crate) struct JobError {
+    pub(crate) job_id: String,
+    pub(crate) message: String,
 }
 
-#[derive(Serialize, Clone)]
-struct JobCancelled {
-    job_id: String,
+#[derive(Serialize, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
+pub(crate) struct JobCancelled {
+    pub(crate) job_id: String,
 }
 
 /// Typed terminal outcome for a background job. Replaces the prior
@@ -164,7 +169,8 @@ fn finalize_job(window: &Window, job_id: String, input_path: &str, outcome: JobO
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub struct ConvertOptions {
     pub output_format: String,
     pub output_dir: Option<String>,
@@ -1011,9 +1017,10 @@ fn diag_clear(app: AppHandle) -> Result<(), String> {
 
 // ── Operations ────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum OperationPayload {
+#[ts(export, export_to = "../../src/lib/types/generated/")]
+pub(crate) enum OperationPayload {
     Rewrap {
         input_path: String,
         output_path: String,

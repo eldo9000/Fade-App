@@ -16,9 +16,11 @@ use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::Window;
+use ts_rs::TS;
 
-#[derive(serde::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Deserialize, Debug, Clone, Copy, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub enum FpsAlgo {
     /// `fps` filter — drop/duplicate frames. Fast, deterministic, judder on
     /// non-integer ratios.
@@ -31,8 +33,9 @@ pub enum FpsAlgo {
     Mci,
 }
 
-#[derive(serde::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Deserialize, Debug, Clone, Copy, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/lib/types/generated/")]
 pub enum ScaleAlgo {
     Bilinear,
     Bicubic,
