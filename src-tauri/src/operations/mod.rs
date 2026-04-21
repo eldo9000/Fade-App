@@ -146,6 +146,26 @@ pub(crate) fn duration_from_probe(json: &serde_json::Value) -> Option<f64> {
 
 // ── FFmpeg runner ──────────────────────────────────────────────────────────────
 
+/// Kill the child registered at `job_id` if `cancelled` is set.
+///
+/// Extracted so the TOCTOU-closing re-check in `run_ffmpeg` is unit-testable
+/// without spinning up ffmpeg. Returns `true` iff a kill was issued.
+pub(crate) fn kill_if_cancelled(
+    processes: &Arc<Mutex<HashMap<String, Child>>>,
+    job_id: &str,
+    cancelled: &Arc<AtomicBool>,
+) -> bool {
+    if !cancelled.load(Ordering::SeqCst) {
+        return false;
+    }
+    let mut map = processes.lock().expect("processes mutex poisoned");
+    if let Some(child) = map.get_mut(job_id) {
+        let _ = child.kill();
+        return true;
+    }
+    false
+}
+
 /// Spawn FFmpeg with `args`, track progress events, and wait for completion.
 /// Uses the same cancellation / process-map patterns as the convert module.
 pub(crate) fn run_ffmpeg(
@@ -170,6 +190,15 @@ pub(crate) fn run_ffmpeg(
         let mut map = processes.lock().expect("processes mutex poisoned");
         map.insert(job_id.to_string(), child);
     }
+
+    // Close the cancel TOCTOU window: `cancel_job` sets the flag and tries to
+    // kill via the processes map, but the worker can only register the child
+    // *after* `Command::spawn`. If the user cancelled during that gap, the
+    // map lookup in `cancel_job` returned None — no kill issued — and the
+    // child would otherwise run to completion. Re-check the flag now that
+    // the child is registered and kill proactively; the progress loop, the
+    // stderr drain, and the post-wait branch all still unwind normally.
+    kill_if_cancelled(&processes, job_id, &cancelled);
 
     let stderr_thread = std::thread::spawn(move || {
         let mut lines = Vec::new();
@@ -327,6 +356,61 @@ mod tests {
         // re-baseline this test deliberately.
         assert_eq!(PROGRESS_MIN_INTERVAL, Duration::from_millis(100));
         assert!((PROGRESS_MIN_DELTA - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn kill_if_cancelled_returns_false_when_flag_unset() {
+        let processes: Arc<Mutex<HashMap<String, Child>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        // No child registered; flag unset — must be a no-op (returns false).
+        assert!(!kill_if_cancelled(&processes, "missing", &cancelled));
+    }
+
+    #[test]
+    fn kill_if_cancelled_returns_false_when_no_child_registered() {
+        let processes: Arc<Mutex<HashMap<String, Child>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let cancelled = Arc::new(AtomicBool::new(true));
+        // Flag set but nothing to kill — returns false, does not panic.
+        assert!(!kill_if_cancelled(&processes, "missing", &cancelled));
+    }
+
+    #[test]
+    fn kill_if_cancelled_kills_registered_child_when_flag_set() {
+        // Regression for F-02 cancel TOCTOU. Simulate the window where
+        // `cancel_job` has already stored `cancelled = true` but the worker
+        // has only just inserted its child into the processes map. The
+        // re-check must kill the child so it cannot run to completion.
+        #[cfg(unix)]
+        let mut cmd = Command::new("sleep");
+        #[cfg(unix)]
+        cmd.arg("30");
+        #[cfg(windows)]
+        let mut cmd = Command::new("cmd");
+        #[cfg(windows)]
+        cmd.args(["/C", "ping", "-n", "60", "127.0.0.1"]);
+
+        let child = cmd
+            .spawn()
+            .expect("spawn a long-running child for the test");
+
+        let processes: Arc<Mutex<HashMap<String, Child>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        processes
+            .lock()
+            .unwrap()
+            .insert("job-toctou".to_string(), child);
+
+        let cancelled = Arc::new(AtomicBool::new(true));
+        assert!(kill_if_cancelled(&processes, "job-toctou", &cancelled));
+
+        // After the kill, the caller is responsible for removing the
+        // child from the map and waiting. Drain here so the test doesn't
+        // leak a zombie on Unix.
+        let mut child = processes.lock().unwrap().remove("job-toctou").unwrap();
+        let status = child.wait().expect("child wait after kill");
+        assert!(!status.success(), "killed child must not report success");
     }
 
     #[test]

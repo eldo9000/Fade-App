@@ -9,6 +9,6 @@ pub mod spectrogram;
 pub mod waveform;
 
 pub use file_info::get_file_info;
-pub use filmstrip::get_filmstrip;
+pub use filmstrip::{cancel_filmstrip, get_filmstrip, FilmstripCancels};
 pub use spectrogram::get_spectrogram;
 pub use waveform::get_waveform;

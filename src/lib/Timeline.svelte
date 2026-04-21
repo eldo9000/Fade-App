@@ -750,7 +750,12 @@
     invoke('get_filmstrip', { path: it.path, id: myId, count: COUNT, duration: dur, draft: isDraft })
       .catch(() => {});
 
-    return () => { unlistenFn?.(); };
+    return () => {
+      unlistenFn?.();
+      // Tell the Rust thread to stop at its next frame — rapid item
+      // switches would otherwise leave N stale filmstrip threads running.
+      invoke('cancel_filmstrip', { id: myId }).catch(() => {});
+    };
   });
 
   // Apply envelope whenever currentTime changes (covers scrubbing while paused).

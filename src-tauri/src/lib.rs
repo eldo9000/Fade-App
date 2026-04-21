@@ -29,7 +29,10 @@ use convert::{
 pub use fs_commands::{file_exists, scan_dir};
 pub use presets::{delete_preset, list_presets, save_preset};
 pub use preview::{preview_diff, preview_image_quality};
-pub use probe::{get_file_info, get_filmstrip, get_spectrogram, get_waveform};
+pub use probe::{
+    cancel_filmstrip, get_file_info, get_filmstrip, get_spectrogram, get_waveform,
+    FilmstripCancels,
+};
 pub use theme::{get_accent, get_theme};
 
 // ── AppState ───────────────────────────────────────────────────────────────────
@@ -1674,6 +1677,7 @@ pub fn run() {
             processes: Arc::new(Mutex::new(HashMap::new())),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
         })
+        .manage(FilmstripCancels::default())
         .invoke_handler(tauri::generate_handler![
             get_file_info,
             convert_file,
@@ -1682,6 +1686,7 @@ pub fn run() {
             get_waveform,
             get_spectrogram,
             get_filmstrip,
+            cancel_filmstrip,
             preview_diff,
             preview_image_quality,
             get_theme,

@@ -230,6 +230,13 @@
 
   /** Remove a queue item by id. Advances selection if it was the selected item. */
   export function removeItem(id) {
+    // Signal any in-flight filmstrip loops to stop at their next frame so
+    // they don't keep spawning ffmpegs and emitting events for an item the
+    // user just removed. Both the foreground (`id`) and bg-preload (`id-bg`)
+    // filmstrips may be active. Fire-and-forget — backend is a no-op if no
+    // loop is registered for the id.
+    invoke('cancel_filmstrip', { id }).catch(() => {});
+    invoke('cancel_filmstrip', { id: id + '-bg' }).catch(() => {});
     queue = queue.filter(q => q.id !== id);
     if (selectedId === id) handleSelect(queue.length > 0 ? queue[0].id : null);
   }
