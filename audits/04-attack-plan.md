@@ -279,13 +279,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Depends on:** B8 (consolidated `run_ffmpeg`), B11 (unified `JobOutcome`), B15 (trust gate on every IPC entry) — the whole foundational stack.
 - **Status (phase 1):** DONE — commit `830d105`. B11's deferred sentinel-bridge removal landed: added `op_result(result: Result<(), String>, output_path: String) -> JobOutcome` as the typed conversion point for all 29 `run_operation` dispatch arms. The dispatch block's intermediate `Result<Option<String>, String>` variable and `from_result` call are removed from the `run_operation` path; `from_result` is retained for the `convert_file` path (convert/ modules still use `Err("CANCELLED")` — B16 phase 2 scope). Invariant compile-enforced: exhaustive match on OperationPayload + `op_result` total function guarantees exactly one of Done/Cancelled/Error per dispatched job_id. 4 new invariant tests for `op_result`; 248 rust + 56 vitest pass; clippy `-D warnings` clean; cargo build --release clean; cargo audit unchanged. **Remaining B16 scope (phase 2, multi-session):** async lifecycle for 14 analysis/probe/preview commands + JobContext (cancel, progress, Child registration) — the original XL plan entry. `from_result` bridge removal in convert/ modules is a prerequisite for full sentinel cleanup.
 
-### B17 — `refactor(types): typeshare/ts-rs codegen for IPC boundary`
+### B17 — `refactor(types): ts-rs codegen for IPC boundary` — **DONE** (95e7812)
 - **Findings:** F-28, F-27 (narrowed ConvertOptions)
 - **Rationale:** Generate `.ts` definitions for `ConvertOptions`, `OperationPayload`, event structs at build time. Field renames become compile errors. F-27 is natural consequence — per-lane payload types.
 - **Effort:** L
 - **Risk:** MEDIUM — build pipeline change; frontend must consume generated types.
 - **Test:** Build succeeds with generated types; intentional Rust rename breaks frontend build.
 - **Rollback:** keep hand-written types in-tree during transition.
+- **Status:** DONE — commit `95e7812`. ts-rs 10.1.0 added. `#[derive(TS)]` + `#[ts(export, export_to = "../../src/lib/types/generated/")]` on ConvertOptions, JobProgress, JobDone, JobError, JobCancelled, OperationPayload (lib.rs), NormMode, FpsAlgo, ScaleAlgo, ChromaAlgo, ChromaOutput, ExtractStreamSpec. 12 `.ts` files generated to `src/lib/types/generated/` (discriminated union for OperationPayload with all 29 variants, correct imports). tsconfig.json added (strict/noEmit). `typescript ^5` added to devDeps. `npm test` now runs `tsc --noEmit && vitest run`. `src/lib/types/ipc.ts` holds field-level assertions that make tsc fail on Rust field renames. 260 rust (was 248, +12 ts-rs export tests) + 56 vitest pass; clippy -D warnings clean; cargo build --release clean; cargo audit 0 vulnerabilities. **Advisory:** AudioOffset.offset_ms Rust i64 → TS bigint drift surfaced by codegen — frontend uses number; fix is a micro-patch candidate outside B17 scope.
 
 ### B18 — `polish: parking_lot::Mutex + return-shape drift + doc refresh`
 - **Findings:** F-31, F-30, F-33
