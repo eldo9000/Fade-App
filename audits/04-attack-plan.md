@@ -260,13 +260,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Test:** Manual — waveform swap feels responsive; multi-stream extract produces all streams.
 - **Status:** DONE — commit `1f87107`. F-13 frontend half DONE-STALE — Timeline.svelte already requests `buckets: 1600` (was 4000), landed in B12. F-24: new `ExtractMulti` `OperationPayload` variant + `ExtractStreamSpec` struct; `build_multi_args` pure helper builds `-map 0:N codec copy output` triples for one ffmpeg call; `run_multi` wraps it with a single `probe_duration` + `run_ffmpeg`; `OperationsPanel.svelte::runExtract` branches on `targets.length > 1` → single `extract_multi` invoke vs single-stream `extract` invoke. Eliminates N-1 redundant ffmpeg+ffprobe decode passes on multi-stream extracts. 5 new Rust unit tests (build_multi_args coverage); 9 new vitest tests (streamExt mapping + component dispatch). 234 rust + 56 vitest pass; clippy clean; cargo audit unchanged baseline.
 
-### B15 — `fix(security): IPC trust gate — validate_output_name + run_operation coverage`
+### B15 — `fix(security): IPC trust gate — validate_output_name + run_operation coverage` — **DONE** (2cb2bd6)
 - **Findings:** F-03
 - **Rationale:** The CLAUDE.md-promised invariant. Umbrella `validate_output_name()` + call-sites at every `run_operation` variant, `convert_file`, `diff_subtitle`, `lint_subtitle`, `probe_subtitles`, `chroma_key_preview`, `preview_diff`, `preview_image_quality`.
 - **Effort:** M
 - **Risk:** MEDIUM — rejection at new path may break existing user workflows with unusual filenames. Validator accepts ASCII alphanumeric + `-` + `_` + `.` in stem only; `output_dir` confined to opened roots (ties to F-08 scope).
 - **Test:** Unit tests for validator (accept/reject table); integration: try to drive a command with `../`, shell metachars, absolute path outside scope.
 - **Rollback:** gate behind feature flag for one release cycle; revert if false-reject rate > 0.
+- **Status:** DONE — commit `2cb2bd6`. Three validators: `validate_output_name` (traversal + safe stem chars, no leading dot), `validate_output_dir` (traversal + HOME/TMPDIR/Volumes/media/mnt allowlist), `validate_no_traversal` (traversal-only for read inputs). `OperationPayload::validate_outputs()` dispatches across all 29 variants; `run_operation` calls it synchronously before thread spawn. `validate_no_traversal` added to diff_subtitle (a+b), lint_subtitle, probe_subtitles, chroma_key_preview, preview_diff, preview_image_quality. 10 new unit tests. 244 rust + 56 vitest pass; clippy `-D warnings` clean; cargo audit unchanged.
 
 ### B16 — `refactor(arch): unify analysis/probe/preview lifecycle (ASYNC + CHILD REGISTRATION)`
 - **Findings:** F-06 (4 lenses converge)
