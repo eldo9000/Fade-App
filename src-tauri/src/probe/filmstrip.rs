@@ -2,7 +2,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::{command, Emitter, State, Window};
 
 /// Hard ceiling on frames per `get_filmstrip` call. Each frame is a separate
@@ -41,7 +42,7 @@ fn register_cancel(
     id: &str,
     cancelled: &Arc<AtomicBool>,
 ) {
-    let mut guard = map.lock().expect("filmstrip_cancels mutex poisoned");
+    let mut guard = map.lock();
     if let Some(old) = guard.insert(id.to_string(), Arc::clone(cancelled)) {
         old.store(true, Ordering::SeqCst);
     }
@@ -55,7 +56,7 @@ fn clear_cancel_if_owned(
     id: &str,
     owned: &Arc<AtomicBool>,
 ) {
-    let mut guard = map.lock().expect("filmstrip_cancels mutex poisoned");
+    let mut guard = map.lock();
     if let Some(current) = guard.get(id) {
         if Arc::ptr_eq(current, owned) {
             guard.remove(id);
@@ -181,7 +182,7 @@ pub fn get_filmstrip(
 /// navigates away so stale ffmpeg invocations don't pile up.
 #[command]
 pub fn cancel_filmstrip(state: State<'_, FilmstripCancels>, id: String) -> Result<(), String> {
-    let guard = state.0.lock().expect("filmstrip_cancels mutex poisoned");
+    let guard = state.0.lock();
     if let Some(flag) = guard.get(&id) {
         flag.store(true, Ordering::SeqCst);
     }
@@ -212,7 +213,7 @@ mod tests {
             Arc::new(Mutex::new(HashMap::new()));
         let flag = Arc::new(AtomicBool::new(false));
         register_cancel(&map, "item-a", &flag);
-        assert!(Arc::ptr_eq(map.lock().unwrap().get("item-a").unwrap(), &flag));
+        assert!(Arc::ptr_eq(map.lock().get("item-a").unwrap(), &flag));
         assert!(!flag.load(Ordering::SeqCst));
     }
 
@@ -236,7 +237,7 @@ mod tests {
             !new.load(Ordering::SeqCst),
             "the successor flag must stay clean"
         );
-        assert!(Arc::ptr_eq(map.lock().unwrap().get("item-a").unwrap(), &new));
+        assert!(Arc::ptr_eq(map.lock().get("item-a").unwrap(), &new));
     }
 
     #[test]
@@ -253,7 +254,7 @@ mod tests {
 
         clear_cancel_if_owned(&map, "item-a", &first);
 
-        let guard = map.lock().unwrap();
+        let guard = map.lock();
         assert!(
             guard.contains_key("item-a"),
             "successor's flag must not be cleared by the predecessor's exit"
@@ -268,6 +269,6 @@ mod tests {
         let flag = Arc::new(AtomicBool::new(false));
         register_cancel(&map, "item-a", &flag);
         clear_cancel_if_owned(&map, "item-a", &flag);
-        assert!(map.lock().unwrap().get("item-a").is_none());
+        assert!(map.lock().get("item-a").is_none());
     }
 }

@@ -14,8 +14,8 @@ const SCAN_MAX_ENTRIES: usize = 10_000;
 
 /// Return true if a file or directory exists at `path`.
 #[command]
-pub fn file_exists(path: String) -> bool {
-    std::path::Path::new(&path).exists()
+pub fn file_exists(path: String) -> Result<bool, String> {
+    Ok(std::path::Path::new(&path).exists())
 }
 
 /// List files in a directory. When `recursive` is true, descends into all
@@ -26,14 +26,14 @@ pub fn file_exists(path: String) -> bool {
 /// returns whatever was collected so far — callers see a partial list rather
 /// than a hang or an IPC payload blowout.
 #[command]
-pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
+pub fn scan_dir(path: String, recursive: Option<bool>) -> Result<Vec<String>, String> {
     let recurse = recursive.unwrap_or(false);
     let mut files: Vec<String> = Vec::new();
     let root = std::path::PathBuf::from(&path);
     // Return [] for missing or non-directory paths so callers can use this
     // to probe "is this a dir?" without a separate command round-trip.
     if !root.is_dir() {
-        return files;
+        return Ok(files);
     }
     let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(root, 0)];
     'outer: while let Some((dir, depth)) = stack.pop() {
@@ -60,7 +60,7 @@ pub fn scan_dir(path: String, recursive: Option<bool>) -> Vec<String> {
         }
     }
     files.sort();
-    files
+    Ok(files)
 }
 
 #[cfg(test)]
@@ -84,14 +84,14 @@ mod tests {
         let dir = unique_tmp("exists");
         let f = dir.join("a.txt");
         fs::write(&f, b"hi").unwrap();
-        assert!(file_exists(f.to_string_lossy().to_string()));
+        assert!(file_exists(f.to_string_lossy().to_string()).unwrap());
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn file_exists_true_for_directory() {
         let dir = unique_tmp("exists-dir");
-        assert!(file_exists(dir.to_string_lossy().to_string()));
+        assert!(file_exists(dir.to_string_lossy().to_string()).unwrap());
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -102,7 +102,7 @@ mod tests {
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        assert!(!file_exists(missing.to_string_lossy().to_string()));
+        assert!(!file_exists(missing.to_string_lossy().to_string()).unwrap());
     }
 
     #[test]
@@ -113,7 +113,7 @@ mod tests {
         fs::write(dir.join(".hidden"), b"").unwrap();
         fs::create_dir(dir.join("subdir")).unwrap();
 
-        let files = scan_dir(dir.to_string_lossy().to_string(), None);
+        let files = scan_dir(dir.to_string_lossy().to_string(), None).unwrap();
         // Only the two non-hidden files, sorted, absolute paths.
         assert_eq!(files.len(), 2, "files were: {files:?}");
         assert!(files[0].ends_with("a.txt"));
@@ -131,23 +131,23 @@ mod tests {
         fs::write(dir.join("nested").join("inside.txt"), b"").unwrap();
         fs::write(dir.join("top.txt"), b"").unwrap();
 
-        let files = scan_dir(dir.to_string_lossy().to_string(), None);
+        let files = scan_dir(dir.to_string_lossy().to_string(), None).unwrap();
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("top.txt"));
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn scan_dir_falls_back_when_path_unreadable() {
-        // Non-existent path → falls back to "." which should succeed.
-        // Just verify it does not panic and returns a Vec (possibly empty).
+    fn scan_dir_returns_ok_for_missing_path() {
         let missing = std::env::temp_dir().join(format!(
             "fade-fs-nope-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        let _files = scan_dir(missing.to_string_lossy().to_string(), None);
-        // No panic = pass.
+        let result = scan_dir(missing.to_string_lossy().to_string(), None);
+        // Non-existent path → Ok([]) — callers distinguish "empty" from "error"
+        // by the Ok/Err variant; a missing path is not an error, just empty.
+        assert_eq!(result, Ok(vec![]));
     }
 
     #[test]
@@ -159,7 +159,7 @@ mod tests {
         fs::create_dir(dir.join(".hidden")).unwrap();
         fs::write(dir.join(".hidden").join("skip.txt"), b"").unwrap();
 
-        let files = scan_dir(dir.to_string_lossy().to_string(), Some(true));
+        let files = scan_dir(dir.to_string_lossy().to_string(), Some(true)).unwrap();
         assert_eq!(files.len(), 2, "files were: {files:?}");
         assert!(files.iter().any(|f| f.ends_with("inside.txt")));
         assert!(files.iter().any(|f| f.ends_with("top.txt")));
@@ -180,7 +180,7 @@ mod tests {
         }
         fs::write(cur.join("beyond.txt"), b"").unwrap();
 
-        let files = scan_dir(dir.to_string_lossy().to_string(), Some(true));
+        let files = scan_dir(dir.to_string_lossy().to_string(), Some(true)).unwrap();
         // Depth 0 sees f0.txt; depths 1..=SCAN_MAX_DEPTH contribute fN.txt.
         // Beyond SCAN_MAX_DEPTH the walk stops, so `beyond.txt` and deeper
         // `fN.txt` sitting in dN-directories past the cap are excluded.
@@ -199,7 +199,7 @@ mod tests {
         for i in 0..n {
             fs::write(dir.join(format!("f{i:05}.txt")), b"").unwrap();
         }
-        let files = scan_dir(dir.to_string_lossy().to_string(), Some(false));
+        let files = scan_dir(dir.to_string_lossy().to_string(), Some(false)).unwrap();
         assert!(
             files.len() <= SCAN_MAX_ENTRIES,
             "entry cap exceeded: got {}",

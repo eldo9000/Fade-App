@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::{command, AppHandle, Emitter, Manager, State, Window};
 
 pub mod args;
@@ -758,8 +759,7 @@ fn convert_file(
     {
         let mut map = state
             .cancellations
-            .lock()
-            .expect("cancellations mutex poisoned");
+            .lock();
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
 
@@ -878,7 +878,7 @@ fn convert_file(
 
         // Clean up cancellation registry entry
         {
-            let mut map = cancellations.lock().expect("cancellations mutex poisoned");
+            let mut map = cancellations.lock();
             map.remove(&job_id);
         }
 
@@ -904,15 +904,14 @@ fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> 
     {
         let map = state
             .cancellations
-            .lock()
-            .expect("cancellations mutex poisoned");
+            .lock();
         if let Some(flag) = map.get(&job_id) {
             flag.store(true, Ordering::SeqCst);
         }
     }
     // Kill and remove the child process
     {
-        let mut map = state.processes.lock().expect("processes mutex poisoned");
+        let mut map = state.processes.lock();
         if let Some(child) = map.get_mut(&job_id) {
             let _ = child.kill();
         }
@@ -923,13 +922,13 @@ fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> 
 
 /// Check whether required external tools are available in PATH.
 #[command]
-fn check_tools() -> serde_json::Value {
-    serde_json::json!({
+fn check_tools() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
         "ffmpeg":   tool_available("ffmpeg"),
         "ffprobe":  tool_available("ffprobe"),
         "magick":   tool_available("magick"),
         "sevenzip": tool_available("7z") || tool_available("7zz"),
-    })
+    }))
 }
 
 /// Warp the OS cursor to screen coordinates (physical pixels).
@@ -1308,8 +1307,7 @@ fn run_operation(
     {
         let mut map = state
             .cancellations
-            .lock()
-            .expect("cancellations mutex poisoned");
+            .lock();
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
 
@@ -1785,7 +1783,7 @@ fn run_operation(
         };
 
         {
-            let mut map = cancellations.lock().expect("cancellations mutex poisoned");
+            let mut map = cancellations.lock();
             map.remove(&job_id);
         }
 

@@ -4,7 +4,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 /// 7-Zip ships under two binary names depending on platform/packaging:
@@ -172,7 +173,7 @@ fn extract_archive(
             .map_err(|e| format!("unar not found: {e}"))?;
         let stderr = child.stderr.take();
         {
-            let mut map = processes.lock().unwrap();
+            let mut map = processes.lock();
             map.insert(job_id.to_string(), child);
         }
         let stderr_thread = std::thread::spawn(move || {
@@ -195,7 +196,7 @@ fn extract_archive(
         );
         let error_output = stderr_thread.join().unwrap_or_default();
         let child_opt = {
-            let mut map = processes.lock().unwrap();
+            let mut map = processes.lock();
             map.remove(job_id)
         };
         let success = match child_opt {
@@ -232,7 +233,7 @@ fn extract_archive(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
 
@@ -265,7 +266,7 @@ fn extract_archive(
 
     let error_output = stderr_thread.join().unwrap_or_default();
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.remove(job_id)
     };
     let success = match child_opt {
@@ -338,7 +339,7 @@ fn repack_with_7z(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
 
@@ -371,7 +372,7 @@ fn repack_with_7z(
 
     let error_output = stderr_thread.join().unwrap_or_default();
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.remove(job_id)
     };
     let success = match child_opt {
@@ -427,7 +428,7 @@ fn repack_iso(
         .map_err(|e| format!("xorriso failed to start: {e}"))?;
     let stderr = child.stderr.take();
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
     let stderr_thread = std::thread::spawn(move || {
@@ -442,7 +443,7 @@ fn repack_iso(
     });
     let error_output = stderr_thread.join().unwrap_or_default();
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.remove(job_id)
     };
     let success = match child_opt {
@@ -501,7 +502,7 @@ fn repack_dmg(
         .map_err(|e| format!("hdiutil failed to start: {e}"))?;
     let stderr = child.stderr.take();
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
     let stderr_thread = std::thread::spawn(move || {
@@ -516,7 +517,7 @@ fn repack_dmg(
     });
     let error_output = stderr_thread.join().unwrap_or_default();
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.remove(job_id)
     };
     let success = match child_opt {

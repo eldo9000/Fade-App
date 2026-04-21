@@ -14,7 +14,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 fn ext_of(path: &str) -> String {

@@ -9,7 +9,8 @@ use crate::probe_duration;
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::Window;
 
 fn audio_only_args(input_path: &str, af: &str, output_path: &str) -> Vec<String> {

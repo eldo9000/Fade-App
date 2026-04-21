@@ -30,7 +30,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 
@@ -177,7 +178,7 @@ pub(crate) fn kill_if_cancelled(
     if !cancelled.load(Ordering::SeqCst) {
         return false;
     }
-    let mut map = processes.lock().expect("processes mutex poisoned");
+    let mut map = processes.lock();
     if let Some(child) = map.get_mut(job_id) {
         let _ = child.kill();
         return true;
@@ -206,7 +207,7 @@ pub(crate) fn run_ffmpeg(
     let stderr = child.stderr.take();
 
     {
-        let mut map = processes.lock().expect("processes mutex poisoned");
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
 
@@ -253,7 +254,7 @@ pub(crate) fn run_ffmpeg(
     let error_output = stderr_thread.join().unwrap_or_default();
 
     let child_opt = {
-        let mut map = processes.lock().expect("processes mutex poisoned");
+        let mut map = processes.lock();
         map.remove(job_id)
     };
 
@@ -418,7 +419,6 @@ mod tests {
             Arc::new(Mutex::new(HashMap::new()));
         processes
             .lock()
-            .unwrap()
             .insert("job-toctou".to_string(), child);
 
         let cancelled = Arc::new(AtomicBool::new(true));
@@ -427,7 +427,7 @@ mod tests {
         // After the kill, the caller is responsible for removing the
         // child from the map and waiting. Drain here so the test doesn't
         // leak a zombie on Unix.
-        let mut child = processes.lock().unwrap().remove("job-toctou").unwrap();
+        let mut child = processes.lock().remove("job-toctou").unwrap();
         let status = child.wait().expect("child wait after kill");
         assert!(!status.success(), "killed child must not report success");
     }

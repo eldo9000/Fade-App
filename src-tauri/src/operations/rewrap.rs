@@ -8,7 +8,8 @@ use super::{check_codec_container_compat, duration_from_probe, ext_of, parse_str
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::Window;
 
 pub fn run(

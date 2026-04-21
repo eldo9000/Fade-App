@@ -11,7 +11,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::{Child, Command};
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::{command, Window};
 use ts_rs::TS;
 

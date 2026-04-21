@@ -785,6 +785,7 @@ dependencies = [
  "csv",
  "fs2",
  "librewin-common",
+ "parking_lot",
  "pulldown-cmark",
  "quick-xml 0.36.2",
  "rusqlite",

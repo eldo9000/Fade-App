@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 pub fn run(
@@ -42,7 +43,7 @@ pub fn run(
     let stderr = child.stderr.take();
 
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
 
@@ -69,7 +70,7 @@ pub fn run(
     }
 
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.remove(job_id)
     };
 

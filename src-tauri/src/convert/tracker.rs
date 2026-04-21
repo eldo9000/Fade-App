@@ -23,7 +23,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tauri::{Emitter, Window};
 
 /// Resolve a usable SoundFont path, or return an install-hint error.
@@ -90,7 +91,7 @@ fn run_renderer(
     let stderr = child.stderr.take();
 
     {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
     }
 
@@ -117,7 +118,7 @@ fn run_renderer(
     }
 
     let child_opt = {
-        let mut map = processes.lock().unwrap();
+        let mut map = processes.lock();
         map.remove(job_id)
     };
 
