@@ -68,6 +68,90 @@ struct JobCancelled {
     job_id: String,
 }
 
+/// Typed terminal outcome for a background job. Replaces the prior
+/// `Err("CANCELLED")` / `Err("__DONE__")` string sentinels that crossed the
+/// `convert_file` / `run_operation` boundary — the stringly-typed flow let
+/// the two finalizers diverge on which sentinel they matched.
+#[derive(Debug)]
+pub(crate) enum JobOutcome {
+    /// Natural completion. Finalizer emits `job-done` and writes the log.
+    Done { output_path: String },
+    /// Subsystem already emitted `job-done` itself (e.g. archive extract with
+    /// a folder path). Finalizer writes the log but does not re-emit.
+    DoneEmitted,
+    /// User cancelled. Finalizer removes `remove_path` if set, emits
+    /// `job-cancelled`, and writes the log.
+    Cancelled { remove_path: Option<String> },
+    /// Job failed. Finalizer emits `job-error` with `message` and writes the
+    /// log with the first line only.
+    Error { message: String },
+}
+
+impl JobOutcome {
+    /// Bridge the legacy `Result<Option<String>, String>` shape into a typed
+    /// outcome. `Ok(Some(out))` = `Done { output_path: out }`, `Ok(None)` =
+    /// `Done` with empty path (run_operation variants that return Ok(None)),
+    /// `Err("CANCELLED")` = `Cancelled`, `Err("__DONE__")` = `DoneEmitted`,
+    /// anything else = `Error`.
+    pub(crate) fn from_result(result: Result<Option<String>, String>) -> Self {
+        match result {
+            Ok(Some(out)) => JobOutcome::Done { output_path: out },
+            Ok(None) => JobOutcome::Done {
+                output_path: String::new(),
+            },
+            Err(msg) if msg == "CANCELLED" => JobOutcome::Cancelled { remove_path: None },
+            Err(msg) if msg == "__DONE__" => JobOutcome::DoneEmitted,
+            Err(msg) => JobOutcome::Error { message: msg },
+        }
+    }
+}
+
+/// Single finalizer for background jobs. Writes `fade.log` and emits the
+/// matching IPC event for every terminal state. Both `convert_file` and
+/// `run_operation` route through here so log and event behavior cannot
+/// silently diverge (F-05) and so a future sentinel string cannot fall
+/// through to `job-error` because one path forgot to match it (F-29).
+fn finalize_job(window: &Window, job_id: String, input_path: &str, outcome: JobOutcome) {
+    match outcome {
+        JobOutcome::Done { output_path } => {
+            write_fade_log(&format_log_entry(&job_id, input_path, "done", &output_path));
+            let _ = window.emit(
+                "job-done",
+                JobDone {
+                    job_id,
+                    output_path,
+                },
+            );
+        }
+        JobOutcome::DoneEmitted => {
+            write_fade_log(&format_log_entry(&job_id, input_path, "done", ""));
+        }
+        JobOutcome::Cancelled { remove_path } => {
+            if let Some(p) = remove_path.as_deref() {
+                let _ = std::fs::remove_file(p);
+            }
+            write_fade_log(&format_log_entry(&job_id, input_path, "cancelled", ""));
+            let _ = window.emit("job-cancelled", JobCancelled { job_id });
+        }
+        JobOutcome::Error { message } => {
+            let first_line = message.lines().next().unwrap_or("").to_string();
+            write_fade_log(&format_log_entry(
+                &job_id,
+                input_path,
+                "error",
+                &first_line,
+            ));
+            let _ = window.emit(
+                "job-error",
+                JobError {
+                    job_id,
+                    message,
+                },
+            );
+        }
+    }
+}
+
 #[derive(Deserialize, Clone)]
 pub struct ConvertOptions {
     pub output_format: String,
@@ -700,49 +784,16 @@ fn convert_file(
             map.remove(&job_id);
         }
 
-        let output_path_clone = output_path.clone();
-        match result {
-            Ok(()) => {
-                write_fade_log(&format_log_entry(
-                    &job_id,
-                    &input_path,
-                    "done",
-                    &output_path,
-                ));
-                let _ = window.emit(
-                    "job-done",
-                    JobDone {
-                        job_id,
-                        output_path,
-                    },
-                );
-            }
-            Err(msg) if msg == "CANCELLED" => {
-                let _ = std::fs::remove_file(&output_path_clone);
-                write_fade_log(&format_log_entry(&job_id, &input_path, "cancelled", ""));
-                let _ = window.emit("job-cancelled", JobCancelled { job_id });
-            }
-            Err(msg) if msg == "__DONE__" => {
-                // job-done was emitted directly (e.g. archive extract with folder path)
-                write_fade_log(&format_log_entry(&job_id, &input_path, "done", ""));
-            }
-            Err(msg) => {
-                let first_line = msg.lines().next().unwrap_or("").to_string();
-                write_fade_log(&format_log_entry(
-                    &job_id,
-                    &input_path,
-                    "error",
-                    &first_line,
-                ));
-                let _ = window.emit(
-                    "job-error",
-                    JobError {
-                        job_id,
-                        message: msg,
-                    },
-                );
-            }
+        let mut outcome = JobOutcome::from_result(result.map(|()| Some(output_path.clone())));
+        // Convert-file owns its output; remove the partial file on cancel so
+        // a re-run cannot pick up a half-encoded output.
+        if let JobOutcome::Cancelled {
+            ref mut remove_path,
+        } = outcome
+        {
+            *remove_path = Some(output_path.clone());
         }
+        finalize_job(&window, job_id, &input_path, outcome);
     });
 
     Ok(())
@@ -1051,6 +1102,48 @@ enum OperationPayload {
         trim_start: Option<f64>,
         trim_end: Option<f64>,
     },
+}
+
+impl OperationPayload {
+    /// Return the primary input path for logging. `Merge` uses the first
+    /// input, `ReplaceAudio` uses the video track — picking either is a
+    /// judgment call, but a log entry with an empty path is strictly worse
+    /// than one with a representative one.
+    pub(crate) fn primary_input(&self) -> &str {
+        use OperationPayload::*;
+        match self {
+            Rewrap { input_path, .. }
+            | Extract { input_path, .. }
+            | Cut { input_path, .. }
+            | Split { input_path, .. }
+            | AudioOffset { input_path, .. }
+            | AudioNormalize { input_path, .. }
+            | SilenceRemove { input_path, .. }
+            | Conform { input_path, .. }
+            | RemoveAudio { input_path, .. }
+            | RemoveVideo { input_path, .. }
+            | MetadataStrip { input_path, .. }
+            | Loop { input_path, .. }
+            | RotateFlip { input_path, .. }
+            | Reverse { input_path, .. }
+            | Speed { input_path, .. }
+            | Fade { input_path, .. }
+            | Deinterlace { input_path, .. }
+            | Denoise { input_path, .. }
+            | Thumbnail { input_path, .. }
+            | ContactSheet { input_path, .. }
+            | FrameExport { input_path, .. }
+            | Watermark { input_path, .. }
+            | Volume { input_path, .. }
+            | ChannelTools { input_path, .. }
+            | PadSilence { input_path, .. }
+            | ChromaKey { input_path, .. } => input_path,
+            ReplaceAudio { video_path, .. } => video_path,
+            Merge { input_paths, .. } => {
+                input_paths.first().map(String::as_str).unwrap_or("")
+            }
+        }
+    }
 }
 
 /// Run a mechanical video/audio operation.
@@ -1558,38 +1651,9 @@ fn run_operation(
             map.remove(&job_id);
         }
 
-        match result {
-            Ok(Some(out)) => {
-                let _ = window.emit(
-                    "job-done",
-                    JobDone {
-                        job_id,
-                        output_path: out,
-                    },
-                );
-            }
-            Ok(None) => {
-                let _ = window.emit(
-                    "job-done",
-                    JobDone {
-                        job_id,
-                        output_path: String::new(),
-                    },
-                );
-            }
-            Err(msg) if msg == "CANCELLED" => {
-                let _ = window.emit("job-cancelled", JobCancelled { job_id });
-            }
-            Err(msg) => {
-                let _ = window.emit(
-                    "job-error",
-                    JobError {
-                        job_id,
-                        message: msg,
-                    },
-                );
-            }
-        }
+        let input_path = operation.primary_input().to_string();
+        let outcome = JobOutcome::from_result(result);
+        finalize_job(&window, job_id, &input_path, outcome);
     });
 
     Ok(())
@@ -2861,5 +2925,103 @@ mod tests {
     fn url_scheme_rejects_oversized() {
         let long = format!("https://example.com/{}", "a".repeat(OPEN_URL_MAX_LEN));
         assert!(validate_url_scheme(&long).is_err());
+    }
+
+    // ── JobOutcome ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn job_outcome_maps_ok_some_to_done_with_path() {
+        let outcome = JobOutcome::from_result(Ok(Some("/out/x.mp4".to_string())));
+        match outcome {
+            JobOutcome::Done { output_path } => assert_eq!(output_path, "/out/x.mp4"),
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn job_outcome_maps_ok_none_to_done_with_empty_path() {
+        let outcome = JobOutcome::from_result(Ok(None));
+        match outcome {
+            JobOutcome::Done { output_path } => assert_eq!(output_path, ""),
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn job_outcome_maps_cancelled_sentinel() {
+        let outcome = JobOutcome::from_result(Err("CANCELLED".to_string()));
+        match outcome {
+            JobOutcome::Cancelled { remove_path } => assert!(remove_path.is_none()),
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn job_outcome_maps_done_emitted_sentinel() {
+        let outcome = JobOutcome::from_result(Err("__DONE__".to_string()));
+        assert!(matches!(outcome, JobOutcome::DoneEmitted));
+    }
+
+    #[test]
+    fn job_outcome_maps_generic_error_message() {
+        // Regression for F-29: arbitrary error strings route to the Error
+        // variant, never silently absorbed as a sentinel.
+        let outcome = JobOutcome::from_result(Err("ffmpeg exited 1".to_string()));
+        match outcome {
+            JobOutcome::Error { message } => assert_eq!(message, "ffmpeg exited 1"),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn job_outcome_does_not_partial_match_sentinel_substrings() {
+        // Cancel sentinel is an exact match — a message containing
+        // "CANCELLED" as a substring (e.g. from an ffmpeg stderr line)
+        // must route to Error, not Cancelled.
+        let outcome =
+            JobOutcome::from_result(Err("ffmpeg: CANCELLED by signal".to_string()));
+        assert!(matches!(outcome, JobOutcome::Error { .. }));
+
+        let outcome = JobOutcome::from_result(Err("prefix __DONE__ suffix".to_string()));
+        assert!(matches!(outcome, JobOutcome::Error { .. }));
+    }
+
+    // ── OperationPayload::primary_input ───────────────────────────────────────
+
+    #[test]
+    fn operation_primary_input_returns_input_path_for_standard_variants() {
+        let op = OperationPayload::Rewrap {
+            input_path: "/in/a.mkv".to_string(),
+            output_path: "/out/a.mp4".to_string(),
+        };
+        assert_eq!(op.primary_input(), "/in/a.mkv");
+    }
+
+    #[test]
+    fn operation_primary_input_returns_video_path_for_replace_audio() {
+        let op = OperationPayload::ReplaceAudio {
+            video_path: "/in/video.mp4".to_string(),
+            audio_path: "/in/track.wav".to_string(),
+            output_path: "/out/combined.mp4".to_string(),
+        };
+        assert_eq!(op.primary_input(), "/in/video.mp4");
+    }
+
+    #[test]
+    fn operation_primary_input_returns_first_input_for_merge() {
+        let op = OperationPayload::Merge {
+            input_paths: vec!["/in/a.mp4".to_string(), "/in/b.mp4".to_string()],
+            output_path: "/out/joined.mp4".to_string(),
+        };
+        assert_eq!(op.primary_input(), "/in/a.mp4");
+    }
+
+    #[test]
+    fn operation_primary_input_empty_merge_returns_empty_str() {
+        let op = OperationPayload::Merge {
+            input_paths: vec![],
+            output_path: "/out/joined.mp4".to_string(),
+        };
+        assert_eq!(op.primary_input(), "");
     }
 }
