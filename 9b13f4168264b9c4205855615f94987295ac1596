@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: add Blender headless backend for USD/USDZ/Alembic/Blend conversion
+deferred: STEP/IGES still todo (require FreeCAD/different toolchain)
+fragile: blender_convert.py script path resolution at runtime
+ci: unknown
