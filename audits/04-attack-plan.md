@@ -215,13 +215,14 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Depends on:** B8 (lands cleaner post-consolidation).
 - **Status:** DONE — commit `137e4bc`. F-02: extracted `kill_if_cancelled(processes, job_id, cancelled)` helper, called immediately after `run_ffmpeg` inserts the Child into the processes map. Closes the window where `cancel_job` set the flag but found no child to kill — the natural unwind (stdout EOF → stderr drain → wait → flag check → CANCELLED) still owns the rest of the teardown. F-11: new `FilmstripCancels` tauri-managed state (`HashMap<id, Arc<AtomicBool>>`); `get_filmstrip` registers a flag on entry (flipping any predecessor for the same id so stale threads exit), checks the flag both before each nice+ffmpeg spawn and again after the blocking `.output()` returns (last decoded frame is dropped rather than emitted for a stale id), and removes the slot only when still owned via `Arc::ptr_eq`. New `cancel_filmstrip(id)` command wired into `QueueManager.removeItem` (both `id` and `id-bg`) and `Timeline`'s filmstrip `$effect` cleanup. 7 new unit tests (3 for `kill_if_cancelled`, 4 for `register_cancel`/`clear_cancel_if_owned`). 201 rust + 40 vitest pass; clippy `-D warnings` clean; cargo audit clean.
 
-### B10 — `fix(concurrency): batch fanout semaphore`
+### B10 — `fix(concurrency): batch fanout semaphore` — **DONE** (83bc4d3)
 - **Findings:** F-04
 - **Rationale:** Single invariant; can land frontend-only (`p-limit`) without touching Rust.
 - **Effort:** S
 - **Risk:** LOW
 - **Test:** Queue 100 items, observe ≤ N concurrent ffmpegs in `ps`; assert progress events still arrive.
 - **Rollback:** trivial.
+- **Status:** DONE — commit `83bc4d3`. Dropped `p-limit` in favor of a 40-line dependency-free `createLimiter(n)` in `src/lib/concurrency.js` (`run / active / queued`). Wired into `App.svelte::convertFiles` with cap = `defaultBatchConcurrency()` = `navigator.hardwareConcurrency` clamped to `[1, 8]` (ffmpeg is already multithreaded; more concurrent encodes thrash the CPU regardless of core count). **Key design point:** `convert_file` returns `Ok(())` immediately after `thread::spawn`, so wrapping the invoke promise would not throttle ffmpeg. Instead a per-job deferred in `batchCompletions: Map<jobId, resolve>` parks the slot until the matching `job-done`/`job-error`/`job-cancelled` event fires — resolver wired into all three event listeners. Re-check at slot-acquire time skips tasks whose item was cancelled/paused/cleared while queued. `markConverting(item)` now moves from dispatch-time to slot-acquire-time, so queued items stay 'pending' visually until a worker actually picks them up. 7 new vitest cases (concurrency cap under contention, serial-fallback for invalid limits, slot recovery after rejection, FIFO processing, result pass-through, `defaultBatchConcurrency` clamping). 201 rust + 47 vitest pass (was 40 — +7 new); clippy `-D warnings` clean; cargo audit unchanged baseline.
 
 ### B11 — `refactor(executors): unify convert_file + run_operation finalizers`
 - **Findings:** F-05, F-29
