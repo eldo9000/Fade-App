@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B14 — multi-stream extract collapse; ExtractMulti operation variant
+deferred: interactive tauri dev smoke test; vitest extract tests gate on button selector
+fragile: run_multi shares run_ffmpeg progress path — any change to progress protocol affects both
+ci: unknown
