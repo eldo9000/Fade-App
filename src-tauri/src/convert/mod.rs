@@ -14,6 +14,7 @@ pub mod email;
 pub mod font;
 pub mod image;
 pub mod model;
+pub mod model_blender;
 pub mod notebook;
 pub mod subtitle;
 pub mod timeline;

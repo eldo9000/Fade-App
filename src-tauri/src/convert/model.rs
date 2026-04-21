@@ -2,8 +2,13 @@
 //! Library CLI). Follows the same shape as `convert::image` since assimp,
 //! like ImageMagick, doesn't emit progress — it runs to completion and we
 //! capture stderr for failure diagnosis.
+//!
+//! Formats that assimp cannot handle (USD, USDZ, Alembic, Blender native)
+//! are delegated to `model_blender::run` via `needs_blender`.
 
 use crate::args::build_assimp_args;
+use crate::args::model_blender::needs_blender;
+use crate::convert::model_blender;
 use crate::{truncate_stderr, ConvertOptions, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -22,6 +27,16 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    let input_ext = std::path::Path::new(input)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let output_ext = opts.output_format.as_str();
+
+    if needs_blender(input_ext, output_ext) {
+        return model_blender::run(window, job_id, input, output, opts, processes, cancelled);
+    }
+
     let _ = window.emit(
         "job-progress",
         JobProgress {

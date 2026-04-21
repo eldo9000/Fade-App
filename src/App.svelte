@@ -807,11 +807,19 @@
 
   // ── Browse ─────────────────────────────────────────────────────────────────
 
+  let _proxyAddTarget = null;
+
   function onBrowse() { fileInput?.click(); }
+
+  function onProxyBrowse(folderId) {
+    _proxyAddTarget = folderId;
+    fileInput?.click();
+  }
 
   function onFileInputChange(e) {
     const paths = Array.from(e.target.files ?? []).map(f => f.path ?? f.name);
-    if (paths.length) queueManagerEl?.addFiles(paths);
+    if (paths.length) queueManagerEl?.addFiles(paths, _proxyAddTarget);
+    _proxyAddTarget = null;
     e.target.value = '';
   }
 
@@ -1182,10 +1190,10 @@
       // FBX write is ASCII-only via assimp (binary FBX needs Autodesk SDK).
       { id: 'fbx', label: 'FBX (ASCII)' },
       // Pro animation / CAD — placeholder scaffolding.
-      { id: 'usd',   label: 'USD',       todo: true, preview: true },
-      { id: 'usdz',  label: 'USDZ',      todo: true, preview: true },
-      { id: 'abc',   label: 'Alembic',   todo: true, preview: true },
-      { id: 'blend', label: 'Blender',   todo: true, preview: true },
+      { id: 'usd',   label: 'USD',       preview: true },
+      { id: 'usdz',  label: 'USDZ',      preview: true },
+      { id: 'abc',   label: 'Alembic',   preview: true },
+      { id: 'blend', label: 'Blender',   preview: true },
       { id: 'step',  label: 'STEP',      todo: true, preview: true },
       { id: 'iges',  label: 'IGES',      todo: true, preview: true },
     ]},
@@ -1645,6 +1653,7 @@
         {onSelectionChange}
         compact={queueCompact}
         showExtColumn={settings.fileTypeColumn}
+        brightFiletype={settings.brightFiletype}
       />
 
       <!-- Hidden folder picker input -->
@@ -2025,23 +2034,28 @@
                   <input type="checkbox" bind:checked={settings.fileTypeColumn}
                          class="w-3.5 h-3.5 accent-[var(--accent)]" />
                 </label>
+                <!-- Full bright filetype — off = ext renders in dimmed gray -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Full bright filetype</span>
+                  <input type="checkbox" bind:checked={settings.brightFiletype}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
               </div>
 
               <!-- Section: Data -->
-              <div class="px-4 pt-3 pb-4 flex items-center justify-between gap-2">
-                <div class="flex items-center justify-between w-full">
-                  <!-- svelte-ignore a11y_missing_attribute -->
-                  <a onclick={() => { settingsOpen = false; aboutOpen = true; }}
-                     class="text-[11px] text-blue-400 underline decoration-blue-400/50 hover:decoration-blue-400 cursor-pointer transition-all select-none">
-                    About
-                  </a>
-                  <span class="text-[10px] text-[var(--text-secondary)]/60 select-none">Fade{appVersion ? ` v${appVersion}` : ''}</span>
-                </div>
+              <div class="px-4 pt-3 pb-4 flex items-center gap-3 flex-nowrap">
+                <!-- svelte-ignore a11y_missing_attribute -->
+                <a onclick={() => { settingsOpen = false; aboutOpen = true; }}
+                   class="text-[11px] text-blue-400 underline decoration-blue-400/50 hover:decoration-blue-400 cursor-pointer transition-all select-none shrink-0">
+                  About
+                </a>
+                <span class="text-[10px] text-[var(--text-secondary)]/60 select-none shrink-0">Fade{appVersion ? ` v${appVersion}` : ''}</span>
+                <div class="flex-1"></div>
                 <button
                   onclick={() => { queueManagerEl?.clearPreloadCache(); }}
-                  class="px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
+                  class="shrink-0 px-2.5 py-1 rounded text-[11px] border border-[var(--border)]
                          text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
-                         transition-colors">
+                         transition-colors whitespace-nowrap">
                   Clear Cache
                 </button>
               </div>
@@ -2258,32 +2272,7 @@
                  and output-routing logic happens in a follow-up. -->
             {@const bf = selectedItem}
             {@const opts = bf.batchOptions}
-            <div class="w-full h-full flex select-none">
-              <!-- ── Drop zone (left rail) — hit-tested via data-folder-drop ── -->
-              <div
-                data-folder-drop={bf.id}
-                role="region"
-                aria-label="Drop files into this proxy node"
-                class="shrink-0 w-44 m-4 mr-0 rounded-2xl border-2 border-dashed
-                       flex flex-col items-center justify-center gap-3 p-4 text-center
-                       transition-all duration-150
-                       {draggingFileId
-                         ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)]'
-                         : 'border-white/15 bg-white/[0.04] text-white/45'}"
-              >
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="17 8 12 3 7 8"/>
-                  <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                <p class="text-[12px] font-medium leading-tight">Drop files here</p>
-                <p class="text-[10px] leading-snug opacity-70">
-                  Drag from the queue on the left into this zone to add them to <span class="font-semibold">{bf.name}</span>.
-                </p>
-              </div>
-
-              <div class="flex-1 min-w-0 overflow-y-auto px-10 py-8">
+            <div class="w-full h-full select-none overflow-y-auto px-10 py-8">
               <div class="max-w-2xl mx-auto flex flex-col gap-6">
                 <!-- Header -->
                 <div class="flex items-center gap-3">
@@ -2304,6 +2293,20 @@
                     {queue.filter(q => q.kind === 'file' && q.parentId === bf.id).length} files
                   </span>
                 </div>
+                <!-- Add files button -->
+                <button
+                  onclick={() => onProxyBrowse(bf.id)}
+                  class="self-start flex items-center gap-2 px-3 py-1.5 rounded border border-[var(--border)]
+                         text-[12px] text-white/70 hover:border-[var(--accent)] hover:text-[var(--accent)]
+                         transition-colors"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  Add files / folder
+                </button>
                 <!-- Quick tutorial — sits right below the rename input -->
                 <div class="-mt-3 rounded-md border border-white/10 bg-white/[0.03] px-4 py-3">
                   <p class="text-[11px] uppercase tracking-wider text-white/35 font-semibold mb-1.5">
@@ -2411,7 +2414,6 @@
                 <p class="text-[10px] text-white/25 italic">
                   Folder-level rendering is not wired yet — these controls will drive batch output once implemented.
                 </p>
-              </div>
               </div>
             </div>
           {:else if selectedItem?.mediaType === 'image' && liveSrc}
