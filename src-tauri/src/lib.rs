@@ -106,6 +106,18 @@ impl JobOutcome {
     }
 }
 
+/// Convert a `run_operation`-dispatched `Result<(), String>` to a typed
+/// `JobOutcome`. Each dispatch arm knows its `output_path`; the `Result`
+/// arm determines the terminal state. `Err("CANCELLED")` is the single
+/// cancellation sentinel emitted by `run_ffmpeg` in `operations/mod.rs`.
+fn op_result(result: Result<(), String>, output_path: String) -> JobOutcome {
+    match result {
+        Ok(()) => JobOutcome::Done { output_path },
+        Err(msg) if msg == "CANCELLED" => JobOutcome::Cancelled { remove_path: None },
+        Err(msg) => JobOutcome::Error { message: msg },
+    }
+}
+
 /// Single finalizer for background jobs. Writes `fade.log` and emits the
 /// matching IPC event for every terminal state. Both `convert_file` and
 /// `run_operation` route through here so log and event behavior cannot
@@ -1300,26 +1312,25 @@ fn run_operation(
     let cancellations = Arc::clone(&state.cancellations);
 
     std::thread::spawn(move || {
-        let result: Result<Option<String>, String> = match &operation {
+        let outcome: JobOutcome = match &operation {
             OperationPayload::Rewrap {
                 input_path,
                 output_path,
-            } => operations::rewrap::run(
+            } => op_result(operations::rewrap::run(
                 &window,
                 &job_id,
                 input_path,
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Extract {
                 input_path,
                 stream_index,
                 stream_type,
                 output_path,
-            } => operations::extract::run(
+            } => op_result(operations::extract::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1328,20 +1339,21 @@ fn run_operation(
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::ExtractMulti { input_path, streams } => {
-                let primary = streams.first().map(|s| s.output_path.clone());
-                operations::extract::run_multi(
-                    &window,
-                    &job_id,
-                    input_path,
-                    streams,
-                    Arc::clone(&processes),
-                    Arc::clone(&cancelled),
+                let primary = streams.first().map(|s| s.output_path.clone()).unwrap_or_default();
+                op_result(
+                    operations::extract::run_multi(
+                        &window,
+                        &job_id,
+                        input_path,
+                        streams,
+                        Arc::clone(&processes),
+                        Arc::clone(&cancelled),
+                    ),
+                    primary,
                 )
-                .map(|_| primary)
             }
 
             OperationPayload::Cut {
@@ -1349,7 +1361,7 @@ fn run_operation(
                 start_secs,
                 end_secs,
                 output_path,
-            } => operations::cut::run(
+            } => op_result(operations::cut::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1358,14 +1370,13 @@ fn run_operation(
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Split {
                 input_path,
                 timecodes_secs,
                 output_dir,
-            } => operations::split::run(
+            } => op_result(operations::split::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1373,14 +1384,13 @@ fn run_operation(
                 output_dir,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_dir.clone())),
+            ), output_dir.clone()),
 
             OperationPayload::AudioOffset {
                 input_path,
                 offset_ms,
                 output_path,
-            } => operations::audio_offset::run(
+            } => op_result(operations::audio_offset::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1388,14 +1398,13 @@ fn run_operation(
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::ReplaceAudio {
                 video_path,
                 audio_path,
                 output_path,
-            } => operations::replace_audio::run(
+            } => op_result(operations::replace_audio::run(
                 &window,
                 &job_id,
                 video_path,
@@ -1403,21 +1412,19 @@ fn run_operation(
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Merge {
                 input_paths,
                 output_path,
-            } => operations::merge::run(
+            } => op_result(operations::merge::run(
                 &window,
                 &job_id,
                 input_paths,
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::AudioNormalize {
                 input_path,
@@ -1427,7 +1434,7 @@ fn run_operation(
                 target_tp,
                 target_lra,
                 linear,
-            } => operations::analysis::audio_norm::run(
+            } => op_result(operations::analysis::audio_norm::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1439,8 +1446,7 @@ fn run_operation(
                 *linear,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::SilenceRemove {
                 input_path,
@@ -1448,7 +1454,7 @@ fn run_operation(
                 threshold_db,
                 min_silence_s,
                 pad_ms,
-            } => operations::silence_remove::run(
+            } => op_result(operations::silence_remove::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1458,41 +1464,38 @@ fn run_operation(
                 *pad_ms,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::RemoveAudio {
                 input_path,
                 output_path,
-            } => operations::remove_audio::run(
+            } => op_result(operations::remove_audio::run(
                 &window,
                 &job_id,
                 input_path,
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::RemoveVideo {
                 input_path,
                 output_path,
-            } => operations::remove_video::run(
+            } => op_result(operations::remove_video::run(
                 &window,
                 &job_id,
                 input_path,
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::MetadataStrip {
                 input_path,
                 output_path,
                 mode,
                 title_value,
-            } => operations::metadata_strip::run(
+            } => op_result(operations::metadata_strip::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1501,14 +1504,13 @@ fn run_operation(
                 title_value.as_deref(),
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Loop {
                 input_path,
                 output_path,
                 count,
-            } => operations::loop_op::run(
+            } => op_result(operations::loop_op::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1516,14 +1518,13 @@ fn run_operation(
                 *count,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::RotateFlip {
                 input_path,
                 output_path,
                 mode,
-            } => operations::video_filters::run_rotate_flip(
+            } => op_result(operations::video_filters::run_rotate_flip(
                 &window,
                 &job_id,
                 input_path,
@@ -1531,27 +1532,25 @@ fn run_operation(
                 mode,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Reverse {
                 input_path,
                 output_path,
-            } => operations::video_filters::run_reverse(
+            } => op_result(operations::video_filters::run_reverse(
                 &window,
                 &job_id,
                 input_path,
                 output_path,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Speed {
                 input_path,
                 output_path,
                 rate,
-            } => operations::video_filters::run_speed(
+            } => op_result(operations::video_filters::run_speed(
                 &window,
                 &job_id,
                 input_path,
@@ -1559,15 +1558,14 @@ fn run_operation(
                 *rate,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Fade {
                 input_path,
                 output_path,
                 fade_in,
                 fade_out,
-            } => operations::video_filters::run_fade(
+            } => op_result(operations::video_filters::run_fade(
                 &window,
                 &job_id,
                 input_path,
@@ -1576,14 +1574,13 @@ fn run_operation(
                 *fade_out,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Deinterlace {
                 input_path,
                 output_path,
                 mode,
-            } => operations::video_filters::run_deinterlace(
+            } => op_result(operations::video_filters::run_deinterlace(
                 &window,
                 &job_id,
                 input_path,
@@ -1591,14 +1588,13 @@ fn run_operation(
                 mode,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Denoise {
                 input_path,
                 output_path,
                 preset,
-            } => operations::video_filters::run_denoise(
+            } => op_result(operations::video_filters::run_denoise(
                 &window,
                 &job_id,
                 input_path,
@@ -1606,15 +1602,14 @@ fn run_operation(
                 preset,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Thumbnail {
                 input_path,
                 output_path,
                 time_spec,
                 format,
-            } => operations::frame_ops::run_thumbnail(
+            } => op_result(operations::frame_ops::run_thumbnail(
                 &window,
                 &job_id,
                 input_path,
@@ -1623,8 +1618,7 @@ fn run_operation(
                 format,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::ContactSheet {
                 input_path,
@@ -1632,7 +1626,7 @@ fn run_operation(
                 cols,
                 rows,
                 frames,
-            } => operations::frame_ops::run_contact_sheet(
+            } => op_result(operations::frame_ops::run_contact_sheet(
                 &window,
                 &job_id,
                 input_path,
@@ -1642,8 +1636,7 @@ fn run_operation(
                 *frames,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::FrameExport {
                 input_path,
@@ -1651,7 +1644,7 @@ fn run_operation(
                 mode,
                 value,
                 format,
-            } => operations::frame_ops::run_frame_export(
+            } => op_result(operations::frame_ops::run_frame_export(
                 &window,
                 &job_id,
                 input_path,
@@ -1661,8 +1654,7 @@ fn run_operation(
                 format,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_dir.clone())),
+            ), output_dir.clone()),
 
             OperationPayload::Watermark {
                 input_path,
@@ -1671,7 +1663,7 @@ fn run_operation(
                 corner,
                 opacity,
                 scale_pct,
-            } => operations::frame_ops::run_watermark(
+            } => op_result(operations::frame_ops::run_watermark(
                 &window,
                 &job_id,
                 input_path,
@@ -1682,14 +1674,13 @@ fn run_operation(
                 *scale_pct,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Volume {
                 input_path,
                 output_path,
                 gain_db,
-            } => operations::audio_filters::run_volume(
+            } => op_result(operations::audio_filters::run_volume(
                 &window,
                 &job_id,
                 input_path,
@@ -1697,14 +1688,13 @@ fn run_operation(
                 *gain_db,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::ChannelTools {
                 input_path,
                 output_path,
                 mode,
-            } => operations::audio_filters::run_channel_tools(
+            } => op_result(operations::audio_filters::run_channel_tools(
                 &window,
                 &job_id,
                 input_path,
@@ -1712,15 +1702,14 @@ fn run_operation(
                 mode,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::PadSilence {
                 input_path,
                 output_path,
                 head_s,
                 tail_s,
-            } => operations::audio_filters::run_pad_silence(
+            } => op_result(operations::audio_filters::run_pad_silence(
                 &window,
                 &job_id,
                 input_path,
@@ -1729,8 +1718,7 @@ fn run_operation(
                 *tail_s,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::Conform {
                 input_path,
@@ -1741,7 +1729,7 @@ fn run_operation(
                 fps_algo,
                 scale_algo,
                 dither,
-            } => operations::conform::run(
+            } => op_result(operations::conform::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1754,8 +1742,7 @@ fn run_operation(
                 *dither,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
 
             OperationPayload::ChromaKey {
                 input_path,
@@ -1770,7 +1757,7 @@ fn run_operation(
                 output_target,
                 trim_start,
                 trim_end,
-            } => operations::chroma_key::run(
+            } => op_result(operations::chroma_key::run(
                 &window,
                 &job_id,
                 input_path,
@@ -1787,8 +1774,7 @@ fn run_operation(
                 *trim_end,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            )
-            .map(|_| Some(output_path.clone())),
+            ), output_path.clone()),
         };
 
         {
@@ -1797,7 +1783,6 @@ fn run_operation(
         }
 
         let input_path = operation.primary_input().to_string();
-        let outcome = JobOutcome::from_result(result);
         finalize_job(&window, job_id, &input_path, outcome);
     });
 
@@ -3203,6 +3188,54 @@ mod tests {
         assert!(matches!(outcome, JobOutcome::Error { .. }));
 
         let outcome = JobOutcome::from_result(Err("prefix __DONE__ suffix".to_string()));
+        assert!(matches!(outcome, JobOutcome::Error { .. }));
+    }
+
+    // ── op_result — terminal-emission invariant ──────────────────────────────
+    //
+    // Every `run_operation` dispatch arm calls `op_result(result, output_path)`.
+    // `op_result` is total and always returns exactly one of Done/Cancelled/Error,
+    // so the terminal-emission invariant (exactly one of job-done/job-error/
+    // job-cancelled per dispatched job_id) is compile-enforced for all 29
+    // OperationPayload variants.  The exhaustive `match &operation` in
+    // `run_operation` guarantees no variant escapes the dispatch without routing
+    // through `op_result` → `finalize_job`.
+
+    #[test]
+    fn op_result_ok_produces_done_with_output_path() {
+        let outcome = op_result(Ok(()), "/out/x.mp4".to_string());
+        match outcome {
+            JobOutcome::Done { output_path } => assert_eq!(output_path, "/out/x.mp4"),
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn op_result_cancelled_sentinel_produces_cancelled_no_remove() {
+        // The single source of Err("CANCELLED") is run_ffmpeg in operations/mod.rs.
+        let outcome = op_result(Err("CANCELLED".to_string()), "/out/x.mp4".to_string());
+        match outcome {
+            JobOutcome::Cancelled { remove_path } => assert!(remove_path.is_none()),
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn op_result_arbitrary_error_produces_error_variant() {
+        let outcome = op_result(Err("ffmpeg exited 1".to_string()), "/out/x.mp4".to_string());
+        match outcome {
+            JobOutcome::Error { message } => assert_eq!(message, "ffmpeg exited 1"),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn op_result_cancelled_is_exact_match_not_substring() {
+        // "CANCELLED" embedded in a longer error message must not become Cancelled.
+        let outcome = op_result(
+            Err("ffmpeg: CANCELLED by signal".to_string()),
+            "/out/x.mp4".to_string(),
+        );
         assert!(matches!(outcome, JobOutcome::Error { .. }));
     }
 
