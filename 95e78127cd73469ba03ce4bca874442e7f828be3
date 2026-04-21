@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B17 — ts-rs codegen for IPC boundary (F-28, F-27)
+deferred: AudioOffset.offset_ms i64→bigint drift surfaced but not fixed; AudioOffset frontend uses number — micro-patch candidate
+fragile: none — ts-rs TS derives are additive; tsc gate is new and will catch future Rust renames
+ci: unknown
