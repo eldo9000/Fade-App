@@ -308,24 +308,38 @@
 
     markConverting(selectedItem);
 
-    for (const s of targets) {
-      const ext = s.stream_type === 'video'
-        ? (s.codec === 'h264' ? 'h264' : s.codec === 'hevc' ? 'hevc' : 'mkv')
-        : s.stream_type === 'audio'
-        ? (s.codec === 'aac' ? 'aac' : s.codec === 'mp3' ? 'mp3' : s.codec === 'opus' ? 'opus' : s.codec === 'flac' ? 'flac' : 'mka')
-        : s.stream_type === 'subtitle'
-        ? (s.codec === 'subrip' ? 'srt' : s.codec === 'ass' || s.codec === 'ssa' ? 'ass' : s.codec === 'webvtt' ? 'vtt' : 'mks')
-        : 'bin';
-      const suffix = targets.length > 1
-        ? `extract_${s.stream_type}_${s.index}`
-        : `extract_${s.stream_type}`;
-      const outPath = expectedOutputPath(selectedItem, ext, suffix, outputDir, outputSeparator);
-      const jobId = targets.length === 1 || s === targets[targets.length - 1]
-        ? selectedItem.id
-        : `${selectedItem.id}__extract_${s.index}`;
+    const streamExt = (s) => s.stream_type === 'video'
+      ? (s.codec === 'h264' ? 'h264' : s.codec === 'hevc' ? 'hevc' : 'mkv')
+      : s.stream_type === 'audio'
+      ? (s.codec === 'aac' ? 'aac' : s.codec === 'mp3' ? 'mp3' : s.codec === 'opus' ? 'opus' : s.codec === 'flac' ? 'flac' : 'mka')
+      : s.stream_type === 'subtitle'
+      ? (s.codec === 'subrip' ? 'srt' : s.codec === 'ass' || s.codec === 'ssa' ? 'ass' : s.codec === 'webvtt' ? 'vtt' : 'mks')
+      : 'bin';
+
+    if (targets.length > 1) {
+      const streams = targets.map(s => ({
+        index: s.index,
+        stream_type: s.stream_type,
+        output_path: expectedOutputPath(selectedItem, streamExt(s), `extract_${s.stream_type}_${s.index}`, outputDir, outputSeparator),
+      }));
       try {
         await invoke('run_operation', {
-          jobId,
+          jobId: selectedItem.id,
+          operation: {
+            type: 'extract_multi',
+            input_path: selectedItem.path,
+            streams,
+          },
+        });
+      } catch (err) {
+        setStatus?.(`Multi-stream extract failed: ${err}`, 'error');
+      }
+    } else {
+      const s = targets[0];
+      const outPath = expectedOutputPath(selectedItem, streamExt(s), `extract_${s.stream_type}`, outputDir, outputSeparator);
+      try {
+        await invoke('run_operation', {
+          jobId: selectedItem.id,
           operation: {
             type: 'extract',
             input_path: selectedItem.path,

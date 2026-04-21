@@ -932,6 +932,10 @@ enum OperationPayload {
         stream_type: String,
         output_path: String,
     },
+    ExtractMulti {
+        input_path: String,
+        streams: Vec<operations::extract::ExtractStreamSpec>,
+    },
     Cut {
         input_path: String,
         start_secs: Option<f64>,
@@ -1114,6 +1118,7 @@ impl OperationPayload {
         match self {
             Rewrap { input_path, .. }
             | Extract { input_path, .. }
+            | ExtractMulti { input_path, .. }
             | Cut { input_path, .. }
             | Split { input_path, .. }
             | AudioOffset { input_path, .. }
@@ -1198,6 +1203,19 @@ fn run_operation(
                 Arc::clone(&cancelled),
             )
             .map(|_| Some(output_path.clone())),
+
+            OperationPayload::ExtractMulti { input_path, streams } => {
+                let primary = streams.first().map(|s| s.output_path.clone());
+                operations::extract::run_multi(
+                    &window,
+                    &job_id,
+                    input_path,
+                    streams,
+                    Arc::clone(&processes),
+                    Arc::clone(&cancelled),
+                )
+                .map(|_| primary)
+            }
 
             OperationPayload::Cut {
                 input_path,
