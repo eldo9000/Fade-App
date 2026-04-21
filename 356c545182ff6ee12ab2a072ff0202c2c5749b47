@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: B12 landed — get_waveform streams PCM into per-bucket RMS/ZCR accumulator instead of collecting full f32le stream; server-side bucket cap tightened to 1600 and frontend call in Timeline.svelte lowered from 4000.
+deferred: interactive tauri dev smoke — streaming + byte-boundary logic covered by unit tests; user to verify on next launch.
+fragile: probe_duration probe is inline with ffmpeg decode — if duration probe fails on an unusual container, the fallback hint (120s) silently collapses long files into a single bucket at the end.
+ci: unknown
