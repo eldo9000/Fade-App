@@ -252,12 +252,13 @@ Each batch: coherent subsystem or invariant. Land independently.
 - **Rollback:** trivial.
 - **Status:** DONE — commit `c70aa1a`. F-22: `rewrap.rs` used `run_ffprobe(input)` for streams then `probe_duration(input)` as a separate subprocess — now uses `duration_from_probe(&probe)` on the already-obtained JSON (1 ffprobe instead of 2). `conform.rs` did the same pattern in `probe_source` + `run()` — `probe_source` now returns `(SourceSpec, Option<f64>)` (1 ffprobe instead of 2). `extract.rs` / `replace_audio.rs` double-probe is across separate Tauri commands or on different files — cannot fold without a probe cache; deferred to B32 scope (noted DONE-PARTIAL for those two sub-sites). F-23: removed upfront `probe_duration(input_path)` from all three `audio_norm` modes (Ebu, Peak, Rg); duration now parsed from first-pass ffmpeg stderr via new `parse_duration_from_ffmpeg_stderr()` helper — ffmpeg always prints "Duration: HH:MM:SS.mmm" even under `-hide_banner -nostats`. Each mode: 3 subprocesses → 2. Progress reporting for the apply pass preserved. +6 Rust unit tests for `duration_from_probe` and `parse_duration_from_ffmpeg_stderr`. 229 rust (was 223) + 47 vitest tests pass; clippy `-D warnings` clean; `cargo build --release` clean; `cargo audit` unchanged baseline.
 
-### B14 — `perf(ui): waveform bucket cap + multi-extract collapse`
-- **Findings:** (F-13 frontend half — cap in Timeline.svelte if not already landed in B12); F-24
+### B14 — `perf(ui): waveform bucket cap + multi-extract collapse` — **DONE** (1f87107)
+- **Findings:** (F-13 frontend half — DONE-STALE: already landed in B12 commit 356c545); F-24
 - **Rationale:** Frontend-side perf improvements; independent of backend changes.
 - **Effort:** S
 - **Risk:** LOW
 - **Test:** Manual — waveform swap feels responsive; multi-stream extract produces all streams.
+- **Status:** DONE — commit `1f87107`. F-13 frontend half DONE-STALE — Timeline.svelte already requests `buckets: 1600` (was 4000), landed in B12. F-24: new `ExtractMulti` `OperationPayload` variant + `ExtractStreamSpec` struct; `build_multi_args` pure helper builds `-map 0:N codec copy output` triples for one ffmpeg call; `run_multi` wraps it with a single `probe_duration` + `run_ffmpeg`; `OperationsPanel.svelte::runExtract` branches on `targets.length > 1` → single `extract_multi` invoke vs single-stream `extract` invoke. Eliminates N-1 redundant ffmpeg+ffprobe decode passes on multi-stream extracts. 5 new Rust unit tests (build_multi_args coverage); 9 new vitest tests (streamExt mapping + component dispatch). 234 rust + 56 vitest pass; clippy clean; cargo audit unchanged baseline.
 
 ### B15 — `fix(security): IPC trust gate — validate_output_name + run_operation coverage`
 - **Findings:** F-03
