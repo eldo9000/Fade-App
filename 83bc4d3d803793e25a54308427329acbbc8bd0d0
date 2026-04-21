@@ -1,0 +1,6 @@
+app: fade
+state: active
+context: PR batch B10 — frontend-only semaphore caps concurrent convert_file invokes at hardwareConcurrency clamped [1,8]; slot held until job-done/error/cancelled event resolves a per-job deferred (invoke returns immediately since Rust spawns a worker thread).
+deferred: none
+fragile: limiter relies on every backend path emitting exactly one of job-done/job-error/job-cancelled per dispatched job_id — the __DONE__ sentinel path in archive.rs is covered because it emits job-done before returning the sentinel, but any new finalizer path that skips those events would deadlock a batch slot.
+ci: unknown
