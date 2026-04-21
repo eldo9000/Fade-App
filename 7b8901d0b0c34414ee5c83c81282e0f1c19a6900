@@ -1,0 +1,6 @@
+app: fade
+state: stable
+context: cargo fmt sweep to fix CI red on daa854f — parking_lot import ordering + long call reformatting across 34 files
+deferred: none
+fragile: none
+ci: unknown
