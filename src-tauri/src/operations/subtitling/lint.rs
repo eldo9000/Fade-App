@@ -174,6 +174,7 @@ pub fn lint_subtitle(
     input_path: String,
     thresholds: LintThresholds,
 ) -> Result<Vec<LintIssue>, String> {
+    crate::validate_no_traversal(&input_path)?;
     let body = super::read_subtitle_capped(&input_path)?;
     let ext = Path::new(&input_path)
         .extension()

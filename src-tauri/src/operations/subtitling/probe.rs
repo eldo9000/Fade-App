@@ -13,6 +13,7 @@ pub struct SubStream {
 
 #[tauri::command]
 pub fn probe_subtitles(input_path: String) -> Result<Vec<SubStream>, String> {
+    crate::validate_no_traversal(&input_path)?;
     let json = run_ffprobe(&input_path)?;
     let streams = parse_streams(&json);
     Ok(streams

@@ -441,6 +441,86 @@ fn validate_separator(sep: &str) -> Result<(), String> {
     }
 }
 
+/// Validate that `path` is a safe output file path:
+/// - no `..` traversal in any component
+/// - filename stem contains only ASCII alphanumeric, hyphen, underscore, or dot
+///
+/// Covers the 29 `run_operation` variants that receive full output paths directly
+/// (unlike `convert_file`, which validates suffix + separator separately).
+pub(crate) fn validate_output_name(path: &str) -> Result<(), String> {
+    use std::path::{Component, Path};
+    let p = Path::new(path);
+    for component in p.components() {
+        if component == Component::ParentDir {
+            return Err(format!(
+                "Path traversal rejected in output path: {}",
+                path
+            ));
+        }
+    }
+    let stem = p
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| format!("Cannot determine filename from output path: {}", path))?;
+    if stem.is_empty() {
+        return Err(format!("Empty filename in output path: {}", path));
+    }
+    if stem.starts_with('.')
+        || !stem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(format!(
+            "Invalid output filename '{}': stem must start with a letter or digit and contain only letters, digits, hyphens, underscores, or dots",
+            stem
+        ));
+    }
+    Ok(())
+}
+
+/// Validate that `dir` is a safe output directory:
+/// - no `..` traversal in any component
+/// - directory falls within an allowed root (HOME, TMPDIR, /Volumes, /media, /mnt)
+///
+/// Allowed-root list mirrors `assetProtocol.scope` from B4 (F-08).
+pub(crate) fn validate_output_dir(dir: &str) -> Result<(), String> {
+    use std::path::{Component, Path};
+    let p = Path::new(dir);
+    for component in p.components() {
+        if component == Component::ParentDir {
+            return Err(format!(
+                "Path traversal rejected in output directory: {}",
+                dir
+            ));
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let tmpdir = std::env::temp_dir().to_string_lossy().into_owned();
+    let allowed_fixed: &[&str] = &["/Volumes", "/media", "/mnt"];
+    let under_allowed = (!home.is_empty() && p.starts_with(&home))
+        || (!tmpdir.is_empty() && p.starts_with(&tmpdir))
+        || allowed_fixed.iter().any(|root| p.starts_with(root));
+    if !under_allowed {
+        return Err(format!(
+            "Output directory '{}' is outside allowed roots (HOME, TMPDIR, /Volumes, /media, /mnt)",
+            dir
+        ));
+    }
+    Ok(())
+}
+
+/// Reject any path containing a `..` component. Applied at IPC entry points
+/// that accept user-supplied input paths to prevent directory traversal reads.
+pub(crate) fn validate_no_traversal(path: &str) -> Result<(), String> {
+    use std::path::{Component, Path};
+    for component in Path::new(path).components() {
+        if component == Component::ParentDir {
+            return Err(format!("Path traversal rejected: {}", path));
+        }
+    }
+    Ok(())
+}
+
 /// Parse out_time_ms line from ffmpeg -progress output to get elapsed seconds.
 pub(crate) fn parse_out_time_ms(line: &str) -> Option<f64> {
     let val = line.strip_prefix("out_time_ms=")?;
@@ -1109,6 +1189,51 @@ enum OperationPayload {
 }
 
 impl OperationPayload {
+    /// Validate all output paths/dirs in this payload before the worker thread
+    /// is spawned. Returns the first validation error encountered.
+    pub(crate) fn validate_outputs(&self) -> Result<(), String> {
+        use OperationPayload::*;
+        match self {
+            Rewrap { output_path, .. }
+            | Extract { output_path, .. }
+            | Cut { output_path, .. }
+            | AudioOffset { output_path, .. }
+            | ReplaceAudio { output_path, .. }
+            | Merge { output_path, .. }
+            | AudioNormalize { output_path, .. }
+            | SilenceRemove { output_path, .. }
+            | Conform { output_path, .. }
+            | RemoveAudio { output_path, .. }
+            | RemoveVideo { output_path, .. }
+            | MetadataStrip { output_path, .. }
+            | Loop { output_path, .. }
+            | RotateFlip { output_path, .. }
+            | Reverse { output_path, .. }
+            | Speed { output_path, .. }
+            | Fade { output_path, .. }
+            | Deinterlace { output_path, .. }
+            | Denoise { output_path, .. }
+            | Thumbnail { output_path, .. }
+            | ContactSheet { output_path, .. }
+            | Watermark { output_path, .. }
+            | Volume { output_path, .. }
+            | ChannelTools { output_path, .. }
+            | PadSilence { output_path, .. }
+            | ChromaKey { output_path, .. } => validate_output_name(output_path),
+
+            Split { output_dir, .. } | FrameExport { output_dir, .. } => {
+                validate_output_dir(output_dir)
+            }
+
+            ExtractMulti { streams, .. } => {
+                for spec in streams {
+                    validate_output_name(&spec.output_path)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Return the primary input path for logging. `Merge` uses the first
     /// input, `ReplaceAudio` uses the video track — picking either is a
     /// judgment call, but a log entry with an empty path is strictly worse
@@ -1168,6 +1293,8 @@ fn run_operation(
             .expect("cancellations mutex poisoned");
         map.insert(job_id.clone(), Arc::clone(&cancelled));
     }
+
+    operation.validate_outputs()?;
 
     let processes = Arc::clone(&state.processes);
     let cancellations = Arc::clone(&state.cancellations);
@@ -2900,6 +3027,81 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&rotated);
+    }
+
+    // ── validate_output_name ─────────────────────────────────────────────────
+
+    #[test]
+    fn output_name_accepts_safe_stems() {
+        assert!(validate_output_name("/out/video.mp4").is_ok());
+        assert!(validate_output_name("/out/my-clip_converted.mkv").is_ok());
+        assert!(validate_output_name("/Users/foo/Desktop/output.mp4").is_ok());
+        assert!(validate_output_name("/out/my.archive.backup.mp4").is_ok());
+    }
+
+    #[test]
+    fn output_name_rejects_traversal() {
+        assert!(validate_output_name("../../../etc/passwd").is_err());
+        assert!(validate_output_name("/out/../etc/passwd").is_err());
+        assert!(validate_output_name("foo/../../bad.mp4").is_err());
+    }
+
+    #[test]
+    fn output_name_rejects_shell_metachars_in_stem() {
+        assert!(validate_output_name("/out/bad;ls.mp4").is_err());
+        assert!(validate_output_name("/out/$(whoami).mp4").is_err());
+        assert!(validate_output_name("/out/file name.mp4").is_err());
+        assert!(validate_output_name("/out/file|pipe.mp4").is_err());
+        assert!(validate_output_name("/out/file&bg.mp4").is_err());
+    }
+
+    #[test]
+    fn output_name_rejects_empty_stem() {
+        assert!(validate_output_name("/out/.mp4").is_err());
+    }
+
+    // ── validate_output_dir ──────────────────────────────────────────────────
+
+    #[test]
+    fn output_dir_rejects_traversal() {
+        assert!(validate_output_dir("/home/user/../../../etc").is_err());
+        assert!(validate_output_dir("../relative").is_err());
+    }
+
+    #[test]
+    fn output_dir_accepts_temp_dir() {
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(validate_output_dir(&tmp).is_ok());
+        assert!(validate_output_dir(&format!("{tmp}/fade-frames")).is_ok());
+    }
+
+    #[test]
+    fn output_dir_accepts_home_subdir() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            assert!(validate_output_dir(&format!("{home}/Desktop")).is_ok());
+        }
+    }
+
+    #[test]
+    fn output_dir_rejects_system_dirs() {
+        assert!(validate_output_dir("/etc").is_err());
+        assert!(validate_output_dir("/usr/bin").is_err());
+        assert!(validate_output_dir("/System/Library").is_err());
+    }
+
+    // ── validate_no_traversal ────────────────────────────────────────────────
+
+    #[test]
+    fn no_traversal_accepts_normal_paths() {
+        assert!(validate_no_traversal("/Users/foo/Videos/clip.mp4").is_ok());
+        assert!(validate_no_traversal("/tmp/subtitle.srt").is_ok());
+    }
+
+    #[test]
+    fn no_traversal_rejects_dotdot() {
+        assert!(validate_no_traversal("../../etc/passwd").is_err());
+        assert!(validate_no_traversal("/Users/foo/../../../etc").is_err());
     }
 
     // ── validate_url_scheme ───────────────────────────────────────────────────

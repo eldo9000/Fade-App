@@ -30,6 +30,8 @@ fn lcs_table(a: &[&str], b: &[&str]) -> Vec<Vec<u32>> {
 
 #[tauri::command]
 pub fn diff_subtitle(a_path: String, b_path: String) -> Result<Vec<SubDiffLine>, String> {
+    crate::validate_no_traversal(&a_path).map_err(|e| format!("a: {e}"))?;
+    crate::validate_no_traversal(&b_path).map_err(|e| format!("b: {e}"))?;
     let a_body = super::read_subtitle_capped(&a_path).map_err(|e| format!("a: {e}"))?;
     let b_body = super::read_subtitle_capped(&b_path).map_err(|e| format!("b: {e}"))?;
     let a: Vec<&str> = a_body.lines().collect();

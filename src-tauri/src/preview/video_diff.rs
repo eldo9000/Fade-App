@@ -27,6 +27,7 @@ pub fn preview_diff(
     handle_secs: Option<f64>,
     amplify: Option<f64>,
 ) -> Result<DiffPreview, String> {
+    crate::validate_no_traversal(&path)?;
     let p = Path::new(&path);
     if !p.exists() {
         return Err(format!("File not found: {path}"));
