@@ -1,4 +1,6 @@
 <script>
+  import { seg, segV } from './segStyles.js';
+
   let {
     options = $bindable(),
     onqualitystart = null,
@@ -38,29 +40,9 @@
     const mt    = i > 0 ? '-mt-px' : '';
     return [base, round, mt, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
   }
-
-  function seg(active, i, total) {
-    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
-    const ml    = i > 0 ? '-ml-px' : '';
-    const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
-    return [base, round, ml, color].filter(Boolean).join(' ');
-  }
-
-  function segV(active, i, total) {
-    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
-    const mt    = i > 0 ? '-mt-px' : '';
-    const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
-    return [base, round, mt, color].filter(Boolean).join(' ');
-  }
 </script>
 
-<div class="space-y-5" role="form" aria-label="Image conversion options">
+<div class="space-y-3" role="form" aria-label="Image conversion options">
 
   <!-- Quality (for lossy formats) -->
   {#if ['jpeg', 'webp', 'avif'].includes(options.output_format)}
@@ -71,7 +53,8 @@
       <input
         type="range" min="5" max="100" step="5"
         bind:value={options.quality}
-        class="w-full accent-[var(--accent)]"
+        class="fade-range"
+        style="--fade-range-pct:{(options.quality-5)/(100-5)*100}%"
         aria-label="Quality {options.quality}%"
         onmousedown={onqualitystart}
         oninput={onqualityinput}
@@ -115,7 +98,7 @@
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Resize
     </legend>
-    <div class="flex flex-col">
+    <div class="inline-flex flex-col">
       {#each resizeModes as m, i}
         <button onclick={() => options.resize_mode = m.value} class={segV(options.resize_mode === m.value, i, resizeModes.length)}>{m.label}</button>
       {/each}
@@ -130,7 +113,8 @@
       <input
         type="range" min="1" max="400"
         bind:value={options.resize_percent}
-        class="w-full accent-[var(--accent)]"
+        class="fade-range"
+        style="--fade-range-pct:{(options.resize_percent-1)/(400-1)*100}%"
         aria-label="Scale {options.resize_percent}%"
       />
       <div class="flex justify-between text-[11px] text-[var(--text-secondary)] mt-1">
@@ -180,30 +164,33 @@
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 cursor-pointer"
+    <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px] bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2 {options.jpeg_progressive ? 'text-[var(--text-primary)]' : 'text-white/75'}"
            data-tooltip="Progressive JPEG loads top-to-bottom in multiple passes on slow connections — slightly smaller file, broadly supported.">
-      <input type="checkbox" bind:checked={options.jpeg_progressive} class="accent-[var(--accent)]" />
-      <span class="text-[12px] text-[var(--text-primary)]">Progressive JPEG</span>
+      <input type="checkbox" bind:checked={options.jpeg_progressive} class="fade-check" />
+      <span>Progressive JPEG</span>
     </label>
 
   {:else if options.output_format === 'png'}
     <fieldset data-tooltip="0 none · 9 max · always lossless">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression — {options.png_compression}</legend>
-      <input type="range" min="0" max="9" step="1" bind:value={options.png_compression} class="w-full accent-[var(--accent)]" />
+      <input type="range" min="0" max="9" step="1"
+        bind:value={options.png_compression}
+        class="fade-range"
+        style="--fade-range-pct:{(options.png_compression-0)/(9-0)*100}%" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>9 smallest</span></div>
     </fieldset>
     <fieldset data-tooltip="RGB/RGBA full color · Grayscale shrinks file ~3× · Palette 8-bit smallest for few colors / line art">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Color Mode</legend>
-      <div class="flex flex-col">
+      <div class="inline-flex flex-col">
         {#each [['rgb','RGB'],['rgba','RGBA'],['gray','Grayscale'],['graya','Grayscale + Alpha'],['palette','Palette (8-bit)']] as [v, lbl], i}
           <button onclick={() => options.png_color_mode = v} class={segV(options.png_color_mode === v, i, 5)}>{lbl}</button>
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 cursor-pointer"
+    <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px] bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2 {options.png_interlaced ? 'text-[var(--text-primary)]' : 'text-white/75'}"
            data-tooltip="Adam7 interlacing — image loads as progressively refined passes. Slightly larger file, useful for slow connections.">
-      <input type="checkbox" bind:checked={options.png_interlaced} class="accent-[var(--accent)]" />
-      <span class="text-[12px] text-[var(--text-primary)]">Interlaced (Adam7)</span>
+      <input type="checkbox" bind:checked={options.png_interlaced} class="fade-check" />
+      <span>Interlaced (Adam7)</span>
     </label>
 
   {:else if options.output_format === 'tiff'}
@@ -233,21 +220,27 @@
     </fieldset>
 
   {:else if options.output_format === 'webp'}
-    <label class="flex items-center gap-2 cursor-pointer"
+    <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px] bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2 {options.webp_lossless ? 'text-[var(--text-primary)]' : 'text-white/75'}"
            data-tooltip="Encode WebP without perceptual loss — larger files, pixel-perfect. Disables Quality; alpha channel always preserved.">
-      <input type="checkbox" bind:checked={options.webp_lossless} class="accent-[var(--accent)]" />
-      <span class="text-[12px] text-[var(--text-primary)]">Lossless mode</span>
+      <input type="checkbox" bind:checked={options.webp_lossless} class="fade-check" />
+      <span>Lossless mode</span>
     </label>
     <fieldset data-tooltip="0 fastest · 6 best compression (slower encode)">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression Method — {options.webp_method}</legend>
-      <input type="range" min="0" max="6" step="1" bind:value={options.webp_method} class="w-full accent-[var(--accent)]" />
+      <input type="range" min="0" max="6" step="1"
+        bind:value={options.webp_method}
+        class="fade-range"
+        style="--fade-range-pct:{(options.webp_method-0)/(6-0)*100}%" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>6 best</span></div>
     </fieldset>
 
   {:else if options.output_format === 'avif'}
     <fieldset data-tooltip="0 slowest / best · 10 fastest / worst">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Speed — {options.avif_speed}</legend>
-      <input type="range" min="0" max="10" step="1" bind:value={options.avif_speed} class="w-full accent-[var(--accent)]" />
+      <input type="range" min="0" max="10" step="1"
+        bind:value={options.avif_speed}
+        class="fade-range"
+        style="--fade-range-pct:{(options.avif_speed-0)/(10-0)*100}%" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>10 fastest</span></div>
     </fieldset>
     <fieldset data-tooltip="4:2:0 smallest file · 4:2:2 broadcast quality · 4:4:4 full chroma for text / graphics">
@@ -297,15 +290,15 @@
         class={seg(options.flip_v, 1, 2)}
       >Flip V</button>
     </div>
-    <label class="flex items-center gap-2 mt-2 cursor-pointer"
+    <label class="inline-flex items-center gap-2.5 mt-2 cursor-pointer text-[13px] bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2 {options.auto_rotate ? 'text-[var(--text-primary)]' : 'text-white/75'}"
            data-tooltip="Read the EXIF orientation tag from the source and rotate to match. Fixes sideways photos from phones without re-rotating.">
-      <input type="checkbox" bind:checked={options.auto_rotate} class="accent-[var(--accent)]" />
-      <span class="text-[12px] text-[var(--text-primary)]">Auto-rotate from EXIF</span>
+      <input type="checkbox" bind:checked={options.auto_rotate} class="fade-check" />
+      <span>Auto-rotate from EXIF</span>
     </label>
-    <label class="flex items-center gap-2 mt-2 cursor-pointer"
+    <label class="inline-flex items-center gap-2.5 mt-2 cursor-pointer text-[13px] bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2 {options.preserve_metadata ? 'text-[var(--text-primary)]' : 'text-white/75'}"
            data-tooltip="Keep EXIF, ICC profile, and other metadata in the output. Uncheck to strip (removes GPS, camera info, timestamps).">
-      <input type="checkbox" bind:checked={options.preserve_metadata} class="accent-[var(--accent)]" />
-      <span class="text-[12px] text-[var(--text-primary)]">Preserve metadata</span>
+      <input type="checkbox" bind:checked={options.preserve_metadata} class="fade-check" />
+      <span>Preserve metadata</span>
     </label>
   </fieldset>
 
