@@ -1,33 +1,34 @@
 <script>
-  import FormatPicker from './FormatPicker.svelte';
+  import { seg } from './segStyles.js';
 
   let { options = $bindable() } = $props();
-  const formats = ['json', 'csv', 'yaml', 'toml', 'xml'];
+
+  const delimiters = [',', ';', '\t', '|'];
 </script>
 
-<FormatPicker bind:options {formats} ariaLabel="Data conversion options">
+<div class="space-y-3" role="form" aria-label="Data conversion options">
   {#if options.output_format === 'json'}
     <fieldset data-tooltip="Indent JSON with newlines and 2-space indentation for readability — unchecked emits compact single-line JSON">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Formatting</legend>
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" bind:checked={options.pretty_print} class="accent-[var(--accent)]" />
-        <span class="text-[12px] text-[var(--text-primary)]">Pretty print</span>
+      <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
+                    bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
+                    {options.pretty_print ? 'text-[var(--text-primary)]' : 'text-white/75'}">
+        <input type="checkbox" bind:checked={options.pretty_print} class="fade-check" />
+        Pretty print
       </label>
     </fieldset>
-  {/if}
-  {#if options.output_format === 'csv'}
+  {:else if options.output_format === 'csv'}
     <fieldset data-tooltip="Field separator — comma is standard · semicolon common in European locales · tab for TSV · pipe for data with commas">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Delimiter</legend>
-      <div class="flex gap-2">
-        {#each [',', ';', '\t', '|'] as d}
+      <div class="grid" style="grid-template-columns:repeat({delimiters.length},1fr)">
+        {#each delimiters as d, i}
           <button onclick={() => options.csv_delimiter = d}
-            class="px-3 py-1 rounded text-[12px] border transition-colors font-mono
-              {options.csv_delimiter === d
-                ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-                : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+            class={seg(options.csv_delimiter === d, i, delimiters.length) + ' font-mono'}
           >{d === '\t' ? 'Tab' : d}</button>
         {/each}
       </div>
     </fieldset>
+  {:else}
+    <p class="text-[11px] text-[var(--text-secondary)]" data-tooltip="No additional options for this format">No additional options.</p>
   {/if}
-</FormatPicker>
+</div>
