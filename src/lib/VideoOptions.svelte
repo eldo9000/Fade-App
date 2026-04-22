@@ -1,15 +1,47 @@
 <script>
+  import { seg, segV } from './segStyles.js';
+
   let { options = $bindable(), errors = {} } = $props();
 
-  const codecs  = [
-    { value: 'copy',  label: 'Copy' },
-    { value: 'h264',  label: 'H.264' },
-    { value: 'h265',  label: 'H.265' },
-    { value: 'h266',  label: 'H.266', todo: true },
-    { value: 'vp8',   label: 'VP8',   todo: true },
-    { value: 'vp9',   label: 'VP9' },
-    { value: 'av1',   label: 'AV1' },
+  let codecMenuOpen  = $state(false);
+  let presetMenuOpen = $state(false);
+
+  const allCodecs = [
+    { value: 'copy',     label: 'Copy — stream passthrough' },
+    null,
+    { value: 'h264',     label: 'H.264 (AVC)' },
+    { value: 'h265',     label: 'H.265 (HEVC)' },
+    { value: 'h266',     label: 'H.266 (VVC)', dev: true },
+    null,
+    { value: 'vp9',      label: 'VP9' },
+    { value: 'av1',      label: 'AV1' },
+    { value: 'vp8',      label: 'VP8', dev: true },
+    null,
+    { value: 'hap',      label: 'HAP' },
+    { value: 'dnxhr',    label: 'Avid DNxHR' },
+    { value: 'dnxhd',    label: 'Avid DNxHD' },
+    { value: 'dvvideo',  label: 'DV Video' },
   ];
+
+  const visibleCodecs = $derived(
+    allCodecs.filter(c => c === null || !c.dev || import.meta.env.DEV)
+  );
+
+  const selectedCodecLabel = $derived(
+    allCodecs.find(c => c && c.value === options.codec)?.label ?? (options.codec ?? 'Select…')
+  );
+
+  const crfQualityLabel = $derived.by(() => {
+    const v = options.crf ?? 0;
+    if (v < 15) return 'Extreme quality';
+    if (v < 20) return 'High quality';
+    if (v < 25) return 'Optimized';
+    return 'Low quality';
+  });
+
+  const PRESETS = ['ultrafast','fast','medium','slow','veryslow']
+    .map(p => ({ value: p, label: p }));
+
   const resolutions = [
     { value: 'original',  label: 'Original' },
     { value: '1920x1080', label: '1080p' },
@@ -49,68 +81,68 @@
   function onTrimEndInput(e)   { options.trim_end   = parseTime(e.target.value); }
   function clearTrim() { options.trim_start = null; options.trim_end = null; }
 
-  // shared segmented-control button classes
-  function seg(active, i, total) {
-    const base = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
-    const overlap = i > 0 ? '-ml-px' : '';
-    const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
-    return [base, round, overlap, color].filter(Boolean).join(' ');
-  }
-
   // Dev-only green segment helpers
   function devSeg(i, total) {
-    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
+    const base  = 'px-3 py-[5px] text-center text-[12px] font-medium border transition-colors relative';
     const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
     const ml    = i > 0 ? '-ml-px' : '';
     return [base, round, ml, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
   }
   function devSegV(i, total) {
-    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
+    const base  = 'w-full px-3 py-[5px] text-left text-[12px] font-medium border transition-colors relative';
     const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
     const mt    = i > 0 ? '-mt-px' : '';
     return [base, round, mt, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
   }
 
-  // Vertical connected row (for Audio Track and similar)
-  function segV(active, i, total) {
-    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
-    const mt    = i > 0 ? '-mt-px' : '';
-    const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
-    return [base, round, mt, color].filter(Boolean).join(' ');
-  }
 </script>
 
-<div class="space-y-5" role="form" aria-label="Video conversion options">
+<div class="space-y-3" role="form" aria-label="Video conversion options">
 
-  <!-- ── Codec (button group) ─────────────────────────────────────────── -->
+  <!-- ── Codec (dropdown) ──────────────────────────────────────────────── -->
   <fieldset data-tooltip="Video encoding codec — H.264 for compatibility, H.265/AV1 for smaller files">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">
       Video Codec
     </legend>
-    <div class="flex flex-wrap gap-1">
-      {#each codecs.filter(c => !c.todo || import.meta.env.DEV) as c}
-        <button
-          onclick={() => { if (!c.todo) options.codec = c.value; }}
-          class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
-                 {options.codec === c.value
-                   ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-                   : c.todo
-                     ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
-                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-        >{c.label}</button>
-      {/each}
+    <div class="relative">
+      <button
+        onclick={() => codecMenuOpen = !codecMenuOpen}
+        class="w-full flex items-center justify-between px-3 py-[5px] rounded-md border
+               border-[var(--border)] seg-inactive text-[var(--text-primary)] text-[13px]
+               transition-colors"
+      >
+        <span class="text-[12px]">{selectedCodecLabel}</span>
+        <svg class="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0 transition-transform
+                    {codecMenuOpen ? 'rotate-180' : ''}"
+             viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M4 6l4 4 4-4"/>
+        </svg>
+      </button>
+      {#if codecMenuOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="fixed inset-0 z-40" onmousedown={() => codecMenuOpen = false}></div>
+        <div class="absolute left-0 right-0 top-full mt-1 z-50
+                    bg-[var(--surface-panel)] border border-[var(--border)] rounded-lg shadow-xl py-1 animate-fade-in">
+          {#each visibleCodecs as item}
+            {#if item === null}
+              <div class="my-1 border-t border-[var(--border)]" role="separator"></div>
+            {:else}
+              <button
+                onmousedown={(e) => { e.stopPropagation(); options.codec = item.value; codecMenuOpen = false; }}
+                class="w-full text-left px-3 py-[5px] text-[13px] transition-colors cursor-default outline-none
+                       hover:bg-[var(--surface-raised)] hover:text-[var(--text-primary)]
+                       text-[color-mix(in_srgb,var(--text-primary)_80%,transparent)]"
+              >{item.label}</button>
+            {/if}
+          {/each}
+        </div>
+      {/if}
     </div>
   </fieldset>
 
   <!-- ── Resolution (segmented) ────────────────────────────────────────── -->
   <fieldset data-tooltip="Scale the output video resolution">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">
       Resolution
     </legend>
     <div class="grid" style="grid-template-columns: repeat({resolutions.length}, 1fr)">
@@ -127,40 +159,42 @@
 
   <!-- ── Audio track ────────────────────────────────────────────────────── -->
   <fieldset data-tooltip="Strip the audio track from the video output">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">
       Audio Track
     </legend>
-    <label class="flex items-center gap-2 cursor-pointer text-[13px] text-[var(--text-primary)]">
+    <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
+                  bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
+                  {options.remove_audio ? 'text-[var(--text-primary)]' : 'text-white/75'}">
       <input type="checkbox"
              checked={options.remove_audio === true}
              onchange={(e) => { options.remove_audio = e.currentTarget.checked; options.extract_audio = false; }}
-             class="accent-[var(--accent)]" />
+             class="fade-check" />
       Remove audio
     </label>
   </fieldset>
 
   <!-- ── Trim ───────────────────────────────────────────────────────────── -->
   <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds.">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">
       Trim
     </legend>
-    <div class="flex gap-3 items-end">
+    <div class="flex gap-3 items-center">
       <div class="flex-1">
-        <label class="text-[11px] text-[var(--text-secondary)]" for="vid-trim-start">Start</label>
-        <input id="vid-trim-start" type="text" placeholder=""
+        <input id="vid-trim-start" type="text" placeholder="Start"
           value={trimStartRaw} oninput={onTrimStartInput}
-          class="w-full mt-1 px-3 py-1.5 rounded-md border border-[var(--border)]
+          class="w-full px-3 py-1.5 rounded-md border border-[var(--border)]
                  bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
+                 placeholder:text-[var(--text-muted)]
                  focus:outline-none focus:border-[var(--accent)]"
         />
       </div>
       <div class="flex-1">
-        <label class="text-[11px] text-[var(--text-secondary)]" for="vid-trim-end">End</label>
-        <input id="vid-trim-end" type="text" placeholder=""
+        <input id="vid-trim-end" type="text" placeholder="End"
           value={trimEndRaw} oninput={onTrimEndInput}
-          class="w-full mt-1 px-3 py-1.5 rounded-md text-[13px]
+          class="w-full px-3 py-1.5 rounded-md text-[13px]
                  focus:outline-none focus:border-[var(--accent)]
                  bg-[var(--surface)] text-[var(--text-primary)]
+                 placeholder:text-[var(--text-muted)]
                  {errors.video_trim ? 'border border-red-500' : 'border border-[var(--border)]'}"
         />
       </div>
@@ -184,26 +218,57 @@
     {#if options.codec !== 'copy'}
       {#if ['h264','h265','vp9','av1'].includes(options.codec)}
         <fieldset data-tooltip="0 lossless · 18–28 typical · 51 worst · lower = better quality">
-          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Quality — CRF {options.crf}</legend>
-          <input type="range" min="0" max="51" step="1" bind:value={options.crf} class="w-full accent-[var(--accent)]" />
-          <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 lossless</span><span>51 worst</span></div>
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Quality — CRF {options.crf}</legend>
+          <input type="range" min="0" max="51" step="1" bind:value={options.crf} class="fade-range"
+                 style="--fade-range-pct:{((options.crf ?? 0) / 51) * 100}%" />
+          <div class="grid grid-cols-3 text-[10px] text-[var(--text-secondary)] mt-1">
+            <span class="text-left">0 lossless</span>
+            <span class="text-center">{crfQualityLabel}</span>
+            <span class="text-right">51 worst</span>
+          </div>
         </fieldset>
       {/if}
 
       {#if ['h264','h265'].includes(options.codec)}
         <fieldset data-tooltip="Slower preset = better compression at same quality">
-          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Encode Preset</legend>
-          <div class="flex flex-col">
-            {#each ['ultrafast','fast','medium','slow','veryslow'] as p, i}
-              <button onclick={() => options.preset = p} class={segV(options.preset === p, i, 5)}>{p}</button>
-            {/each}
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Encode Preset</legend>
+          <div class="relative">
+            <button
+              onclick={() => presetMenuOpen = !presetMenuOpen}
+              class="w-full flex items-center justify-between px-3 py-[5px] rounded-md border
+                     border-[var(--border)] seg-inactive text-[var(--text-primary)] text-[13px]
+                     transition-colors"
+            >
+              <span class="text-[12px]">{options.preset ?? 'medium'}</span>
+              <svg class="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0 transition-transform
+                          {presetMenuOpen ? 'rotate-180' : ''}"
+                   viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 6l4 4 4-4"/>
+              </svg>
+            </button>
+            {#if presetMenuOpen}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="fixed inset-0 z-40" onmousedown={() => presetMenuOpen = false}></div>
+              <div class="absolute left-0 right-0 top-full mt-1 z-50
+                          bg-[var(--surface-panel)] border border-[var(--border)] rounded-lg shadow-xl py-1 animate-fade-in">
+                {#each PRESETS as item}
+                  <button
+                    onmousedown={(e) => { e.stopPropagation(); options.preset = item.value; presetMenuOpen = false; }}
+                    class="w-full text-left px-3 py-[5px] text-[13px] transition-colors cursor-default outline-none
+                           hover:bg-[var(--surface-raised)] hover:text-[var(--text-primary)]
+                           text-[color-mix(in_srgb,var(--text-primary)_80%,transparent)]"
+                  >{item.label}</button>
+                {/each}
+              </div>
+            {/if}
           </div>
         </fieldset>
+
       {/if}
 
       {#if options.codec === 'h264' || options.codec === 'h265'}
         <fieldset data-tooltip="baseline — max compatibility · main — consumer · high — streaming / archival">
-          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Profile</legend>
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Profile</legend>
           <div class="grid" style="grid-template-columns:repeat(3,1fr)">
             {#each ['baseline','main','high'] as p, i}
               <button onclick={() => options.h264_profile = p} class={seg(options.h264_profile === p, i, 3)}>{p}</button>
@@ -211,7 +276,7 @@
           </div>
         </fieldset>
         <fieldset data-tooltip="none for general use · film / animation / grain / stillimage optimize for content type">
-          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Tune</legend>
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Tune</legend>
           <div class="grid" style="grid-template-columns:repeat(4,1fr)">
             {#each ['none','film','animation','grain'] as t, i}
               <button onclick={() => options.tune = t} class={seg(options.tune === t, i, 4)}>{t}</button>
@@ -222,22 +287,24 @@
 
       {#if options.codec === 'vp9'}
         <fieldset data-tooltip="VP9 speed/deadline: 0 best quality · 5 fastest">
-          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Speed — {options.vp9_speed}</legend>
-          <input type="range" min="0" max="5" step="1" bind:value={options.vp9_speed} class="w-full accent-[var(--accent)]" />
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Speed — {options.vp9_speed}</legend>
+          <input type="range" min="0" max="5" step="1" bind:value={options.vp9_speed} class="fade-range"
+                 style="--fade-range-pct:{((options.vp9_speed ?? 0) / 5) * 100}%" />
           <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>5 fastest</span></div>
         </fieldset>
       {/if}
 
       {#if options.codec === 'av1'}
         <fieldset data-tooltip="AV1 cpu-used: 0 slowest / best · 10 fastest / worst">
-          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Speed — {options.av1_speed}</legend>
-          <input type="range" min="0" max="10" step="1" bind:value={options.av1_speed} class="w-full accent-[var(--accent)]" />
+          <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Speed — {options.av1_speed}</legend>
+          <input type="range" min="0" max="10" step="1" bind:value={options.av1_speed} class="fade-range"
+                 style="--fade-range-pct:{((options.av1_speed ?? 0) / 10) * 100}%" />
           <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>10 fastest</span></div>
         </fieldset>
       {/if}
 
       <fieldset data-tooltip="yuv420p universal · yuv422p broadcast · yuv444p best quality (not always supported)">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Pixel Format</legend>
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Pixel Format</legend>
         <div class="grid" style="grid-template-columns:repeat(3,1fr)">
           {#each ['yuv420p','yuv422p','yuv444p'] as p, i}
             <button onclick={() => options.pix_fmt = p} class={seg(options.pix_fmt === p, i, 3)}>{p}</button>
@@ -249,7 +316,7 @@
     <!-- ── HAP variant ────────────────────────────────────────────────────── -->
     {#if options.codec === 'hap'}
       <fieldset data-tooltip="HAP — DXT1 no alpha · HAP Alpha — DXT5 with alpha · HAP Q — YCoCg better quality · HAP Q Alpha — YCoCg with alpha">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">HAP Variant</legend>
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">HAP Variant</legend>
         <div class="grid" style="grid-template-columns:repeat(4,1fr)">
           {#each [['hap','HAP'],['hap_alpha','HAP α'],['hap_q','HAP Q'],['hap_q_alpha','HAP Qα']] as [v, lbl], i}
             <button onclick={() => options.hap_format = v} class={seg((options.hap_format ?? 'hap') === v, i, 4)}>{lbl}</button>
@@ -261,8 +328,8 @@
     <!-- ── DNxHR profile ──────────────────────────────────────────────────── -->
     {#if options.codec === 'dnxhr'}
       <fieldset data-tooltip="LB low bandwidth · SQ standard · HQ high quality · HQX 12-bit · 444 full 4:4:4 chroma">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Profile</legend>
-        <div class="flex flex-col">
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Profile</legend>
+        <div class="inline-flex flex-col">
           {#each [['dnxhr_lb','LB — Low Bandwidth'],['dnxhr_sq','SQ — Standard Quality'],['dnxhr_hq','HQ — High Quality'],['dnxhr_hqx','HQX — High Quality 12-bit'],['dnxhr_444','444 — 4:4:4']] as [v, lbl], i}
             <button onclick={() => options.dnxhr_profile = v} class={segV((options.dnxhr_profile ?? 'dnxhr_sq') === v, i, 5)}>{lbl}</button>
           {/each}
@@ -273,7 +340,7 @@
     <!-- ── DNxHD bitrate ──────────────────────────────────────────────────── -->
     {#if options.codec === 'dnxhd'}
       <fieldset data-tooltip="Bitrate must pair with source resolution and frame rate — e.g. 185M for 1080p/29.97, 175M for 1080p/23.976">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate</legend>
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Bitrate</legend>
         <div class="grid" style="grid-template-columns:repeat(4,1fr)">
           {#each [[36,'36M'],[120,'120M'],[175,'175M'],[185,'185M']] as [v, lbl], i}
             <button onclick={() => options.dnxhd_bitrate = v} class={seg((options.dnxhd_bitrate ?? 185) === v, i, 4)}>{lbl}</button>
@@ -286,7 +353,7 @@
     <!-- ── DV standard ────────────────────────────────────────────────────── -->
     {#if options.codec === 'dvvideo'}
       <fieldset data-tooltip="NTSC: 720×480 at 29.97 fps · PAL: 720×576 at 25 fps — DV forces these exact specs">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Standard</legend>
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Standard</legend>
         <div class="grid" style="grid-template-columns:repeat(2,1fr)">
           {#each [['ntsc','NTSC (720×480)'],['pal','PAL (720×576)']] as [v, lbl], i}
             <button onclick={() => options.dv_standard = v} class={seg((options.dv_standard ?? 'ntsc') === v, i, 2)}>{lbl}</button>
@@ -296,7 +363,7 @@
     {/if}
 
     <fieldset data-tooltip="Output frame rate — 24 film · 25 PAL · 30 NTSC · 60 smooth motion / gaming · Orig keeps source">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Frame Rate</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Frame Rate</legend>
       <div class="grid" style="grid-template-columns:repeat(5,1fr)">
         {#each ['original','24','25','30','60'] as r, i}
           <button onclick={() => options.frame_rate = r} class={seg(options.frame_rate === r, i, 5)}>{r === 'original' ? 'Orig' : r}</button>
@@ -307,7 +374,7 @@
 
   {#if options.output_format === 'webm'}
     <fieldset data-tooltip="CRF — quality-based, variable size · CBR — fixed bitrate for streaming · Constrained VBR — VBR capped to a target">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate Mode</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['crf','CRF'],['cbr','CBR'],['cvbr','Constrained VBR']] as [v, lbl], i}
           <button onclick={() => options.webm_bitrate_mode = v} class={seg(options.webm_bitrate_mode === v, i, 3)}>{lbl}</button>
@@ -317,7 +384,7 @@
 
     {#if options.webm_bitrate_mode === 'cbr' || options.webm_bitrate_mode === 'cvbr'}
       <fieldset data-tooltip="Target video bitrate for CBR (fixed) or CVBR (capped). Independent of audio bitrate.">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Video Bitrate — kbps</legend>
+        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Video Bitrate — kbps</legend>
         <div class="grid" style="grid-template-columns:repeat(4,1fr)">
           {#each [1000, 2000, 4000, 8000] as b, i}
             <button onclick={() => options.webm_video_bitrate = b} class={seg(options.webm_video_bitrate === b, i, 4)}>{b}</button>
@@ -329,7 +396,7 @@
 
   {#if options.output_format === 'mkv'}
     <fieldset data-tooltip="None — discard subtitles · Copy — keep as selectable track · Burn-in — render subtitles permanently into the picture">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Subtitle Track</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Subtitle Track</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['none','None'],['copy','Copy'],['burn','Burn-in']] as [v, lbl], i}
           <button onclick={() => options.mkv_subtitle = v} class={seg(options.mkv_subtitle === v, i, 3)}>{lbl}</button>
@@ -340,7 +407,7 @@
 
   {#if options.output_format === 'avi'}
     <fieldset data-tooltip="Legacy format — no H.265 or modern codec support">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Video Bitrate — kbps</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Video Bitrate — kbps</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [1000, 4000, 8000, 20000] as b, i}
           <button onclick={() => options.avi_video_bitrate = b} class={seg(options.avi_video_bitrate === b, i, 4)}>{b}</button>
@@ -351,7 +418,7 @@
 
   {#if options.output_format === 'gif'}
     <fieldset data-tooltip="GIF output width in pixels — height auto-scaled to preserve aspect ratio">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Output Width (px)</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Output Width (px)</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [320, 480, 640, 'original'] as w, i}
           <button onclick={() => options.gif_width = w} class={seg(options.gif_width === w, i, 4)}>{w}</button>
@@ -359,7 +426,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="GIF frame rate — lower = smaller file. 10 fps typical for memes · 15 fps smoother · Orig keeps source rate">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Frame Rate</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Frame Rate</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [5, 10, 15, 'original'] as r, i}
           <button onclick={() => options.gif_fps = r} class={seg(options.gif_fps === r, i, 4)}>{r === 'original' ? 'Orig' : r + ' fps'}</button>
@@ -367,7 +434,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="Infinite — loop forever · Once — play through then stop · No loop — single play in viewers that honor the flag">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Loop</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Loop</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['infinite','Infinite'],['once','Once'],['none','No loop']] as [v, lbl], i}
           <button onclick={() => options.gif_loop = v} class={seg(options.gif_loop === v, i, 3)}>{lbl}</button>
@@ -375,7 +442,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="Max colors in the shared palette. 32/64 smaller file · 256 best color fidelity but largest">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Palette Size</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Palette Size</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [32, 64, 128, 256] as p, i}
           <button onclick={() => options.gif_palette_size = p} class={seg(options.gif_palette_size === p, i, 4)}>{p}</button>
@@ -383,7 +450,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="None — flat banding · Bayer — ordered dither, retro look · Floyd-Steinberg — error diffusion, smoothest but busy">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Dither</legend>
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">Dither</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['none','None'],['bayer','Bayer'],['floyd','Floyd-Steinberg']] as [v, lbl], i}
           <button onclick={() => options.gif_dither = v} class={seg(options.gif_dither === v, i, 3)}>{lbl}</button>
@@ -395,7 +462,7 @@
   <!-- ── Audio bitrate (segmented) ─────────────────────────────────────── -->
   {#if !options.remove_audio}
     <fieldset data-tooltip="Audio track bitrate — 128 standard · 192 music · 256–320 near-transparent. Independent from video bitrate.">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">
         Audio Bitrate
       </legend>
       <div class="grid" style="grid-template-columns: repeat({audioBitrates.length}, 1fr)">
@@ -409,10 +476,10 @@
     </fieldset>
 
     <fieldset data-tooltip="Audio sample rate — 48 kHz standard for video · 44.1 kHz CD source · 96 kHz for high-end masters">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1.5">
         Sample Rate
       </legend>
-      <div class="flex flex-col">
+      <div class="inline-flex flex-col">
         {#each sampleRates as sr, i}
           <button onclick={() => options.sample_rate = sr.value}
                   class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>
@@ -423,10 +490,12 @@
     </fieldset>
   {/if}
 
-  <label class="flex items-center gap-2 cursor-pointer"
+  <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
+                bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
+                {options.preserve_metadata ? 'text-[var(--text-primary)]' : 'text-white/75'}"
          data-tooltip="Keep title, encoder, GPS, and other container tags in the output. Uncheck to strip (removes location from phone-recorded video).">
-    <input type="checkbox" bind:checked={options.preserve_metadata} class="accent-[var(--accent)]" />
-    <span class="text-[12px] text-[var(--text-primary)]">Preserve metadata</span>
+    <input type="checkbox" bind:checked={options.preserve_metadata} class="fade-check" />
+    Preserve metadata
   </label>
 
 </div>
