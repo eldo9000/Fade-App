@@ -1,12 +1,12 @@
 # Fade — Session Status
 
-Last updated: 2026-04-20
+Last updated: 2026-04-22
 
 ---
 
 ## Current Focus
 
-4-session audit arc complete. All 18 PR batches shipped. Verify pass clean. CI green on `main` after post-wrap fmt sweep (`7b8901d`). Project in stable post-audit state.
+UI polish sweep complete. MP4/Video panel's canonical patterns (`seg-active` underline, `fade-check` tiles, `fade-range` accent fill, `--surface-hint` token, `space-y-3`, `py-[5px]`) propagated across AudioOptions, ImageOptions, ArchiveOptions, DataOptions, FormatPicker. Shared `src/lib/segStyles.js` replaces per-file `seg`/`segV` duplicates. CI green on `main`. Deferred judgment calls logged in task summaries (segGrid, DSP toggles, log-mapped filter sliders, Clear-crop button, slider-label buckets).
 
 ## Next action
 
