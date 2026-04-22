@@ -1,5 +1,6 @@
 <script>
   import SilencePad from './SilencePad.svelte';
+  import { seg, segV } from './segStyles.js';
   let { options = $bindable(), errors = {} } = $props();
 
   const bitrates = [64, 128, 192, 256, 320];
@@ -41,37 +42,15 @@
 
   // ── Button style helpers ───────────────────────────────────────────────────
 
-  // Horizontal connected row (same as VideoOptions)
-  function seg(active, i, total) {
-    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
-    const ml    = i > 0 ? '-ml-px' : '';
-    const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
-    return [base, round, ml, color].filter(Boolean).join(' ');
-  }
-
-  // Vertical connected stack (for sample rate — full label text)
-  function segV(active, i, total) {
-    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
-    const mt    = i > 0 ? '-mt-px' : '';
-    const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
-    return [base, round, mt, color].filter(Boolean).join(' ');
-  }
-
   // Dev-only green segment helpers
   function devSeg(i, total) {
-    const base  = 'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative';
+    const base  = 'px-3 py-[5px] text-center text-[12px] font-medium border transition-colors relative';
     const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
     const ml    = i > 0 ? '-ml-px' : '';
     return [base, round, ml, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
   }
   function devSegV(i, total) {
-    const base  = 'w-full px-3 py-1.5 text-left text-[12px] font-medium border transition-colors relative';
+    const base  = 'w-full px-3 py-[5px] text-left text-[12px] font-medium border transition-colors relative';
     const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
     const mt    = i > 0 ? '-mt-px' : '';
     return [base, round, mt, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
@@ -92,16 +71,16 @@
     const ml = col > 0 ? '-ml-px' : '';
     const mt = row > 0 ? '-mt-px' : '';
     const color = active
-      ? 'bg-[var(--accent)] text-white border-[var(--accent)] z-10'
-      : 'border-[var(--border)] text-[var(--text-primary)] hover:z-10 hover:border-[var(--accent)] hover:text-[var(--accent)]';
+      ? 'seg-active z-10'
+      : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10';
     return [
-      'px-3 py-1.5 text-center text-[12px] font-medium border transition-colors relative',
+      'px-3 py-[5px] text-center text-[12px] font-medium border transition-colors relative',
       round, ml, mt, color,
     ].filter(Boolean).join(' ');
   }
 </script>
 
-<div class="space-y-5" role="form" aria-label="Audio conversion options">
+<div class="space-y-3" role="form" aria-label="Audio conversion options">
 
   <!-- Bitrate — horizontal connected -->
   {#if !hideBitrate}
@@ -125,7 +104,7 @@
     <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
       Sample Rate
     </legend>
-    <div class="flex flex-col">
+    <div class="inline-flex flex-col">
       {#each sampleRates as sr, i}
         <button
           onclick={() => options.sample_rate = sr.value}
@@ -192,7 +171,8 @@
     {#if options.mp3_bitrate_mode === 'vbr'}
       <fieldset data-tooltip="LAME VBR quality: 0 ≈ 245 kbps avg · 4 ≈ 165 kbps · 9 ≈ 65 kbps">
         <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">VBR Quality — V{options.mp3_vbr_quality}</legend>
-        <input type="range" min="0" max="9" step="1" bind:value={options.mp3_vbr_quality} class="w-full accent-[var(--accent)]" />
+        <input type="range" min="0" max="9" step="1" bind:value={options.mp3_vbr_quality} class="fade-range"
+               style="--fade-range-pct:{((options.mp3_vbr_quality ?? 0) / 9) * 100}%" />
         <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>V0 best</span><span>V9 smallest</span></div>
       </fieldset>
     {/if}
@@ -226,7 +206,8 @@
   {:else if options.output_format === 'flac'}
     <fieldset data-tooltip="FLAC compression level — 0 fastest · 8 smallest · fully lossless at every level">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression — {options.flac_compression}</legend>
-      <input type="range" min="0" max="8" step="1" bind:value={options.flac_compression} class="w-full accent-[var(--accent)]" />
+      <input type="range" min="0" max="8" step="1" bind:value={options.flac_compression} class="fade-range"
+             style="--fade-range-pct:{((options.flac_compression ?? 0) / 8) * 100}%" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>8 smallest</span></div>
     </fieldset>
     <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
@@ -250,7 +231,8 @@
     {#if options.ogg_bitrate_mode === 'vbr'}
       <fieldset data-tooltip="Vorbis quality: -1 lowest · 10 highest · 3–6 typical">
         <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Quality — {options.ogg_vbr_quality}</legend>
-        <input type="range" min="-1" max="10" step="1" bind:value={options.ogg_vbr_quality} class="w-full accent-[var(--accent)]" />
+        <input type="range" min="-1" max="10" step="1" bind:value={options.ogg_vbr_quality} class="fade-range"
+               style="--fade-range-pct:{(((options.ogg_vbr_quality ?? -1) - -1) / 11) * 100}%" />
         <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>-1 lowest</span><span>10 highest</span></div>
       </fieldset>
     {/if}
@@ -258,7 +240,7 @@
   {:else if options.output_format === 'aac'}
     <fieldset data-tooltip="LC universal · HE efficient ≤128 kbps · HEv2 adds Parametric Stereo for very low bitrates">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Profile</legend>
-      <div class="flex flex-col">
+      <div class="inline-flex flex-col">
         {#each [['lc','AAC-LC'],['he','HE-AAC'],['hev2','HE-AACv2']] as [v, lbl], i}
           <button onclick={() => options.aac_profile = v} class={segV(options.aac_profile === v, i, 3)}>{lbl}</button>
         {/each}
@@ -282,10 +264,12 @@
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 cursor-pointer"
+    <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
+                  bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
+                  {options.opus_vbr ? 'text-[var(--text-primary)]' : 'text-white/75'}"
            data-tooltip="Opus VBR — allocates more bits to complex passages for better quality at the same average size. Uncheck for fixed bitrate.">
-      <input type="checkbox" bind:checked={options.opus_vbr} class="accent-[var(--accent)]" />
-      <span class="text-[12px] text-[var(--text-primary)]">Variable bitrate (VBR)</span>
+      <input type="checkbox" bind:checked={options.opus_vbr} class="fade-check" />
+      Variable bitrate (VBR)
     </label>
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
@@ -319,7 +303,7 @@
   {:else if options.output_format === 'wma'}
     <fieldset data-tooltip="Standard — stereo lossy · Pro — multi-channel lossy · Lossless — bit-perfect like FLAC but Windows-only">
       <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">WMA Mode</legend>
-      <div class="flex flex-col">
+      <div class="inline-flex flex-col">
         {#each [['standard','Standard'],['pro','Pro (multi-channel)'],['lossless','Lossless']] as [v, lbl], i}
           <button onclick={() => options.wma_mode = v} class={segV(options.wma_mode === v, i, 3)}>{lbl}</button>
         {/each}
@@ -395,15 +379,16 @@
       <!-- Limiter -->
       <div data-tooltip="Hard peak limiter — prevents samples from exceeding the dBFS ceiling you set. −1.0 dBFS typical for streaming safety.">
         <button onclick={() => options.dsp_limiter_db = options.dsp_limiter_db != null ? null : -1.0}
-                class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
-                       {options.dsp_limiter_db != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
+                class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {options.dsp_limiter_db != null ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Limiter</span>
           {#if options.dsp_limiter_db != null}<span class="font-mono text-[11px]">{options.dsp_limiter_db.toFixed(1)} dBFS</span>{/if}
           <svg class="shrink-0 transition-transform duration-200 {options.dsp_limiter_db != null ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
         </button>
         {#if options.dsp_limiter_db != null}
           <div class="mt-1 px-1 space-y-1">
-            <input type="range" min="-12" max="0" step="0.5" bind:value={options.dsp_limiter_db} class="w-full accent-[var(--accent)]" />
+            <input type="range" min="-12" max="0" step="0.5" bind:value={options.dsp_limiter_db} class="fade-range"
+                   style="--fade-range-pct:{(((options.dsp_limiter_db ?? -1) - -12) / 12) * 100}%" />
             <div class="flex justify-between text-[10px] text-[var(--text-secondary)]"><span>−12 dBFS</span><span>0 dBFS</span></div>
           </div>
         {/if}
@@ -412,8 +397,8 @@
       <!-- Normalize -->
       <div data-tooltip="EBU R128 loudness normalisation — matches perceived volume to a LUFS target with a true-peak ceiling. Use for batches that need consistent loudness.">
         <button onclick={() => { options.normalize_loudness = !options.normalize_loudness; if (options.normalize_loudness) { options.normalize_lufs ??= -16; options.normalize_true_peak ??= -1; } }}
-                class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
-                       {options.normalize_loudness ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
+                class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {options.normalize_loudness ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Normalize</span>
           {#if options.normalize_loudness}
             <span class="font-mono text-[11px]">{options.normalize_lufs ?? -16} LUFS / {options.normalize_true_peak ?? -1} dBTP</span>
@@ -451,7 +436,8 @@
               <input type="range" min="-6" max="-0.1" step="0.1"
                      value={options.normalize_true_peak ?? -1}
                      oninput={(e) => options.normalize_true_peak = parseFloat(e.target.value)}
-                     class="w-full accent-[var(--accent)]" />
+                     class="fade-range"
+                     style="--fade-range-pct:{(((options.normalize_true_peak ?? -1) - -6) / 5.9) * 100}%" />
               <div class="flex justify-between items-center">
                 <div class="flex justify-between text-[10px] text-[var(--text-secondary)] flex-1"><span>−6 dBTP</span><span>−0.1 dBTP</span></div>
                 <span class="font-mono text-[11px] text-[var(--text-primary)] ml-2">{(options.normalize_true_peak ?? -1).toFixed(1)}</span>
@@ -464,8 +450,8 @@
       <!-- Highpass -->
       <div data-tooltip="Butterworth highpass filter — cuts everything below the cutoff frequency. 80 Hz removes rumble · 120 Hz for voice.">
         <button onclick={() => options.dsp_highpass_freq = options.dsp_highpass_freq != null ? null : 80}
-                class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
-                       {options.dsp_highpass_freq != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
+                class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {options.dsp_highpass_freq != null ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Highpass</span>
           {#if options.dsp_highpass_freq != null}<span class="font-mono text-[11px]">{options.dsp_highpass_freq} Hz</span>{/if}
           <svg class="shrink-0 transition-transform duration-200 {options.dsp_highpass_freq != null ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
@@ -477,7 +463,8 @@
                      class="w-24 px-2 py-1 text-[12px] font-mono rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
               <span class="text-[11px] text-[var(--text-secondary)]">Hz</span>
             </div>
-            <input type="range" min="0" max="100" value={Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100))} oninput={(e) => options.dsp_highpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="w-full accent-[var(--accent)]" />
+            <input type="range" min="0" max="100" value={Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100))} oninput={(e) => options.dsp_highpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="fade-range"
+                   style="--fade-range-pct:{Math.max(0, Math.min(100, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100)))}%" />
             <div class="flex justify-between text-[10px] text-[var(--text-secondary)]"><span>20 Hz</span><span>630 Hz</span><span>20 kHz</span></div>
           </div>
         {/if}
@@ -486,8 +473,8 @@
       <!-- Lowpass -->
       <div data-tooltip="Butterworth lowpass filter — cuts everything above the cutoff frequency. Tames harsh highs or simulates bandwidth-limited media.">
         <button onclick={() => options.dsp_lowpass_freq = options.dsp_lowpass_freq != null ? null : 8000}
-                class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
-                       {options.dsp_lowpass_freq != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
+                class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {options.dsp_lowpass_freq != null ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Lowpass</span>
           {#if options.dsp_lowpass_freq != null}<span class="font-mono text-[11px]">{options.dsp_lowpass_freq} Hz</span>{/if}
           <svg class="shrink-0 transition-transform duration-200 {options.dsp_lowpass_freq != null ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
@@ -499,7 +486,8 @@
                      class="w-24 px-2 py-1 text-[12px] font-mono rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
               <span class="text-[11px] text-[var(--text-secondary)]">Hz</span>
             </div>
-            <input type="range" min="0" max="100" value={Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))} oninput={(e) => options.dsp_lowpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="w-full accent-[var(--accent)]" />
+            <input type="range" min="0" max="100" value={Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))} oninput={(e) => options.dsp_lowpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="fade-range"
+                   style="--fade-range-pct:{Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))}%" />
             <div class="flex justify-between text-[10px] text-[var(--text-secondary)]"><span>20 Hz</span><span>630 Hz</span><span>20 kHz</span></div>
           </div>
         {/if}
@@ -508,15 +496,16 @@
       <!-- Stereo Width -->
       <div data-tooltip="Mid/side stereo adjustment. −100 collapses to mono · 0 unchanged · +100 maximum width. Useful for widening narrow mixes or mono-compatibility checks.">
         <button onclick={() => options.dsp_stereo_width = options.dsp_stereo_width != null ? null : 0}
-                class="w-full px-3 py-1.5 rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
-                       {options.dsp_stereo_width != null ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}">
+                class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {options.dsp_stereo_width != null ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Stereo Width</span>
           {#if options.dsp_stereo_width != null}<span class="font-mono text-[11px]">{options.dsp_stereo_width > 0 ? '+' : ''}{Math.round(options.dsp_stereo_width)}%</span>{/if}
           <svg class="shrink-0 transition-transform duration-200 {options.dsp_stereo_width != null ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
         </button>
         {#if options.dsp_stereo_width != null}
           <div class="mt-1 px-1 space-y-1">
-            <input type="range" min="-100" max="100" step="1" bind:value={options.dsp_stereo_width} class="w-full accent-[var(--accent)]" />
+            <input type="range" min="-100" max="100" step="1" bind:value={options.dsp_stereo_width} class="fade-range"
+                   style="--fade-range-pct:{(((options.dsp_stereo_width ?? 0) - -100) / 200) * 100}%" />
             <div class="flex justify-between text-[10px] text-[var(--text-secondary)]"><span>−100 Mono</span><span>0</span><span>+100 Wide</span></div>
           </div>
         {/if}
@@ -526,10 +515,12 @@
 
   </fieldset>
 
-  <label class="flex items-center gap-2 cursor-pointer"
+  <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
+                bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
+                {options.preserve_metadata ? 'text-[var(--text-primary)]' : 'text-white/75'}"
          data-tooltip="Keep ID3/Vorbis tags and cover art in the output. Uncheck to strip (removes title, artist, album, embedded artwork).">
-    <input type="checkbox" bind:checked={options.preserve_metadata} class="accent-[var(--accent)]" />
-    <span class="text-[12px] text-[var(--text-primary)]">Preserve metadata</span>
+    <input type="checkbox" bind:checked={options.preserve_metadata} class="fade-check" />
+    Preserve metadata
   </label>
 
 </div>
