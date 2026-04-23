@@ -34,6 +34,8 @@
     // Queue display props forwarded to Queue
     compact         = false,
     showExtColumn   = true,
+    brightFiletype  = false,
+    itemHasEdits    = () => false,
   } = $props();
 
   // ── Internal selection state ───────────────────────────────────────────────
@@ -210,14 +212,17 @@
   // ── Queue mutations ────────────────────────────────────────────────────────
 
   /** Add file paths to the queue. */
-  export function addFiles(paths) {
+  export function addFiles(paths, folderId = null) {
+    const folderIdx = folderId ? queue.findIndex(q => q.id === folderId) : -1;
+    let insertAt = folderIdx !== -1 ? folderIdx + 1 : queue.length;
     for (const path of paths) {
       const name = path.split('/').pop() ?? path;
       const ext  = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
       const mt   = mediaTypeFor(ext);
       const id   = crypto.randomUUID();
-      const item = { id, kind: 'file', parentId: null, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
-      queue.push(item);
+      const item = { id, kind: 'file', parentId: folderId, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
+      queue.splice(insertAt, 0, item);
+      insertAt++;
       if (['video', 'audio', 'image'].includes(mt)) {
         invoke('get_file_info', { path }).then(info => {
           const q = queue.find(q => q.id === id);
@@ -395,8 +400,9 @@
   onmovetofolder={moveItemToFolder}
   ondragstartfile={(id) => { draggingFileId = id; }}
   ondragendfile={() => { draggingFileId = null; }}
-  disableHoverInfo={selectedItem?.kind === 'folder'}
   {compatibleTypes}
   {compact}
   {showExtColumn}
+  {brightFiletype}
+  {itemHasEdits}
 />

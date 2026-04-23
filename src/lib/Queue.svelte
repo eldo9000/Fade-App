@@ -1,7 +1,7 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  let { queue, selectedId, selectedIds = new Set(), onselect, onremove, oncancel, ontogglefolder, onmovetofolder, ondragstartfile, ondragendfile, compatibleTypes = [], compact = false, showExtColumn = true, disableHoverInfo = false } = $props();
+  let { queue, selectedId, selectedIds = new Set(), onselect, onremove, oncancel, ontogglefolder, onmovetofolder, ondragstartfile, ondragendfile, compatibleTypes = [], compact = false, showExtColumn = true, disableHoverInfo = false, brightFiletype = false, itemHasEdits = () => false } = $props();
 
   // Two-pass layout: top-level rows (root files + folders) and a per-folder
   // child list. Folders always render; their children render only when
@@ -41,7 +41,9 @@
       if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
       // Past threshold — promote to a drag.
       draggingId        = _pointerStart.id;
-      _dragGhostLabel   = _pointerStart.label;
+      _dragGhostLabel   = selectedIds.has(_pointerStart.id) && selectedIds.size > 1
+        ? `${selectedIds.size} files`
+        : _pointerStart.label;
       _suppressNextClick = true;
       hoveredItem       = null;          // hide info popover during drag
       ondragstartfile?.(draggingId);
@@ -59,7 +61,12 @@
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const folderEl = el?.closest?.('[data-folder-drop]');
       const folderId = folderEl?.getAttribute('data-folder-drop') || null;
-      if (folderId) onmovetofolder?.(draggingId, folderId);
+      if (folderId) {
+        // Move all selected items if the dragged item is part of the selection,
+        // otherwise move only the dragged item.
+        const ids = selectedIds.has(draggingId) ? [...selectedIds] : [draggingId];
+        for (const id of ids) onmovetofolder?.(id, folderId);
+      }
       ondragendfile?.();
     }
     draggingId       = null;
@@ -238,6 +245,8 @@
       <div
         role="listitem"
         data-folder-drop={item.id}
+        onmouseenter={(e) => onItemEnter(e, item)}
+        onmouseleave={onItemLeave}
         onclick={(e) => onRowClick(e, item, false)}
         class="relative flex items-center gap-2 px-3 py-1 border-b border-[var(--border)] cursor-pointer group transition-colors
                {!isSelected(item.id) ? 'hover:bg-[var(--surface)]' : ''}
@@ -265,7 +274,9 @@
           <line x1="12" y1="22.08" x2="12" y2="12"/>
         </svg>
         <div class="flex-1 min-w-0">
-          <p class="text-[12px] font-medium truncate text-[var(--text-primary)] leading-tight">{item.name}</p>
+          <p class="text-[12px] font-medium overflow-hidden whitespace-nowrap text-[var(--text-primary)] leading-tight"
+             style="mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%); -webkit-mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%)"
+          >{item.name}</p>
           <p class="text-[10px] text-[var(--text-secondary)] leading-tight">
             {kids.length} file{kids.length === 1 ? '' : 's'}
           </p>
@@ -287,6 +298,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       {@const _incompat = isIncompatible(item)}
+      {@const _edited = itemHasEdits(item)}
       <div
         role="listitem"
         onpointerdown={(e) => onRowPointerDown(e, item)}
@@ -308,41 +320,50 @@
           </div>
         {/if}
 
-        <!-- Col 1 (both modes): status dot, traffic-light coloured -->
+        <!-- Col 1 (both modes): status dot (or dash if edited), traffic-light coloured -->
         <div class="shrink-0 w-5 flex items-center justify-center">
-          <span class="w-2 h-2 rounded-full {_incompat ? 'bg-white/10' : dotColor(item.status)}
-                       {item.status === 'converting' ? 'animate-pulse' : ''}"></span>
+          {#if _edited && item.status === 'pending'}
+            <span class="w-2 h-2 rounded-full {_incompat ? 'bg-white/10' : 'bg-[var(--accent)]'}"
+                  title="Edits applied"></span>
+          {:else}
+            <span class="w-2 h-2 rounded-full {_incompat ? 'bg-white/10' : dotColor(item.status)}
+                         {item.status === 'converting' ? 'animate-pulse' : ''}"></span>
+          {/if}
         </div>
 
         {#if compact}
           <!-- Compact: single row, ext in its own column (or merged, per setting). -->
           <div class="flex-1 min-w-0">
-            <p class="text-[12px] font-medium truncate leading-tight
-                      {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
-               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="text-[var(--text-secondary)] opacity-70">.{item.ext}</span>{/if}</p>
+            <p class="text-[12px] font-medium overflow-hidden whitespace-nowrap leading-tight
+                      {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}
+                      {_edited ? 'italic' : ''}"
+               style="mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%); -webkit-mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%)"
+               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="{brightFiletype ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-70'}">.{item.ext}</span>{/if}</p>
             {#if item.status === 'error'}
               {@render errorBlock(item)}
             {/if}
           </div>
-          <!-- Col 3 compact: ext (left-justified inside its own column) + hover actions overlay. -->
-          <div class="relative shrink-0 min-w-[32px] flex items-center justify-start">
-            {#if item.ext && showExtColumn}
-              <span class="text-[11px] leading-tight text-[var(--text-secondary)] opacity-70
-                           group-hover:opacity-0 transition-opacity">{item.ext}</span>
-            {/if}
-            {@render hoverActions(item)}
-          </div>
+          <!-- Col 3 compact: ext column only when enabled; hover actions overlay the row. -->
+          {#if item.ext && showExtColumn}
+            <div class="shrink-0 min-w-[32px] flex items-center justify-start">
+              <span class="text-[11px] leading-tight group-hover:opacity-0 transition-opacity
+                           {brightFiletype ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-70'}">{item.ext}</span>
+            </div>
+          {/if}
+          {@render hoverActions(item)}
         {:else}
           <!-- Expanded: two-line text on the left (filename + ext), 16:9 thumbnail
                on the right. The "File type column" setting does not apply here —
                ext always renders on its own second line so the thumbnail column
                can carry the visual weight on the right. -->
           <div class="flex-1 min-w-0">
-            <p class="text-[16px] font-medium truncate leading-tight
-                      {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}"
+            <p class="text-[16px] font-medium overflow-hidden whitespace-nowrap leading-tight
+                      {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}
+                      {_edited ? 'italic' : ''}"
+               style="mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%); -webkit-mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%)"
                title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
             {#if item.ext}
-              <p class="text-[13px] leading-tight text-[var(--text-secondary)] opacity-70 truncate">{item.ext}</p>
+              <p class="text-[13px] leading-tight truncate {brightFiletype ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-70'}">{item.ext}</p>
             {/if}
             {#if item.status === 'error'}
               {@render errorBlock(item)}
@@ -429,6 +450,20 @@
     <div style="background:#1e1e22; border:1px solid rgba(255,255,255,0.1); border-radius:7px;
                 padding:10px 13px; min-width:180px; max-width:248px;
                 box-shadow:0 8px 24px rgba(0,0,0,0.5)">
+      {#if hoveredItem.kind === 'folder'}
+        <!-- Proxy node hint -->
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(139,92,246,0.9)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+          <p style="font-size:11px; font-weight:600; color:rgba(255,255,255,0.92)">{hoveredItem.name}</p>
+        </div>
+        <p style="font-size:10px; color:rgba(255,255,255,0.5); line-height:1.5">
+          Drag files or folders onto this node to add them.
+        </p>
+      {:else}
       <!-- Filename row — same [copy | text] skeleton as the info rows below,
            so all copy buttons sit at the same x. -->
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px">
@@ -501,6 +536,7 @@
           <span style="font-size:10px; color:rgba(255,255,255,0.3)">Loading…</span>
         {/if}
       </div>
+      {/if}
       {/if}
     </div>
   </div>

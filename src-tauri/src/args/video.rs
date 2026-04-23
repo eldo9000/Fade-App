@@ -7,6 +7,9 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
     if opts.output_format == "gif" && opts.extract_audio != Some(true) {
         return build_gif_args(input, output, opts);
     }
+    if opts.output_format.starts_with("seq_") {
+        return build_image_sequence_args(input, output, opts);
+    }
 
     let mut args: Vec<String> = vec!["-y".to_string()];
 
@@ -211,8 +214,26 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     match codec {
         "h264" | "h265" => {
-            if let Some(crf) = opts.crf {
-                out.extend(["-crf".to_string(), crf.to_string()]);
+            let mode = opts.video_bitrate_mode.as_deref().unwrap_or("crf");
+            match mode {
+                "vbr" => {
+                    let br = opts.video_bitrate.unwrap_or(4000);
+                    out.extend(["-b:v".to_string(), format!("{}k", br)]);
+                }
+                "cbr" => {
+                    let br = opts.video_bitrate.unwrap_or(4000);
+                    out.extend([
+                        "-b:v".to_string(), format!("{}k", br),
+                        "-minrate".to_string(), format!("{}k", br),
+                        "-maxrate".to_string(), format!("{}k", br),
+                        "-bufsize".to_string(), format!("{}k", br * 2),
+                    ]);
+                }
+                _ => {
+                    if let Some(crf) = opts.crf {
+                        out.extend(["-crf".to_string(), crf.to_string()]);
+                    }
+                }
             }
             let preset = opts.preset.as_deref().unwrap_or("medium");
             out.extend(["-preset".to_string(), preset.to_string()]);
@@ -268,8 +289,12 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             }
         }
         "prores" => {
-            // Default to HQ (profile 3) if not overridden by pix_fmt/user opts.
-            out.extend(["-profile:v".to_string(), "3".to_string()]);
+            let profile = opts.prores_profile.unwrap_or(3);
+            out.extend(["-profile:v".to_string(), profile.to_string()]);
+            // 4444/4444XQ variants require yuv444p10le
+            if profile >= 4 {
+                out.extend(["-pix_fmt".to_string(), "yuv444p10le".to_string()]);
+            }
         }
         "dnxhd" => {
             // Fixed bitrate required — must match source resolution × fps exactly.
@@ -349,6 +374,61 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
     out
 }
 
+/// Image sequence pipeline: one frame per output file (PNG / JPEG / TIFF).
+/// `output` is the pre-created directory; the frame pattern is appended here.
+fn build_image_sequence_args(input: &str, output_dir: &str, opts: &ConvertOptions) -> Vec<String> {
+    let img_ext = match opts.output_format.as_str() {
+        "seq_jpg"  => "jpg",
+        "seq_tiff" => "tiff",
+        _          => "png",
+    };
+    let pattern = format!("{output_dir}/frame_%04d.{img_ext}");
+
+    let mut args: Vec<String> = vec!["-y".to_string()];
+
+    if let Some(ss) = opts.trim_start {
+        args.extend(["-ss".to_string(), ss.to_string()]);
+    }
+    args.extend(["-i".to_string(), input.to_string()]);
+    if let Some(t) = opts.trim_end {
+        let end = if let Some(ss) = opts.trim_start { t - ss } else { t };
+        args.extend(["-t".to_string(), end.to_string()]);
+    }
+
+    // Frame rate — default to original; users can pick 24/25/30/60 from the picker.
+    if let Some(fr) = opts.frame_rate.as_deref() {
+        if fr != "original" {
+            args.extend(["-r".to_string(), fr.to_string()]);
+        }
+    }
+
+    // Codec and quality per format.
+    match img_ext {
+        "jpg" => {
+            args.extend(["-vcodec".to_string(), "mjpeg".to_string()]);
+            // mjpeg quality scale: 2 (best) – 31 (worst). Map from CRF 0–51.
+            let crf = opts.crf.unwrap_or(23) as f32;
+            let qv = (2.0 + (crf / 51.0) * 29.0).round() as u32;
+            args.extend(["-q:v".to_string(), qv.to_string()]);
+        }
+        "tiff" => args.extend(["-vcodec".to_string(), "tiff".to_string()]),
+        _      => args.extend(["-vcodec".to_string(), "png".to_string()]),
+    }
+
+    // Optional resolution scaling.
+    if let Some(res) = &opts.resolution {
+        if res != "original" {
+            args.extend(["-vf".to_string(), resolution_to_scale(res)]);
+        }
+    }
+
+    args.push("-an".to_string()); // no audio in image sequences
+
+    args.extend(["-progress".to_string(), "pipe:1".to_string(), "-nostats".to_string()]);
+    args.push(pattern);
+    args
+}
+
 /// GIF pipeline: two-pass palettegen/paletteuse filtergraph. Completely
 /// different from the standard video encoder path — no codec, preset, CRF,
 /// or audio flags apply.
@@ -423,25 +503,18 @@ fn build_gif_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<Strin
 }
 
 pub fn resolution_to_scale(res: &str) -> String {
-    match res {
-        "1920x1080" => {
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
-                .to_string()
-        }
-        "1280x720" => {
-            "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
-                .to_string()
-        }
-        "854x480" => {
-            "scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2"
-                .to_string()
-        }
-        "1440x1080" => {
-            "scale=1440:1080:force_original_aspect_ratio=decrease,pad=1440:1080:(ow-iw)/2:(oh-ih)/2"
-                .to_string()
-        }
-        other => format!("scale={}", other),
-    }
+    // Parse "WxH" → emit a scale filter that:
+    //   · preserves aspect ratio (decrease only — never upscale beyond target)
+    //   · pads to exact target dimensions with black (letterbox / pillarbox)
+    //   · uses lanczos for sharper downscaling vs FFmpeg's bilinear default
+    let (w, h) = res
+        .split_once('x')
+        .map(|(a, b)| (a, b))
+        .unwrap_or((res, "-1"));
+    format!(
+        "scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,\
+         pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+    )
 }
 
 #[cfg(test)]

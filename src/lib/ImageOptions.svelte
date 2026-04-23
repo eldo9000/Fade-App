@@ -47,7 +47,7 @@
   <!-- Quality (for lossy formats) -->
   {#if ['jpeg', 'webp', 'avif'].includes(options.output_format)}
     <fieldset data-tooltip="Lossy compression quality — 80–95 typical for photos · 100 near-lossless · below 60 visible artifacts">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+      <legend class="fade-label">
         Quality — {options.quality}%
       </legend>
       <input
@@ -67,7 +67,7 @@
 
   <!-- Crop -->
   <fieldset data-tooltip="Click a ratio then drag on the preview to crop. Free = any aspect · 1:1 square · 16:9 widescreen · 3:2 DSLR · 21:9 ultrawide.">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="fade-label">
       Crop
     </legend>
     <div class="grid" style="grid-template-columns: repeat({cropPresets.length}, 1fr)">
@@ -95,7 +95,7 @@
 
   <!-- Resize mode -->
   <fieldset data-tooltip="Scale the output. Percentage scales uniformly · Pixel dimensions lets you set exact W×H · No resize keeps original size.">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="fade-label">
       Resize
     </legend>
     <div class="inline-flex flex-col">
@@ -107,7 +107,7 @@
 
   {#if options.resize_mode === 'percent'}
     <fieldset data-tooltip="Uniform scale factor — 50% halves dimensions · 200% doubles · aspect ratio always preserved">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+      <legend class="fade-label">
         Scale — {options.resize_percent}%
       </legend>
       <input
@@ -125,7 +125,7 @@
 
   {#if options.resize_mode === 'pixels'}
     <fieldset data-tooltip="Set exact output dimensions in pixels. Leave one side at 0 to auto-compute it and keep aspect ratio.">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+      <legend class="fade-label">
         Dimensions (0 = auto)
       </legend>
       <div class="flex gap-3 items-center">
@@ -157,7 +157,7 @@
 
   {#if options.output_format === 'jpeg'}
     <fieldset data-tooltip="4:4:4 for text / print / high detail · 4:2:0 for photos / smallest file">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Chroma Subsampling</legend>
+      <legend class="fade-label">Chroma Subsampling</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['420','4:2:0'],['422','4:2:2'],['444','4:4:4']] as [v, lbl], i}
           <button onclick={() => options.jpeg_chroma = v} class={seg(options.jpeg_chroma === v, i, 3)}>{lbl}</button>
@@ -172,7 +172,7 @@
 
   {:else if options.output_format === 'png'}
     <fieldset data-tooltip="0 none · 9 max · always lossless">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression — {options.png_compression}</legend>
+      <legend class="fade-label">Compression — {options.png_compression}</legend>
       <input type="range" min="0" max="9" step="1"
         bind:value={options.png_compression}
         class="fade-range"
@@ -180,7 +180,7 @@
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>9 smallest</span></div>
     </fieldset>
     <fieldset data-tooltip="RGB/RGBA full color · Grayscale shrinks file ~3× · Palette 8-bit smallest for few colors / line art">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Color Mode</legend>
+      <legend class="fade-label">Color Mode</legend>
       <div class="inline-flex flex-col">
         {#each [['rgb','RGB'],['rgba','RGBA'],['gray','Grayscale'],['graya','Grayscale + Alpha'],['palette','Palette (8-bit)']] as [v, lbl], i}
           <button onclick={() => options.png_color_mode = v} class={segV(options.png_color_mode === v, i, 5)}>{lbl}</button>
@@ -195,7 +195,7 @@
 
   {:else if options.output_format === 'tiff'}
     <fieldset data-tooltip="LZW widely supported lossless · Deflate (zip) best ratio · PackBits legacy fast · None largest but max compatibility">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression</legend>
+      <legend class="fade-label">Compression</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [['none','None'],['lzw','LZW'],['deflate','Deflate'],['packbits','PackBits']] as [v, lbl], i}
           <button onclick={() => options.tiff_compression = v} class={seg(options.tiff_compression === v, i, 4)}>{lbl}</button>
@@ -203,7 +203,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="8-bit standard · 16-bit for HDR / color grading · 32-bit float for scientific imaging">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
+      <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[8,'8-bit'],[16,'16-bit'],[32,'32-bit float']] as [v, lbl], i}
           <button onclick={() => options.tiff_bit_depth = v} class={seg(options.tiff_bit_depth === v, i, 3)}>{lbl}</button>
@@ -211,7 +211,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="CMYK for print workflows">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Color Mode</legend>
+      <legend class="fade-label">Color Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['rgb','RGB'],['cmyk','CMYK'],['gray','Grayscale']] as [v, lbl], i}
           <button onclick={() => options.tiff_color_mode = v} class={seg(options.tiff_color_mode === v, i, 3)}>{lbl}</button>
@@ -226,7 +226,7 @@
       <span>Lossless mode</span>
     </label>
     <fieldset data-tooltip="0 fastest · 6 best compression (slower encode)">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression Method — {options.webp_method}</legend>
+      <legend class="fade-label">Compression Method — {options.webp_method}</legend>
       <input type="range" min="0" max="6" step="1"
         bind:value={options.webp_method}
         class="fade-range"
@@ -236,7 +236,7 @@
 
   {:else if options.output_format === 'avif'}
     <fieldset data-tooltip="0 slowest / best · 10 fastest / worst">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Speed — {options.avif_speed}</legend>
+      <legend class="fade-label">Speed — {options.avif_speed}</legend>
       <input type="range" min="0" max="10" step="1"
         bind:value={options.avif_speed}
         class="fade-range"
@@ -244,7 +244,7 @@
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>10 fastest</span></div>
     </fieldset>
     <fieldset data-tooltip="4:2:0 smallest file · 4:2:2 broadcast quality · 4:4:4 full chroma for text / graphics">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Chroma</legend>
+      <legend class="fade-label">Chroma</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['420','YUV 4:2:0'],['422','YUV 4:2:2'],['444','YUV 4:4:4']] as [v, lbl], i}
           <button onclick={() => options.avif_chroma = v} class={seg(options.avif_chroma === v, i, 3)}>{lbl}</button>
@@ -254,7 +254,7 @@
 
   {:else if options.output_format === 'bmp'}
     <fieldset data-tooltip="Uncompressed — large files · legacy Windows format">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
+      <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [[8,'8-bit'],[16,'16-bit'],[24,'24-bit'],[32,'32-bit']] as [v, lbl], i}
           <button onclick={() => options.bmp_bit_depth = v} class={seg(options.bmp_bit_depth === v, i, 4)}>{lbl}</button>
@@ -265,7 +265,7 @@
 
   <!-- Rotation & flip -->
   <fieldset data-tooltip="Rotate clockwise in 90° steps, and/or flip the image. Combine with Auto-rotate to correct phone photos.">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="fade-label">
       Rotation & Orientation
     </legend>
     <div class="grid mb-2" style="grid-template-columns: repeat(4, 1fr)"

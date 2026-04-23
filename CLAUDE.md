@@ -3,7 +3,7 @@
 ## Shared Standards
 
 - **Engineering standards:** `~/Downloads/Github/Business-OS/standards/ENGINEERING.md` — session protocol, investigation logs, commit conventions, Known Patterns & Gotchas. Read at the start of any implementation session.
-- **Observer Loop:** `~/Downloads/Github/Business-OS/standards/OBSERVER-LOOP.md` — the self-regulating pattern this project uses. Explains git notes, SESSION-STATUS, INVESTIGATION-LOG, OBSERVER-STATE, and the two skills below.
+- **Observer Loop:** `~/Downloads/Github/Business-OS/standards/OBSERVER-LOOP.md` — the self-regulating pattern this project uses. Explains SESSION-STATUS, INVESTIGATION-LOG, OBSERVER-STATE, and the two skills below.
 - **Design language & shared patterns:** `~/Downloads/Github/Libre-Apps/CLAUDE.md` — design tokens, Tauri 2 patterns, Svelte 5 patterns, cross-app conventions. Read before any UI or frontend work.
 
 ---
@@ -11,7 +11,7 @@
 ## Skills reference
 
 - **`/observe-start`** — session-start briefing. Run this at the start of any work session. Auto-detects the current repo and outputs a single recommendation with a suggested next invocation. Stops — does not start any work.
-- **`/observe-sync`** — observer agent. Run this after significant work to refresh `OBSERVER-STATE.md`. Synthesizes all artifacts (git notes, SESSION-STATUS, INVESTIGATION-LOG, Known Patterns, CI) into a coherent model of project health.
+- **`/observe-sync`** — observer agent. Run this after significant work to refresh `OBSERVER-STATE.md`. Synthesizes all artifacts (SESSION-STATUS, INVESTIGATION-LOG, Known Patterns, recent git log, CI) into a coherent model of project health.
 
 ---
 
@@ -50,30 +50,6 @@ On macOS: `brew install ffmpeg imagemagick` before running.
 - `ARCHITECTURE.md` — technical architecture decisions
 - `INVESTIGATION-LOG.md` — active debugging arc (append-only)
 - `KNOWN-BUG-CLASSES.md` — permanent known failure patterns
-
----
-
-## Commit protocol — git notes required
-
-After every `git commit` in this repo, attach a structured git note:
-
-```bash
-git notes add -m "app: fade
-state: active | stable | fragile
-context: <what you were in the middle of — one sentence>
-deferred: <what you deliberately left incomplete — one sentence, or 'none'>
-fragile: <what's nearby that could break — one sentence, or 'none'>
-ci: green | red | unknown" HEAD
-```
-
-Then push the note:
-```bash
-git push origin refs/notes/commits
-```
-
-**This is not optional.** The observer agent reads these notes to maintain project awareness. A commit without a note is invisible to the observer.
-
-If you forget on a prior commit: `git notes add <sha>` works retroactively.
 
 ---
 

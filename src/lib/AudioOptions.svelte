@@ -40,6 +40,8 @@
   function onTrimEndInput(e)   { options.trim_end   = parseTime(e.target.value); }
   function clearTrim() { options.trim_start = null; options.trim_end = null; }
 
+  let lengthOpen = $state(false);
+
   // ── Button style helpers ───────────────────────────────────────────────────
 
   // Dev-only green segment helpers
@@ -85,7 +87,7 @@
   <!-- Bitrate — horizontal connected -->
   {#if !hideBitrate}
     <fieldset data-tooltip="64–128 kbps for voice/podcast · 192 kbps standard for music streaming · 320 kbps for archival MP3">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+      <legend class="fade-label">
         Bitrate — kbps
       </legend>
       <div class="grid" style="grid-template-columns: repeat({bitrates.length}, 1fr)">
@@ -101,7 +103,7 @@
 
   <!-- Sample rate — vertical connected stack (full label text) -->
   <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="fade-label">
       Sample Rate
     </legend>
     <div class="inline-flex flex-col">
@@ -114,54 +116,11 @@
     </div>
   </fieldset>
 
-  <!-- Trim -->
-  <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds. Leave blank to keep that edge. Visual trim handles on the timeline sync to these fields.">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
-      Trim (MM:SS or seconds)
-    </legend>
-    <div class="flex gap-3 items-end">
-      <div class="flex-1">
-        <label class="text-[11px] text-[var(--text-secondary)]" for="aud-trim-start">Start</label>
-        <input id="aud-trim-start" type="text"
-          value={trimStartRaw} oninput={onTrimStartInput}
-          class="w-full mt-1 px-3 py-1.5 rounded-md border border-[var(--border)]
-                 bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
-                 focus:outline-none focus:border-[var(--accent)]"
-        />
-      </div>
-      <div class="flex-1">
-        <label class="text-[11px] text-[var(--text-secondary)]" for="aud-trim-end">End</label>
-        <input id="aud-trim-end" type="text"
-          value={trimEndRaw} oninput={onTrimEndInput}
-          class="w-full mt-1 px-3 py-1.5 rounded-md text-[13px]
-                 focus:outline-none focus:border-[var(--accent)]
-                 bg-[var(--surface)] text-[var(--text-primary)]
-                 {errors.audio_trim ? 'border border-red-500' : 'border border-[var(--border)]'}"
-        />
-      </div>
-      {#if options.trim_start != null || options.trim_end != null}
-        <button onclick={clearTrim}
-          class="px-3 py-1.5 rounded-md text-[12px] border border-[var(--border)]
-                 text-red-500 hover:border-red-400 transition-colors shrink-0">
-          Clear
-        </button>
-      {/if}
-    </div>
-    {#if errors.audio_trim}
-      <p class="text-[11px] text-red-500 mt-1">{errors.audio_trim}</p>
-    {/if}
-  </fieldset>
-
-  <fieldset data-tooltip="Prepend and/or append silence to the output. Useful for breathing room or aligning to a beat grid.">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Silence Padding</legend>
-    <SilencePad bind:padFront={options.pad_front} bind:padEnd={options.pad_end} />
-  </fieldset>
-
   <!-- ── Format-specific controls ──────────────────────────────────────── -->
 
   {#if options.output_format === 'mp3'}
     <fieldset data-tooltip="CBR — fixed bitrate · VBR — variable bitrate (smaller files at same quality)">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate Mode</legend>
+      <legend class="fade-label">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [['cbr','CBR'],['vbr','VBR']] as [v, lbl], i}
           <button onclick={() => options.mp3_bitrate_mode = v} class={seg(options.mp3_bitrate_mode === v, i, 2)}>{lbl}</button>
@@ -170,14 +129,14 @@
     </fieldset>
     {#if options.mp3_bitrate_mode === 'vbr'}
       <fieldset data-tooltip="LAME VBR quality: 0 ≈ 245 kbps avg · 4 ≈ 165 kbps · 9 ≈ 65 kbps">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">VBR Quality — V{options.mp3_vbr_quality}</legend>
+        <legend class="fade-label">VBR Quality — V{options.mp3_vbr_quality}</legend>
         <input type="range" min="0" max="9" step="1" bind:value={options.mp3_vbr_quality} class="fade-range"
                style="--fade-range-pct:{((options.mp3_vbr_quality ?? 0) / 9) * 100}%" />
         <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>V0 best</span><span>V9 smallest</span></div>
       </fieldset>
     {/if}
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo'],['joint','Joint']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 4)}>{lbl}</button>
@@ -187,7 +146,7 @@
 
   {:else if options.output_format === 'wav' || options.output_format === 'aiff'}
     <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
+      <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit'],[32,'32-bit float']] as [v, lbl], i}
           <button onclick={() => options.bit_depth = v} class={seg(options.bit_depth === v, i, 3)}>{lbl}</button>
@@ -195,7 +154,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
@@ -205,13 +164,13 @@
 
   {:else if options.output_format === 'flac'}
     <fieldset data-tooltip="FLAC compression level — 0 fastest · 8 smallest · fully lossless at every level">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Compression — {options.flac_compression}</legend>
+      <legend class="fade-label">Compression — {options.flac_compression}</legend>
       <input type="range" min="0" max="8" step="1" bind:value={options.flac_compression} class="fade-range"
              style="--fade-range-pct:{((options.flac_compression ?? 0) / 8) * 100}%" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>8 smallest</span></div>
     </fieldset>
     <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
+      <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit']] as [v, lbl], i}
           <button onclick={() => options.bit_depth = v} class={seg(options.bit_depth === v, i, 2)}>{lbl}</button>
@@ -221,7 +180,7 @@
 
   {:else if options.output_format === 'ogg'}
     <fieldset data-tooltip="VBR — variable bitrate by quality setting · CBR — fixed bitrate · ABR — averages to a target">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate Mode</legend>
+      <legend class="fade-label">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['vbr','VBR'],['cbr','CBR'],['abr','ABR']] as [v, lbl], i}
           <button onclick={() => options.ogg_bitrate_mode = v} class={seg(options.ogg_bitrate_mode === v, i, 3)}>{lbl}</button>
@@ -230,7 +189,7 @@
     </fieldset>
     {#if options.ogg_bitrate_mode === 'vbr'}
       <fieldset data-tooltip="Vorbis quality: -1 lowest · 10 highest · 3–6 typical">
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Quality — {options.ogg_vbr_quality}</legend>
+        <legend class="fade-label">Quality — {options.ogg_vbr_quality}</legend>
         <input type="range" min="-1" max="10" step="1" bind:value={options.ogg_vbr_quality} class="fade-range"
                style="--fade-range-pct:{(((options.ogg_vbr_quality ?? -1) - -1) / 11) * 100}%" />
         <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>-1 lowest</span><span>10 highest</span></div>
@@ -239,7 +198,7 @@
 
   {:else if options.output_format === 'aac'}
     <fieldset data-tooltip="LC universal · HE efficient ≤128 kbps · HEv2 adds Parametric Stereo for very low bitrates">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Profile</legend>
+      <legend class="fade-label">Profile</legend>
       <div class="inline-flex flex-col">
         {#each [['lc','AAC-LC'],['he','HE-AAC'],['hev2','HE-AACv2']] as [v, lbl], i}
           <button onclick={() => options.aac_profile = v} class={segV(options.aac_profile === v, i, 3)}>{lbl}</button>
@@ -247,7 +206,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
@@ -257,7 +216,7 @@
 
   {:else if options.output_format === 'opus'}
     <fieldset data-tooltip="audio — music · voip — speech · lowdelay — realtime">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Application</legend>
+      <legend class="fade-label">Application</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['audio','Music'],['voip','Voice'],['lowdelay','Low-Delay']] as [v, lbl], i}
           <button onclick={() => options.opus_application = v} class={seg(options.opus_application === v, i, 3)}>{lbl}</button>
@@ -272,7 +231,7 @@
       Variable bitrate (VBR)
     </label>
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
@@ -282,7 +241,7 @@
 
   {:else if options.output_format === 'm4a'}
     <fieldset data-tooltip="AAC — small lossy files, universal compatibility · ALAC — Apple Lossless, same size as FLAC with native iOS/macOS support">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Sub-Codec</legend>
+      <legend class="fade-label">Sub-Codec</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [['aac','AAC (lossy)'],['alac','ALAC (lossless)']] as [v, lbl], i}
           <button onclick={() => options.m4a_subcodec = v} class={seg(options.m4a_subcodec === v, i, 2)}>{lbl}</button>
@@ -291,7 +250,7 @@
     </fieldset>
     {#if options.m4a_subcodec === 'alac'}
       <fieldset>
-        <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
+        <legend class="fade-label">Bit Depth</legend>
         <div class="grid" style="grid-template-columns:repeat(2,1fr)">
           {#each [[16,'16-bit'],[24,'24-bit']] as [v, lbl], i}
             <button onclick={() => options.bit_depth = v} class={seg(options.bit_depth === v, i, 2)}>{lbl}</button>
@@ -302,7 +261,7 @@
 
   {:else if options.output_format === 'wma'}
     <fieldset data-tooltip="Standard — stereo lossy · Pro — multi-channel lossy · Lossless — bit-perfect like FLAC but Windows-only">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">WMA Mode</legend>
+      <legend class="fade-label">WMA Mode</legend>
       <div class="inline-flex flex-col">
         {#each [['standard','Standard'],['pro','Pro (multi-channel)'],['lossless','Lossless']] as [v, lbl], i}
           <button onclick={() => options.wma_mode = v} class={segV(options.wma_mode === v, i, 3)}>{lbl}</button>
@@ -312,7 +271,7 @@
 
   {:else if options.output_format === 'alac'}
     <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bit Depth</legend>
+      <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit'],[32,'32-bit']] as [v, lbl], i}
           <button onclick={() => options.bit_depth = v} class={seg(options.bit_depth === v, i, 3)}>{lbl}</button>
@@ -320,7 +279,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
@@ -330,7 +289,7 @@
 
   {:else if options.output_format === 'ac3'}
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['mono','Mono'],['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
@@ -338,7 +297,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="448 kbps typical for 5.1 broadcast · 48 kHz required">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate — kbps</legend>
+      <legend class="fade-label">Bitrate — kbps</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [192, 384, 448, 640] as br, i}
           <button onclick={() => options.ac3_bitrate = br} class={seg(options.ac3_bitrate === br, i, 4)}>{br}</button>
@@ -348,7 +307,7 @@
 
   {:else if options.output_format === 'dts'}
     <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Channels</legend>
+      <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 2)}>{lbl}</button>
@@ -356,7 +315,7 @@
       </div>
     </fieldset>
     <fieldset data-tooltip="FFmpeg encodes DTS core only">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Bitrate — kbps</legend>
+      <legend class="fade-label">Bitrate — kbps</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [754, 1510] as br, i}
           <button onclick={() => options.dts_bitrate = br} class={seg(options.dts_bitrate === br, i, 2)}>{br}</button>
@@ -369,12 +328,68 @@
   <fieldset
     data-tooltip="Hard-limit peaks · EBU R128 normalisation · Butterworth highpass/lowpass · Stereo width adjustment"
   >
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
+    <legend class="fade-label">
       Processing
     </legend>
 
     <!-- Accordion-style DSP toggles: rounded, separated, chevron, inline expansion -->
     <div class="space-y-1">
+
+      <!-- Length -->
+      <div>
+        <button onclick={() => lengthOpen = !lengthOpen}
+                class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
+                       {lengthOpen ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
+          <span class="flex-1">Length</span>
+          {#if options.trim_start != null || options.trim_end != null || options.pad_front || options.pad_end}
+            <span class="font-mono text-[11px]">edited</span>
+          {/if}
+          <svg class="shrink-0 transition-transform duration-200 {lengthOpen ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
+        </button>
+        {#if lengthOpen}
+          <div class="mt-1 px-1 space-y-3">
+            <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds. Leave blank to keep that edge.">
+              <legend class="fade-label">Trim (MM:SS or seconds)</legend>
+              <div class="flex gap-3 items-end">
+                <div class="flex-1">
+                  <label class="text-[11px] text-[var(--text-secondary)]" for="aud-trim-start">Start</label>
+                  <input id="aud-trim-start" type="text"
+                    value={trimStartRaw} oninput={onTrimStartInput}
+                    class="w-full mt-1 px-3 py-1.5 rounded-md border border-[var(--border)]
+                           bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
+                           focus:outline-none focus:border-[var(--accent)]"
+                  />
+                </div>
+                <div class="flex-1">
+                  <label class="text-[11px] text-[var(--text-secondary)]" for="aud-trim-end">End</label>
+                  <input id="aud-trim-end" type="text"
+                    value={trimEndRaw} oninput={onTrimEndInput}
+                    class="w-full mt-1 px-3 py-1.5 rounded-md text-[13px]
+                           focus:outline-none focus:border-[var(--accent)]
+                           bg-[var(--surface)] text-[var(--text-primary)]
+                           {errors.audio_trim ? 'border border-red-500' : 'border border-[var(--border)]'}"
+                  />
+                </div>
+                {#if options.trim_start != null || options.trim_end != null}
+                  <button onclick={clearTrim}
+                    class="px-3 py-1.5 rounded-md text-[12px] border border-[var(--border)]
+                           text-red-500 hover:border-red-400 transition-colors shrink-0">
+                    Clear
+                  </button>
+                {/if}
+              </div>
+              {#if errors.audio_trim}
+                <p class="text-[11px] text-red-500 mt-1">{errors.audio_trim}</p>
+              {/if}
+            </fieldset>
+
+            <fieldset data-tooltip="Prepend and/or append silence to the output. Useful for breathing room or aligning to a beat grid.">
+              <legend class="fade-label">Silence Padding</legend>
+              <SilencePad bind:padFront={options.pad_front} bind:padEnd={options.pad_end} />
+            </fieldset>
+          </div>
+        {/if}
+      </div>
 
       <!-- Limiter -->
       <div data-tooltip="Hard peak limiter — prevents samples from exceeding the dBFS ceiling you set. −1.0 dBFS typical for streaming safety.">

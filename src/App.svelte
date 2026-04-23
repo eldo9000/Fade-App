@@ -1,5 +1,6 @@
 <script>
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import fadeIconDark from '../Fade-icon-dark.png';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
   import { initTheme } from '@libre/ui/src/theme.js';
@@ -18,6 +19,14 @@
   import { createLimiter, defaultBatchConcurrency } from './lib/concurrency.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
+  import { overlay } from './lib/stores/overlay.svelte.js';
+
+  // Move a rendered element to document.body so it escapes every ancestor
+  // stacking context / overflow / transform. Used by the overlay dropdown.
+  function portal(node) {
+    document.body.appendChild(node);
+    return () => { if (node.parentNode === document.body) document.body.removeChild(node); };
+  }
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { createSettings } from './lib/stores/settings.svelte.js';
   import { pushError, clearDiagnostics, getEntries as getDiagEntries, snapshotText as diagSnapshot, loadPersisted as loadPersistedDiag, uploadDiagnostics, BETA } from './lib/stores/diagnostics.svelte.js';
@@ -289,7 +298,7 @@
   // Advanced audio panel — persists across file switches
   let vizExpanded = $state(false);
   let queueCompact = $state(false);
-  let recurseSubfolders = $state(true);
+  const recurseSubfolders = true;
 
   // Sidebar filters — typed into the search field at the top of each
   // sidebar, narrows what's visible below. Case-insensitive substring.
@@ -536,6 +545,9 @@
     dnxhr_profile: 'dnxhr_sq',
     dnxhd_bitrate: 185,
     dv_standard: 'ntsc',
+    video_bitrate_mode: 'crf',
+    video_bitrate: 4000,
+    prores_profile: 3,
   });
 
   let audioOptions = $state({
@@ -897,7 +909,9 @@
     }
 
     const candidates = mode === 'selected'
-      ? (selectedItem ? [selectedItem] : [])
+      ? (selectedIds.size > 1
+          ? queue.filter(q => selectedIds.has(q.id))
+          : selectedItem ? [selectedItem] : [])
       : visibleQueue;
 
     // Allow re-converting done / error / cancelled items. Only skip items
@@ -987,6 +1001,42 @@
     }
   }
 
+  // ── Edit detection — has a category's options deviated from identity? ────────
+  // Used to show an edit indicator on queue items (dash + italic filename).
+  const _audioHasEdits = $derived(
+    (audioOptions.trim_start != null && audioOptions.trim_start > 0) ||
+    audioOptions.trim_end != null ||
+    (audioOptions.fade_in  != null && audioOptions.fade_in  > 0) ||
+    (audioOptions.fade_out != null && audioOptions.fade_out > 0) ||
+    audioOptions.normalize_loudness ||
+    audioOptions.dsp_highpass_freq  != null ||
+    audioOptions.dsp_lowpass_freq   != null ||
+    audioOptions.dsp_stereo_width   != null ||
+    audioOptions.dsp_limiter_db     != null ||
+    (audioOptions.pad_front != null && audioOptions.pad_front > 0) ||
+    (audioOptions.pad_end   != null && audioOptions.pad_end   > 0)
+  );
+  const _videoHasEdits = $derived(
+    (videoOptions.trim_start != null && videoOptions.trim_start > 0) ||
+    videoOptions.trim_end != null ||
+    videoOptions.frame_rate !== 'original'
+  );
+  const _imageHasEdits = $derived(
+    imageOptions.crop_width != null ||
+    imageOptions.rotation !== 0      ||
+    imageOptions.flip_h              ||
+    imageOptions.flip_v              ||
+    imageOptions.resize_mode !== 'none'
+  );
+  function itemHasEdits(item) {
+    if (!item || item.kind !== 'file') return false;
+    if (!selectedIds.has(item.id)) return false;
+    if (item.mediaType === 'audio') return _audioHasEdits;
+    if (item.mediaType === 'video') return _videoHasEdits;
+    if (item.mediaType === 'image') return _imageHasEdits;
+    return false;
+  }
+
   // ── Drag over window ───────────────────────────────────────────────────────
 
   let outputSuffix = $state('converted');
@@ -1002,13 +1052,6 @@
   // Used as the source of truth for the queue display AND for Convert All.
   let visibleQueue = $derived.by(() => {
     let out = queue;
-    if (settings.hideConverted && outputSuffix) {
-      const suf = `${outputSeparator}${outputSuffix}`;
-      out = out.filter(q => {
-        const stem = q.ext ? q.name.slice(0, -(q.ext.length + 1)) : q.name;
-        return !stem.endsWith(suf);
-      });
-    }
     const q = leftSearch.trim().toLowerCase();
     if (q) {
       out = out.filter(item => {
@@ -1063,7 +1106,9 @@
 
   // ── Presets ────────────────────────────────────────────────────────────────
   // Owned by PresetManager; loadPresets() is called via bind:this after mount.
-  let presetManagerEl = $state(null);
+  let presetManagerEl  = $state(null);
+  let presetsMode      = $state(false);
+  let presetsList      = $state([]);
 
   // Sync globalOutputFormat into the relevant options object
   $effect(() => {
@@ -1142,6 +1187,11 @@
       { id: 'ogv'  }, { id: 'ts'   }, { id: '3gp'  },
       { id: 'divx' }, { id: 'rmvb' }, { id: 'asf'  },
       { id: 'wmv', label: 'WMV' },
+    ]},
+    { label: 'Image Sequence', cat: 'seq', fmts: [
+      { id: 'seq_png',  label: 'PNG',  cat: 'video' },
+      { id: 'seq_jpg',  label: 'JPEG', cat: 'video' },
+      { id: 'seq_tiff', label: 'TIFF', cat: 'video' },
     ]},
     // ── Codecs: quick-picks that set both the common container AND codec.
     // Clicking a codec preset drops you onto the natural container for that
@@ -1392,9 +1442,20 @@
     ebook:    ['ebook'],
     email:    ['email'],
   };
-  let compatibleOutputCats = $derived(
-    selectedItem ? (OUTPUT_CATS_FOR[selectedItem.mediaType] ?? null) : null
-  );
+  let compatibleOutputCats = $derived.by(() => {
+    if (selectedIds.size > 1) {
+      // Union of all selected items' compatible categories so the picker shows
+      // everything any selected file can be converted to.
+      const cats = new Set();
+      for (const id of selectedIds) {
+        const item = queue.find(q => q.id === id);
+        const itemCats = item ? (OUTPUT_CATS_FOR[item.mediaType] ?? []) : [];
+        for (const c of itemCats) cats.add(c);
+      }
+      return cats.size > 0 ? [...cats] : null;
+    }
+    return selectedItem ? (OUTPUT_CATS_FOR[selectedItem.mediaType] ?? null) : null;
+  });
 
   // FORMAT_GROUPS sorted so compatible categories float to the top whenever
   // a file is selected — prevents useful options falling below the scroll
@@ -1525,8 +1586,8 @@
 
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
-    <!-- ── LEFT: File queue (390px expanded / 234px compact) ──────────────── -->
-    <aside class="{queueCompact ? 'w-[273px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative {settingsOpen ? 'z-[500]' : 'z-50'}"
+    <!-- ── LEFT: File queue (320px expanded / 229px compact) ──────────────── -->
+    <aside class="{queueCompact ? 'w-[229px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative {settingsOpen ? 'z-[500]' : 'z-50'}"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights.
@@ -1582,7 +1643,7 @@
 
       <!-- Search field — filters the queue by filename / extension -->
       <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
-           style="background:var(--surface-raised)">
+           style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
         <div class="relative">
           <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -1593,9 +1654,9 @@
           <input
             type="text"
             bind:value={leftSearch}
-            placeholder="Filter files — try mp3, mov, name…"
+            placeholder=""
             class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
-                   bg-[color:color-mix(in_srgb,#000_35%,var(--surface-raised))]
+                   bg-[color:color-mix(in_srgb,#000_40%,var(--surface-raised))]
                    text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
                    focus:outline-none focus:border-[var(--accent)]"
           />
@@ -1654,6 +1715,7 @@
         compact={queueCompact}
         showExtColumn={settings.fileTypeColumn}
         brightFiletype={settings.brightFiletype}
+        {itemHasEdits}
       />
 
       <!-- Hidden folder picker input -->
@@ -1669,26 +1731,21 @@
       <!-- ── Queue-action bar: Clear / Add / Deselect — lives in its own
            gray panel above the black control panel, visually separated by
            a single hairline. Center-justified. ───────────────────────── -->
-      <div class="shrink-0 border-t border-[var(--border)] flex items-center justify-center gap-1.5 px-3 py-1.5"
+      <div class="shrink-0 border-t border-[var(--border)] flex items-center gap-1.5 px-3 py-1.5"
            style="background:var(--surface-raised)">
         <button
           onclick={clearQueue}
           disabled={queue.length === 0}
-          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+          class="btn-bevel flex-1 py-0.5 text-[11px]"
         >Clear</button>
         <button
           onclick={onBrowse}
-          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+          class="btn-bevel flex-1 py-0.5 text-[11px]"
         >Add Files</button>
-        <button
-          onclick={() => recurseSubfolders = !recurseSubfolders}
-          data-tooltip="Recurse into subfolders when a directory is added"
-          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0 {recurseSubfolders ? 'is-active' : ''}"
-        >Subfolders</button>
         <button
           onclick={deselectAll}
           disabled={selectedIds.size === 0}
-          class="btn-bevel px-2 py-0.5 text-[11px] shrink-0"
+          class="btn-bevel flex-1 py-0.5 text-[11px]"
         >Deselect</button>
       </div>
 
@@ -1726,28 +1783,34 @@
           </div>
         {:else}
           {#if operationsMode}
-            <div class="flex gap-1.5 pointer-events-none opacity-40">
-              <div class="flex-1 py-1.5 rounded text-[12px] font-medium text-center border border-red-900/60 text-red-700">Convert Selected</div>
-              <div class="flex-1 py-1.5 rounded text-[12px] font-semibold text-center bg-red-950/50 text-red-700">Convert All</div>
+            <div class="flex items-center gap-2 pointer-events-none opacity-40">
+              <span class="w-12 text-right text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)] shrink-0">Convert</span>
+              <div class="flex-1 flex gap-1.5">
+                <div class="flex-1 py-1 rounded text-[11px] font-medium text-center border border-red-900/60 text-red-700">Selected</div>
+                <div class="flex-1 py-1 rounded text-[11px] font-semibold text-center bg-red-950/50 text-red-700">All</div>
+              </div>
             </div>
           {:else}
-            <div class="flex gap-1.5">
-              <button
-                onclick={() => startConvert('selected')}
-                disabled={!selectedItem || queue.length === 0 || !globalOutputFormat}
-                class="flex-1 py-1.5 rounded text-[12px] font-medium transition-colors border
-                       {!selectedItem || queue.length === 0 || !globalOutputFormat
-                         ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                         : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
-              >Convert Selected</button>
-              <button
-                onclick={() => startConvert('all')}
-                disabled={queue.length === 0 || !globalOutputFormat}
-                class="flex-1 py-1.5 rounded text-[12px] font-semibold transition-colors
-                       {queue.length === 0 || !globalOutputFormat
-                         ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                         : 'bg-[var(--accent)] text-white hover:opacity-90'}"
-              >Convert All</button>
+            <div class="flex items-center gap-2">
+              <span class="w-12 text-right text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)] shrink-0">Convert</span>
+              <div class="flex-1 flex gap-1.5">
+                <button
+                  onclick={() => startConvert('selected')}
+                  disabled={!selectedItem || queue.length === 0 || !globalOutputFormat}
+                  class="flex-1 py-1 rounded text-[11px] font-medium transition-colors border
+                         {!selectedItem || queue.length === 0 || !globalOutputFormat
+                           ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
+                           : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
+                >Selected</button>
+                <button
+                  onclick={() => startConvert('all')}
+                  disabled={queue.length === 0 || !globalOutputFormat}
+                  class="flex-1 py-1 rounded text-[11px] font-semibold transition-colors
+                         {queue.length === 0 || !globalOutputFormat
+                           ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
+                           : 'bg-[var(--accent)] text-white hover:opacity-90'}"
+                >All</button>
+              </div>
             </div>
           {/if}
         {/if}
@@ -1761,22 +1824,31 @@
             <button
               onclick={() => outputDestMode = 'source'}
               title="Write outputs alongside the source files"
-              class="flex items-center justify-center px-2 py-1 rounded text-[11px] border transition-colors flex-1 min-w-0
+              class="flex items-center justify-center gap-1.5 px-2 py-1 rounded border transition-colors flex-1 min-w-0 text-[11px]
                      {outputDestMode === 'source'
                        ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
-                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
             >
-              Source
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+              {#if !queueCompact}Source{/if}
             </button>
             <button
               onclick={() => { outputDestMode = 'custom'; folderInput?.click(); }}
               title={customOutputDir ? `Output → ${customOutputDir}` : 'Pick an output folder'}
-              class="flex items-center justify-center px-2 py-1 rounded text-[11px] border transition-colors flex-1 min-w-0
+              class="flex items-center justify-center gap-1.5 px-2 py-1 rounded border transition-colors flex-1 min-w-0 text-[11px]
                      {outputDestMode === 'custom'
                        ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
-                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]'}"
+                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
             >
-              Browse
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                <line x1="12" y1="11" x2="12" y2="17"/>
+                <polyline points="9 14 12 17 15 14"/>
+              </svg>
+              {#if !queueCompact}Browse{/if}
             </button>
             <input
               type="text"
@@ -1928,7 +2000,7 @@
                       class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
                              {outputDestMode === 'source'
                                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
-                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                     >
                       <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
                                    {outputDestMode === 'source' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
@@ -1941,7 +2013,7 @@
                       class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border transition-colors flex-1
                              {outputDestMode === 'custom'
                                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10'
-                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                               : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                     >
                       <span class="w-2 h-2 rounded-full border shrink-0 flex items-center justify-center
                                    {outputDestMode === 'custom' ? 'border-[var(--accent)]' : 'border-[var(--text-secondary)]'}">
@@ -1959,7 +2031,7 @@
                       <button
                         onclick={() => folderInput?.click()}
                         class="px-2 py-0.5 rounded text-[11px] border border-[var(--border)]
-                               text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)] transition-colors shrink-0"
+                               text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)] transition-colors shrink-0"
                       >Browse</button>
                     </div>
                   {/if}
@@ -1990,12 +2062,6 @@
                            focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
                   />
                 </div>
-                <!-- Hide converted files toggle -->
-                <label class="flex items-center justify-between gap-2 cursor-pointer">
-                  <span class="text-[12px] text-[var(--text-primary)]">Hide converted files</span>
-                  <input type="checkbox" bind:checked={settings.hideConverted}
-                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
-                </label>
               </div>
 
               <!-- Section: UI -->
@@ -2003,7 +2069,7 @@
                 <p class="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-secondary)]">UI</p>
                 <!-- Visualizer default -->
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-[12px] text-[var(--text-primary)]">Visualizer</span>
+                  <span class="text-[12px] text-[var(--text-primary)]">Visualizer Auto Expand</span>
                   <div class="flex rounded overflow-hidden border border-[var(--border)]">
                     {#each [['no','Off'],['audio','Audio'],['av','A+V']] as [val, label]}
                       <button
@@ -2076,14 +2142,20 @@
             Settings
           </button>
 
-          <!-- Status box: last job/queue outcome, right-justified.
-               Colour coded: gray = info, green = success, red = error/warning. -->
-          <div class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded
-                      bg-[color-mix(in_srgb,#fff_8%,var(--surface-raised))]" aria-live="polite">
+          <!-- Status box: last job/queue outcome. Clicking copies diagnostics.
+               Colour coded: gray = info/placeholder, green = success, red = error. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div onclick={copyDiagnostics}
+               class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded cursor-pointer
+                      bg-[color-mix(in_srgb,#fff_8%,var(--surface-raised))]
+                      hover:bg-[color-mix(in_srgb,#fff_12%,var(--surface-raised))] transition-colors"
+               aria-live="polite"
+               title="Copy diagnostics to clipboard">
             <span class="text-[11px] truncate text-right
-                         {statusKind === 'success' ? 'text-green-400'
-                          : statusKind === 'error' ? 'text-red-400'
-                          : 'text-gray-400'}">{statusMessage}</span>
+                         {statusKind === 'success' && statusMessage ? 'text-green-400'
+                          : statusKind === 'error' && statusMessage ? 'text-red-400'
+                          : 'text-gray-400'}">{statusMessage || 'Copy diagnostics.'}</span>
           </div>
         </div>
       </div>
@@ -2297,7 +2369,7 @@
                 <button
                   onclick={() => onProxyBrowse(bf.id)}
                   class="self-start flex items-center gap-2 px-3 py-1.5 rounded border border-[var(--border)]
-                         text-[12px] text-white/70 hover:border-[var(--accent)] hover:text-[var(--accent)]
+                         text-[12px] text-white/70 hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]
                          transition-colors"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2354,7 +2426,7 @@
                       />
                       <button
                         class="px-3 py-1.5 rounded border border-[var(--border)] text-[12px] text-white/70
-                               hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                               hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)] transition-colors"
                       >Browse…</button>
                     </div>
                   {/if}
@@ -2588,7 +2660,7 @@
         </div>
         <!-- Search — narrows the ops list below -->
         <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
-             style="background:var(--surface-raised)">
+             style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
           <div class="relative">
             <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                  width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -2599,9 +2671,9 @@
             <input
               type="text"
               bind:value={rightSearch}
-              placeholder="Filter tools…"
+              placeholder=""
               class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
-                     bg-[color:color-mix(in_srgb,#000_35%,var(--surface-raised))]
+                     bg-[color:color-mix(in_srgb,#000_40%,var(--surface-raised))]
                      text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
                      focus:outline-none focus:border-[var(--accent)]"
             />
@@ -2643,26 +2715,20 @@
                name is surfaced as a large centered page title below the
                header instead, where it's far more legible. -->
         {#if globalOutputFormat}
+          {@const _fmt = FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)}
           <button
             onclick={() => { globalOutputFormat = null; }}
             data-tooltip="Back to the format picker grid."
             data-back-button
             class="px-3 py-1.5 rounded text-[11px] font-semibold bg-[var(--accent)] text-white
-                   hover:opacity-90 transition-opacity shrink-0"
+                   hover:opacity-90 transition-opacity shrink-0
+                   {presetsMode ? 'invisible pointer-events-none' : ''}"
+            aria-hidden={presetsMode}
+            tabindex={presetsMode ? -1 : 0}
           >← Back</button>
-        {:else}
-          <button
-            onclick={() => { globalOutputFormat = null; }}
-            data-tooltip="Target output format for every queued file. Click to pick a new format — returns to the format picker grid below."
-            class="btn-bevel px-3 py-1 text-[13px] flex items-center gap-1.5 shrink-0"
-          >
-            Output
-            <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor"
-                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-                 class="shrink-0">
-              <path d="M1 1l3 3 3-3"/>
-            </svg>
-          </button>
+          <h2 class="flex-1 min-w-0 text-center text-[14px] font-semibold text-white/85 truncate">
+            {_fmt?.label ?? globalOutputFormat.toUpperCase()}
+          </h2>
         {/if}
 
         <!-- Presets selector — always visible; filtered to active category when one is selected -->
@@ -2672,29 +2738,19 @@
           bind:videoOptions
           bind:audioOptions
           bind:globalOutputFormat
+          bind:presetsMode
+          bind:combinedPresets={presetsList}
           {activeOutputCategory}
           {setStatus}
         />
       </div>
-
-      <!-- Active-format page title: large, centered, only when a format is
-           picked. Replaces the cramped extension chip that used to live in
-           the header button — much clearer signal of "which page am I on". -->
-      {#if globalOutputFormat}
-        {@const _fmt = FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)}
-        <div class="flex items-center justify-center px-3 py-3 shrink-0 border-b border-[var(--border)]">
-          <h2 class="text-[20px] font-semibold text-white/85">
-            {_fmt?.label ?? globalOutputFormat.toUpperCase()}
-          </h2>
-        </div>
-      {/if}
 
       <!-- Search — filters the format/tool grid below. Only visible on the
            picker page (when globalOutputFormat is null) so it doesn't clutter
            the options pages. -->
       {#if !globalOutputFormat}
         <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
-             style="background:var(--surface-raised)">
+             style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
           <div class="relative">
             <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                  width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -2705,9 +2761,9 @@
             <input
               type="text"
               bind:value={rightSearch}
-              placeholder="Filter formats & tools — try mp3, prores, conform…"
+              placeholder=""
               class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
-                     bg-[color:color-mix(in_srgb,#000_35%,var(--surface-raised))]
+                     bg-[color:color-mix(in_srgb,#000_40%,var(--surface-raised))]
                      text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
                      focus:outline-none focus:border-[var(--accent)]"
             />
@@ -2723,8 +2779,63 @@
       {/if}
 
       <!-- Options content -->
-      <div class="flex-1 min-h-0 overflow-y-auto p-4">
-        {#if !globalOutputFormat}
+      <div class="fade-scroll-stable flex-1 min-h-0 overflow-y-scroll p-4{settings.showDevFeatures ? ' dev-text-audit' : ''}">
+        {#if presetsMode}
+          <!-- ── Preset picker — mirrors format picker layout, presets in place of formats.
+               When a format is already selected, the list is narrowed to that media category. ── -->
+          {@const OPS_CATS  = ['intact', 'processing']}
+          {@const TOOL_CATS = [...OPS_CATS, 'chroma', 'ai', 'analysis', 'burn']}
+          {@const FILE_CATS = ['data', 'document', 'archive', 'office', 'ebook', 'subtitle', 'timeline', 'font', 'email']}
+          {@const conversionGroups = sortedFormatGroups
+              .filter(g => !TOOL_CATS.includes(g.cat) && !FILE_CATS.includes(g.cat))
+              .filter(g => !globalOutputFormat || g.cat === activeOutputCategory)}
+          {@const _presetSearchQ = rightSearch.trim().toLowerCase()}
+          <div class="flex flex-col gap-5">
+            <section>
+              <button
+                onclick={() => settings.conversionCollapsed = !settings.conversionCollapsed}
+                class="w-full flex items-center gap-2 mb-3 group"
+              >
+                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Media</span>
+                <div class="flex-1 h-px bg-[var(--border)]"></div>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                     class="text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-transform duration-150
+                            {settings.conversionCollapsed ? '-rotate-90' : ''}">
+                  <path d="M2 4l3 3 3-3"/>
+                </svg>
+              </button>
+              {#if !settings.conversionCollapsed}
+                <div class="space-y-4">
+                  {#each conversionGroups as group (group.cat)}
+                    {@const _presets = presetsList.filter(p => p.media_type === group.cat && (!_presetSearchQ || p.name.toLowerCase().includes(_presetSearchQ)))}
+                    <div>
+                      <div class="flex items-center gap-2 mb-1.5">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider
+                                     {_presets.length > 0 ? 'text-[var(--text-secondary)]' : 'text-[var(--text-secondary)]/25'}">
+                          {group.label}
+                        </span>
+                        <div class="flex-1 h-px {_presets.length > 0 ? 'bg-[var(--border)]' : 'bg-[var(--border)]/25'}"></div>
+                      </div>
+                      {#if _presets.length > 0}
+                        <div class="flex flex-wrap gap-1">
+                          {#each _presets as p (p.id)}
+                            <button
+                              onclick={() => { presetManagerEl.applyPreset(p.id); presetsMode = false; }}
+                              class="px-2 py-0.5 rounded text-[11px] border transition-colors
+                                     border-[var(--border)] text-[var(--text-primary)]
+                                     hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]"
+                            >{p.name}</button>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          </div>
+        {:else if !globalOutputFormat}
           {@const OPS_CATS  = ['intact', 'processing']}
           {@const TOOL_CATS = [...OPS_CATS, 'chroma', 'ai', 'analysis', 'burn']}
           {@const FILE_CATS = ['data', 'document', 'archive', 'office', 'ebook', 'subtitle', 'timeline', 'font', 'email']}
@@ -2754,7 +2865,13 @@
               {#if !settings.conversionCollapsed}
                 <div class="space-y-4">
                   {#each conversionGroups as group (group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures)) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f => {
+                        if (!(!f.todo || (f.preview && settings.showDevFeatures))) return false;
+                        if (!matchesSearch(f)) return false;
+                        const entryCat = f.cat ?? group.cat;
+                        if (compatibleOutputCats !== null && !compatibleOutputCats.includes(entryCat === 'codec' ? 'video' : entryCat)) return false;
+                        return true;
+                      })}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -2765,11 +2882,8 @@
                       </div>
                       <div class="flex flex-wrap gap-1">
                         {#each _fmts as f}
-                          {@const entryCat = f.cat ?? group.cat}
-                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(entryCat === 'codec' ? 'video' : entryCat)}
                           <button
                             onclick={() => {
-                              if (incompatible) return;
                               if (group.cat === 'codec') {
                                 // Codec preset: set both the container AND the codec so the
                                 // Video options panel lands on the right combo immediately.
@@ -2789,12 +2903,11 @@
                                 else if (fmt === '3gp') { videoOptions.codec = 'h264'; videoOptions.h264_profile = 'baseline'; }
                               }
                             }}
-                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (group.cat === 'codec' ? `${f.label} — encode as ${f.codec} in ${f.ext.toUpperCase()}` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
+                            data-tooltip={group.cat === 'codec' ? `${f.label} — encode as ${f.codec} in ${f.ext.toUpperCase()}` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
-                                   {incompatible ? 'opacity-25 cursor-default' : ''}
                                    {f.todo
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
-                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
                         {/each}
                       </div>
@@ -2824,7 +2937,13 @@
                 <div class="space-y-4">
                   {#each toolGroups as group (group.cat)}
                     {@const isOpsGroup = OPS_CATS.includes(group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures) || isOpsGroup || f.ops) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f => {
+                        const isOpsEntry = isOpsGroup || f.ops;
+                        if (!(!f.todo || (f.preview && settings.showDevFeatures) || isOpsGroup || f.ops)) return false;
+                        if (!matchesSearch(f)) return false;
+                        if (!isOpsEntry && compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)) return false;
+                        return true;
+                      })}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -2836,10 +2955,8 @@
                       <div class="flex flex-wrap gap-1">
                         {#each _fmts as f}
                           {@const isOpsEntry = isOpsGroup || f.ops}
-                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat) && !isOpsEntry}
                           <button
                             onclick={() => {
-                              if (incompatible) return;
                               if (isOpsEntry) {
                                 // Subtitling is cross-surfaced from 3 categories —
                                 // auto-focus the matching tab on the unified page so
@@ -2852,12 +2969,11 @@
                                 enterOperation(f.id);
                               } else { globalOutputFormat = f.id; }
                             }}
-                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : (isOpsEntry ? `${(f.label ?? f.id)} — open operations mode` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`)}
+                            data-tooltip={isOpsEntry ? `${(f.label ?? f.id)} — open operations mode` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
-                                   {incompatible ? 'opacity-25 cursor-default' : ''}
                                    {f.todo && !isOpsEntry
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
-                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
                         {/each}
                       </div>
@@ -2886,7 +3002,11 @@
               {#if !settings.filesCollapsed}
                 <div class="space-y-4">
                   {#each fileGroups.filter(g => !g.todo || settings.showDevFeatures) as group (group.cat)}
-                    {@const _fmts = group.fmts.filter(f => (!f.todo || (f.preview && settings.showDevFeatures)) && matchesSearch(f))}
+                    {@const _fmts = group.fmts.filter(f =>
+                        (!f.todo || (f.preview && settings.showDevFeatures)) &&
+                        matchesSearch(f) &&
+                        !(compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat))
+                      )}
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
@@ -2898,15 +3018,13 @@
                       </div>
                       <div class="flex flex-wrap gap-1">
                         {#each _fmts as f}
-                          {@const incompatible = compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)}
                           <button
-                            onclick={() => { if (!incompatible) globalOutputFormat = f.id; }}
-                            data-tooltip={incompatible ? `${(f.label ?? f.id).toUpperCase()} — incompatible with current queue contents` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
+                            onclick={() => { globalOutputFormat = f.id; }}
+                            data-tooltip={`Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
-                                   {incompatible ? 'opacity-25 cursor-default' : ''}
                                    {f.todo
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
-                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'}"
+                                     : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
                         {/each}
                       </div>
@@ -2917,49 +3035,54 @@
               {/if}
             </section>
           </div>
-        {:else if activeOutputCategory === 'image'}
-          <ImageOptions bind:options={imageOptions}
-            onqualitystart={onQualityStart}
-            onqualityinput={onQualityInput}
-            oncropstart={(aspect) => cropEditorEl?.activate(aspect)}
-            oncropclear={() => cropEditorEl?.clear()}
-            {cropActive}
-            {cropAspect}
-          />
-        {:else if activeOutputCategory === 'video'}
-          <VideoOptions bind:options={videoOptions} errors={validationErrors} />
-        {:else if activeOutputCategory === 'audio'}
-          <AudioOptions bind:options={audioOptions} errors={validationErrors} />
-        {:else if activeOutputCategory === 'data'}
-          <DataOptions bind:options={dataOptions} />
-        {:else if activeOutputCategory === 'document'}
-          <FormatPicker bind:options={documentOptions} formats={DOCUMENT_FORMATS} ariaLabel="Document conversion options" />
-        {:else if activeOutputCategory === 'archive'}
-          <ArchiveOptions bind:options={archiveOptions} />
-        {:else if activeOutputCategory === 'model'}
-          <!-- No user-tunable options for 3D model conversion today —
-               assimp picks the format-ID from the chosen output extension.
-               Render nothing rather than plastering a placeholder. -->
-        {:else if activeOutputCategory === 'timeline'}
-          <FormatPicker bind:options={timelineOptions} formats={TIMELINE_FORMATS} ariaLabel="Timeline conversion options" />
-        {:else if activeOutputCategory === 'font'}
-          <FormatPicker bind:options={fontOptions} formats={FONT_FORMATS} ariaLabel="Font conversion options" upperCase={false} />
-        {:else if activeOutputCategory === 'subtitle'}
-          <FormatPicker bind:options={subtitleOptions} formats={SUBTITLE_FORMATS} ariaLabel="Subtitle conversion options" />
-        {:else if activeOutputCategory === 'ebook'}
-          <FormatPicker bind:options={ebookOptions} formats={EBOOK_FORMATS} ariaLabel="Ebook conversion options" />
-        {:else if activeOutputCategory === 'email'}
-          <FormatPicker bind:options={emailOptions} formats={EMAIL_FORMATS} ariaLabel="Email conversion options" />
         {:else}
-          <div class="flex flex-col items-center justify-center h-full text-center gap-2">
-            <p class="text-[11px] text-green-500">Coming soon</p>
+          <div class="dev-audit-ok" style="display:contents">
+            {#if activeOutputCategory === 'image'}
+              <ImageOptions bind:options={imageOptions}
+                onqualitystart={onQualityStart}
+                onqualityinput={onQualityInput}
+                oncropstart={(aspect) => cropEditorEl?.activate(aspect)}
+                oncropclear={() => cropEditorEl?.clear()}
+                {cropActive}
+                {cropAspect}
+              />
+            {:else if activeOutputCategory === 'video'}
+              <VideoOptions bind:options={videoOptions} errors={validationErrors} />
+            {:else if activeOutputCategory === 'audio'}
+              <AudioOptions bind:options={audioOptions} errors={validationErrors} />
+            {:else if activeOutputCategory === 'data'}
+              <DataOptions bind:options={dataOptions} />
+            {:else if activeOutputCategory === 'document'}
+              <FormatPicker bind:options={documentOptions} formats={DOCUMENT_FORMATS} ariaLabel="Document conversion options" />
+            {:else if activeOutputCategory === 'archive'}
+              <ArchiveOptions bind:options={archiveOptions} />
+            {:else if activeOutputCategory === 'model'}
+              <!-- No user-tunable options for 3D model conversion today —
+                   assimp picks the format-ID from the chosen output extension.
+                   Render nothing rather than plastering a placeholder. -->
+            {:else if activeOutputCategory === 'timeline'}
+              <FormatPicker bind:options={timelineOptions} formats={TIMELINE_FORMATS} ariaLabel="Timeline conversion options" />
+            {:else if activeOutputCategory === 'font'}
+              <FormatPicker bind:options={fontOptions} formats={FONT_FORMATS} ariaLabel="Font conversion options" upperCase={false} />
+            {:else if activeOutputCategory === 'subtitle'}
+              <FormatPicker bind:options={subtitleOptions} formats={SUBTITLE_FORMATS} ariaLabel="Subtitle conversion options" />
+            {:else if activeOutputCategory === 'ebook'}
+              <FormatPicker bind:options={ebookOptions} formats={EBOOK_FORMATS} ariaLabel="Ebook conversion options" />
+            {:else if activeOutputCategory === 'email'}
+              <FormatPicker bind:options={emailOptions} formats={EMAIL_FORMATS} ariaLabel="Email conversion options" />
+            {:else}
+              <div class="flex flex-col items-center justify-center h-full text-center gap-2">
+                <p class="text-[11px] text-green-500">Coming soon</p>
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
+      {/if}
 
-      <!-- ── Bottom footer: hint text + zoom controls ────────────────────── -->
+      <!-- ── Bottom footer: hint text + zoom controls — always visible ──── -->
       <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 pt-2.5 pb-1"
-           style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+           style="background:var(--surface-hint)">
 
         <!-- Hint text — opacity + transition driven by shared tooltip store
              (see tooltip.svelte.js). Handles 100ms in, 2s hold + 2s out,
@@ -3003,7 +3126,7 @@
             title="Reset zoom (⌘0)"
             class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
                    bg-white/5 hover:bg-white/10
-                   {zoom.level !== 1.0 ? 'text-[var(--accent)]' : ''}"
+                   {zoom.level !== 1.0 ? 'text-white' : ''}"
             style={zoom.level === 1.0 ? 'color:rgba(255,255,255,0.35)' : ''}>
             {Math.round(zoom.level * 100)}%</button>
           <button
@@ -3019,7 +3142,6 @@
                   class="fade-pulse text-[10px] font-medium select-none hover:opacity-80 transition-opacity cursor-pointer">Fade {appVersion ? `v${appVersion}` : ''}</button>
         </div>
       </div>
-      {/if}
 
     </aside>
 
@@ -3036,11 +3158,7 @@
         <!-- Header band -->
         <div class="px-8 pt-8 pb-6 flex flex-col items-center gap-3 border-b border-[var(--border)]"
              style="background:color-mix(in srgb, var(--accent) 6%, var(--surface-raised))">
-          <!-- Logo placeholder -->
-          <div class="w-16 h-16 rounded-2xl border border-[var(--border)] flex items-center justify-center"
-               style="background:color-mix(in srgb, var(--accent) 12%, #000)">
-            <span class="text-2xl font-bold" style="color:var(--accent)">F</span>
-          </div>
+          <img src={fadeIconDark} alt="Fade" class="w-16 h-16 rounded-2xl" />
           <div class="text-center">
             <p class="text-[22px] font-semibold text-[var(--text-primary)]">Fade</p>
             {#if appVersion}
@@ -3052,16 +3170,14 @@
         <!-- Body -->
         <div class="px-8 py-6 flex flex-col gap-4 text-[13px] text-[var(--text-secondary)] leading-relaxed">
           <p>
-            Fade is a fast, offline media converter built for people who know what they're doing.
-            No subscriptions, no cloud, no limits — just ffmpeg with a decent interface.
+            Part of the <strong class="text-[var(--text-primary)]">Libre</strong> family of professional tools.
           </p>
           <p>
-            Part of the <strong class="text-[var(--text-primary)]">Libre</strong> family of professional tools
-            by <!-- svelte-ignore a11y_missing_attribute -->
+            By <!-- svelte-ignore a11y_missing_attribute -->
             <a onclick={(e) => { e.stopPropagation(); invoke('open_url', { url: 'https://irontreesoftware.com' }); }}
                class="text-[var(--text-primary)] underline decoration-white/20 hover:decoration-white/60 cursor-pointer transition-all">
               Iron Tree Software
-            </a> — built to own your workflow.
+            </a>
           </p>
 
           <div class="flex flex-col gap-1.5 pt-1 text-[12px] border-t border-[var(--border)]">
@@ -3092,6 +3208,38 @@
     </div>
   {/if}
 
+  <!-- ── Overlay dropdown — portaled to document.body to escape every stacking context ── -->
+  {#if overlay.open}
+    <div {@attach portal}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div style="position:fixed; inset:0; z-index:2147483646;"
+           role="presentation" onmousedown={() => overlay.hide()}></div>
+      <div
+           onmousedown={(e) => e.stopPropagation()}
+           style="position:fixed;
+                  left:{overlay.anchorRect?.left ?? 0}px;
+                  top:{(overlay.anchorRect?.bottom ?? 0) + 4}px;
+                  width:{overlay.anchorRect?.width ?? 120}px;
+                  z-index:2147483647;"
+      >
+        <div class="bg-[var(--surface-panel)] border border-[var(--border)] rounded-lg shadow-xl py-1 animate-fade-in">
+          {#each overlay.items as item}
+            {#if item === null}
+              <div class="my-1 border-t border-[var(--border)]" role="separator"></div>
+            {:else}
+              <button
+                onmousedown={(e) => { e.stopPropagation(); overlay.onPick?.(item.value); overlay.hide(); }}
+                class="w-full flex items-center px-3 py-[5px] text-[13px] text-left transition-colors
+                       cursor-default outline-none
+                       hover:bg-[var(--surface-raised)] hover:text-[var(--text-primary)]
+                       text-[color-mix(in_srgb,var(--text-primary)_80%,transparent)]"
+              >{item.label}</button>
+            {/if}
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
 
 </div>
 

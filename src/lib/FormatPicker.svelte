@@ -15,7 +15,7 @@
 
 <div class="space-y-3" role="form" aria-label={ariaLabel ?? label}>
   <fieldset data-tooltip="Output container/format for every file in the queue">
-    <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">{label}</legend>
+    <legend class="fade-label">{label}</legend>
     <div class="inline-flex flex-wrap">
       {#each formats as fmt, i}
         <button onclick={() => options.output_format = fmt}

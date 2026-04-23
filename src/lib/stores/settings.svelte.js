@@ -7,8 +7,8 @@ const DEFAULTS = {
   vizDefault: 'no',
   limiterAuto: false,
   autoCompact: true,
-  hideConverted: true,
   fileTypeColumn: true,
+  brightFiletype: false,
   lastUpdateCheck: 0,            // epoch ms; 0 = never. Gates the weekly check.
   sendDiagnostics: true,         // opt-in after 1.0; forced-on during beta (see BETA flag).
   showDevFeatures: true,         // show preview/todo items (green) in the format picker; disable for a clean production view

@@ -249,6 +249,9 @@ pub struct ConvertOptions {
     pub dnxhr_profile: Option<String>, // "dnxhr_lb" | "dnxhr_sq" | "dnxhr_hq" | "dnxhr_hqx" | "dnxhr_444"
     pub dnxhd_bitrate: Option<u32>,    // Mbps: 36 | 115 | 120 | 145 | 175 | 185 | 220
     pub dv_standard: Option<String>,   // "ntsc" | "pal"
+    pub video_bitrate_mode: Option<String>, // "crf" | "vbr" | "cbr"
+    pub video_bitrate: Option<u32>,         // kbps — used when mode is "vbr" or "cbr"
+    pub prores_profile: Option<u32>, // 0=Proxy 1=LT 2=422 3=HQ 4=4444 5=4444XQ
 
     // ── Format-specific image controls ──
     pub jpeg_chroma: Option<String>, // "420" | "422" | "444"
@@ -348,6 +351,9 @@ impl Default for ConvertOptions {
             dnxhr_profile: None,
             dnxhd_bitrate: None,
             dv_standard: None,
+            video_bitrate_mode: None,
+            video_bitrate: None,
+            prores_profile: None,
 
             jpeg_chroma: None,
             jpeg_progressive: None,
@@ -538,6 +544,7 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         | "heif" | "psd" | "svg" | "ico" | "raw" | "cr2" | "nef" | "arw" | "dng" => "image",
         "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "flv" | "wmv" | "ts" | "mpg" | "mpeg"
         | "3gp" | "ogv" | "divx" | "rmvb" | "asf" => "video",
+        "seq_png" | "seq_jpg" | "seq_tiff" => "video",
         "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" => "audio",
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
         "md" | "markdown" | "html" | "htm" | "txt" => "document",
@@ -679,7 +686,7 @@ fn convert_file(
         options.output_format.to_lowercase()
     };
 
-    if ext.is_empty() || !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if ext.is_empty() || !ext.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(format!("Invalid output format: {ext}"));
     }
 
@@ -731,13 +738,31 @@ fn convert_file(
     let separator = options.output_separator.as_deref().unwrap_or("_");
     validate_separator(separator)?;
 
-    let output_path = build_output_path(
-        &input_path,
-        &ext,
-        options.output_dir.as_deref(),
-        suffix,
-        separator,
-    );
+    let output_path = if ext.starts_with("seq_") {
+        // Image sequences go to a directory of frames rather than a single file.
+        // Build the directory path, create it, and pass it to the converter which
+        // will append the frame pattern (frame_%04d.ext) internally.
+        let real_ext = &ext[4..]; // "png", "jpg", "tiff"
+        let p = Path::new(&input_path);
+        let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+        let dir_base = options.output_dir.as_deref()
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| {
+                p.parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".".to_string())
+            });
+        let seq_dir = if suffix.is_empty() {
+            format!("{dir_base}/{stem}_{real_ext}_frames")
+        } else {
+            format!("{dir_base}/{stem}{separator}{suffix}_{real_ext}_frames")
+        };
+        std::fs::create_dir_all(&seq_dir)
+            .map_err(|e| format!("Cannot create sequence output directory: {e}"))?;
+        seq_dir
+    } else {
+        build_output_path(&input_path, &ext, options.output_dir.as_deref(), suffix, separator)
+    };
 
     // Register cancellation flag before spawning the thread
     let cancelled = Arc::new(AtomicBool::new(false));

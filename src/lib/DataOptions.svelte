@@ -9,7 +9,7 @@
 <div class="space-y-3" role="form" aria-label="Data conversion options">
   {#if options.output_format === 'json'}
     <fieldset data-tooltip="Indent JSON with newlines and 2-space indentation for readability — unchecked emits compact single-line JSON">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Formatting</legend>
+      <legend class="fade-label">Formatting</legend>
       <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
                     bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
                     {options.pretty_print ? 'text-[var(--text-primary)]' : 'text-white/75'}">
@@ -19,7 +19,7 @@
     </fieldset>
   {:else if options.output_format === 'csv'}
     <fieldset data-tooltip="Field separator — comma is standard · semicolon common in European locales · tab for TSV · pipe for data with commas">
-      <legend class="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">Delimiter</legend>
+      <legend class="fade-label">Delimiter</legend>
       <div class="grid" style="grid-template-columns:repeat({delimiters.length},1fr)">
         {#each delimiters as d, i}
           <button onclick={() => options.csv_delimiter = d}
