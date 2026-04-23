@@ -6,17 +6,18 @@ Last updated: 2026-04-22
 
 ## Current Focus
 
-Three arcs landed since the B1–B18 audit closed:
+Four arcs landed since the B1–B18 audit closed:
 
 1. **UI polish sweep** — canonical `seg-active`, `fade-check`, `fade-range`, `--surface-hint`, `space-y-3`, `py-[5px]` patterns propagated across AudioOptions, ImageOptions, ArchiveOptions, DataOptions, FormatPicker. Shared `src/lib/segStyles.js` replaces per-file `seg`/`segV` duplicates.
 2. **VideoOptions overhaul** — collapsible Advanced fold; categorized codec dropdown (Common/Professional/Broadcast/Archival/Legacy); CRF/VBR/CBR mode switcher; inverted quality slider (Worst→Lossless); ProRes profile picker exposed; image sequence export (`seq_png`, `seq_jpg`, `seq_tiff`); AudioOptions Length accordion (Trim + Silence Padding). `overlay.svelte.js` portal-style dropdown store added, renders at App root to escape overflow/stacking context.
 3. **Blender headless backend** — USD/USDZ/Alembic/Blend conversion via headless Blender + bundled `blender_convert.py`. STEP/IGES explicitly deferred.
+4. **B16 phase 2 — async IPC migration (7 tasks, CI-green)** — all 14 analysis/probe/preview IPC commands converted to non-blocking. Key deliverables: `ConvertResult` typed enum replaced string sentinels across 14 converter modules (TASK-2); 6 fast probe commands (`get_file_info`, `get_streams`, `subtitle_probe`, `diff_images`, `lint_video`, `get_image_quality`) migrated to async via `tokio::task::spawn_blocking` (TASK-3); 8 long-running commands migrated to full job-based lifecycle with cancellation and `analysis-result:{job_id}` events (TASKs 4–5); `createLimiter.run()` gained optional `timeoutMs` parameter with guaranteed slot release in `finally` (TASK-6); 16 unit tests added to `args/video.rs` covering VBR/CBR paths and image sequence arg builder (TASK-7).
 
 CI green on `main`.
 
 ## Next action
 
-**B16 phase 2** — convert 14 sync analysis/probe/preview IPC commands to non-blocking. Batched across 3 sessions (3–5 commands per batch). See `tasks/TASK-3-async-probe-spawn-blocking.md` through `TASK-5`.
+**AudioOffset i64→i32 precision drift** — `audio_offset.rs` declares `offset_ms` as `i64`, so ts-rs generates `bigint` for the TypeScript type in `src/lib/types/generated/`. Frontend callers that pass `offset_ms` as `number` silently lose precision at values above 2^53. Fix involves: changing the struct field type in `audio_offset.rs` to `i32`, regenerating the ts-rs output in `src/lib/types/generated/`, and auditing any frontend callers that pass `offset_ms` to confirm they are passing plain `number` values within `i32` range. Micro-patch, self-contained, no downstream breakage known.
 
 ## Audit outcome summary
 
@@ -42,12 +43,15 @@ CI green on `main`.
 
 ## Known Risks
 
-- **B16 phase 2 not landed.** 14 analysis/probe/preview commands remain synchronous. They block the IPC thread for their full duration and are uncancellable. Acceptable for current feature state; must land before any heavy-use release.
 - **`$bindable` chain through extracted components.** App.svelte → QueueManager → OperationsPanel / ChromaKeyPanel mutate `selectedItem.status`/`.percent`/`.error` in place during job execution. Any future change that accidentally converts `selectedItem` to a read-only prop will silently stop progress updates.
-- **`createLimiter` slot-leak.** No drain valve if a terminal job event is missed. A stalled job can permanently consume a concurrency slot, blocking the queue.
-- **VBR/CBR and image sequence backend paths have no unit test coverage.** New VideoOptions quality modes and `seq_*` formats are exercised only by manual testing.
-- **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** See KNOWN-BUG-CLASSES BC-003/BC-004. Binary discovery and script path construction are not hardened for all deployment contexts.
+- **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** See KNOWN-BUG-CLASSES BC-003/BC-004. Binary discovery and script path construction are not hardened for all deployment contexts. USD import empty-scene silent success remains unmitigated.
+- **analysis-result one-shot listener race.** The one-shot event listener introduced in TASKs 4–5 is set up before the invoke call; if the event fires before `unlisten` is registered on a very fast completion, the result may be missed. Structurally possible, not yet observed.
+
+**Lower-urgency known gaps (deferred):**
+- **AudioOffset i64→i32 precision drift** — ts-rs generates `bigint` for `offset_ms`; frontend passes `number`. Correctness issue at the IPC boundary for values above 2^53.
+- **Windows non-C drive preview** — `assetProtocol.scope` too narrow for secondary drives. Affects Windows users only.
+- **GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` directly into `run:` steps. Not exploitable without repo write access, but a hygiene issue.
 
 ## Mode
 
-Active feature development. B16 phase 2 queued.
+Active development. B16 phase 2 complete. Next: AudioOffset precision drift micro-patch.
