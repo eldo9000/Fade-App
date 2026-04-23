@@ -738,11 +738,11 @@ fn convert_file(
     let separator = options.output_separator.as_deref().unwrap_or("_");
     validate_separator(separator)?;
 
-    let output_path = if ext.starts_with("seq_") {
+    let output_path = if let Some(real_ext) = ext.strip_prefix("seq_") {
         // Image sequences go to a directory of frames rather than a single file.
         // Build the directory path, create it, and pass it to the converter which
         // will append the frame pattern (frame_%04d.ext) internally.
-        let real_ext = &ext[4..]; // "png", "jpg", "tiff"
+        // real_ext is "png", "jpg", or "tiff"
         let p = Path::new(&input_path);
         let stem = p.file_stem().unwrap_or_default().to_string_lossy();
         let dir_base = options

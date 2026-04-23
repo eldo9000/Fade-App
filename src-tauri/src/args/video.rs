@@ -519,10 +519,7 @@ pub fn resolution_to_scale(res: &str) -> String {
     //   · preserves aspect ratio (decrease only — never upscale beyond target)
     //   · pads to exact target dimensions with black (letterbox / pillarbox)
     //   · uses lanczos for sharper downscaling vs FFmpeg's bilinear default
-    let (w, h) = res
-        .split_once('x')
-        .map(|(a, b)| (a, b))
-        .unwrap_or((res, "-1"));
+    let (w, h) = res.split_once('x').unwrap_or((res, "-1"));
     format!(
         "scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,\
          pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
