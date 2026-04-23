@@ -45,7 +45,7 @@ Mounts each Svelte options panel in real Chromium and exercises every major cont
 ### Rust conversion tests
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test conversions --include-ignored
+cargo test --manifest-path src-tauri/Cargo.toml --test conversions -- --include-ignored
 ```
 
 Generates small fixture files on the fly, runs real conversions through the Rust backend, asserts output files exist. 4 tests, ~5–20 seconds depending on video encoding speed.
@@ -101,7 +101,7 @@ src-tauri/
 Both suites run automatically on every push to `main` via `.github/workflows/ci.yml`:
 
 - **E2E component tests** — `npx playwright install --with-deps chromium` then `npm run test:e2e`
-- **Rust conversion tests** — `brew install ffmpeg imagemagick` then `cargo test --test conversions --include-ignored`
+- **Rust conversion tests** — `brew install ffmpeg imagemagick` then `cargo test --test conversions -- --include-ignored`
 
 ---
 
