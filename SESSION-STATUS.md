@@ -17,7 +17,7 @@ CI green on `main`.
 
 ## Next action
 
-**Hygiene sprint complete.** All 6 post-audit deferred items closed: B16.2/B19 async IPC (7 tasks), AudioOffset i64→i32, Windows non-C drive assetProtocol, KNOWN-BUG-CLASSES BC-001–BC-004 closed, `$bindable` chain verified, GHA injection hardened. No open deferred items remain. Next: feature work or new audit cycle.
+**E2E test suite landed (2026-04-23).** Playwright CT harness added: 55 component tests across FormatPicker, ImageOptions, VideoOptions, AudioOptions, DataOptions, ArchiveOptions — every major control exercised. Rust integration tests added: 4 smoke conversions (image PNG→WebP, video MP4→WebM, audio WAV→MP3, data CSV→JSON). All CI green. Next: feature work or observer sync.
 
 ## Audit outcome summary
 
