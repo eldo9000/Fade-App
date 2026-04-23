@@ -1095,7 +1095,7 @@ pub(crate) enum OperationPayload {
     },
     AudioOffset {
         input_path: String,
-        offset_ms: i64,
+        offset_ms: i32,
         output_path: String,
     },
     ReplaceAudio {

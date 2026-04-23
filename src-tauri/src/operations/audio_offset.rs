@@ -20,7 +20,7 @@ pub fn run(
     window: &Window,
     job_id: &str,
     input_path: &str,
-    offset_ms: i64,
+    offset_ms: i32,
     output_path: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
