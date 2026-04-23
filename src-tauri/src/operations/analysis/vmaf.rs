@@ -4,83 +4,156 @@
 //! native resolution so the filter graph is always valid; fps is re-sampled
 //! on the distorted input to match the reference.
 
-use super::run_ffmpeg_capture;
+use super::run_ffmpeg_capture_registered;
+use crate::AppState;
 use serde::Serialize;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use tauri::{Emitter, State, Window};
 
 #[derive(Serialize, Clone)]
-pub struct VmafResult {
+pub struct VmafScores {
     pub mean: f64,
     pub min: f64,
     pub max: f64,
     pub harmonic_mean: f64,
 }
 
-#[tauri::command]
-pub fn analyze_vmaf(
-    reference_path: String,
-    distorted_path: String,
-    model: String, // "hd" | "4k" | "phone"
-    subsample: u32,
-) -> Result<VmafResult, String> {
-    let (res, model_name) = match model.as_str() {
-        "4k" => ("3840x2160", "vmaf_4k_v0.6.1"),
-        "phone" => ("1920x1080", "vmaf_v0.6.1"),
-        _ => ("1920x1080", "vmaf_v0.6.1"),
-    };
-    let (w, h) = res.split_once('x').unwrap_or(("1920", "1080"));
+#[derive(Serialize, Clone)]
+pub struct VmafResult {
+    pub job_id: String,
+    pub data: Option<VmafScores>,
+    pub error: Option<String>,
+    pub cancelled: bool,
+}
 
-    let log_path = std::env::temp_dir()
-        .join(format!("fade_vmaf_{}.json", uuid::Uuid::new_v4()))
-        .to_string_lossy()
-        .to_string();
-
-    // Scale both inputs to the model's native size; fps-match distorted to ref.
-    // The `phone` flag is a libvmaf toggle, not a model — map accordingly.
-    let phone_flag = if model == "phone" {
-        ":phone_model=1"
-    } else {
-        ""
-    };
-
-    let filter = format!(
-        "[0:v]scale={w}:{h}:flags=bicubic,setpts=PTS-STARTPTS[ref];\
-         [1:v]scale={w}:{h}:flags=bicubic,setpts=PTS-STARTPTS[dist];\
-         [dist][ref]libvmaf=model=version={model_name}:log_fmt=json:log_path={log}:n_subsample={ns}{phone}",
-        w = w,
-        h = h,
-        model_name = model_name,
-        log = log_path.replace(':', "\\:"),
-        ns = subsample.max(1),
-        phone = phone_flag,
-    );
-
-    let args = vec![
-        "-hide_banner".to_string(),
-        "-nostats".to_string(),
-        "-i".to_string(),
-        reference_path,
-        "-i".to_string(),
-        distorted_path,
-        "-lavfi".to_string(),
-        filter,
-        "-f".to_string(),
-        "null".to_string(),
-        "-".to_string(),
-    ];
-    run_ffmpeg_capture(&args)?;
-
-    let body = std::fs::read_to_string(&log_path).map_err(|e| format!("read vmaf log: {e}"))?;
+fn parse_vmaf_log(log_path: &str) -> Result<VmafScores, String> {
+    let body = std::fs::read_to_string(log_path).map_err(|e| format!("read vmaf log: {e}"))?;
     let v: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("vmaf json parse: {e}"))?;
 
     // libvmaf v2+ shape: { "pooled_metrics": { "vmaf": { "mean": ..., ... } } }
     let pooled = &v["pooled_metrics"]["vmaf"];
-    let out = VmafResult {
+    Ok(VmafScores {
         mean: pooled["mean"].as_f64().unwrap_or(0.0),
         min: pooled["min"].as_f64().unwrap_or(0.0),
         max: pooled["max"].as_f64().unwrap_or(0.0),
         harmonic_mean: pooled["harmonic_mean"].as_f64().unwrap_or(0.0),
-    };
-    let _ = std::fs::remove_file(&log_path);
-    Ok(out)
+    })
+}
+
+#[tauri::command]
+pub fn analyze_vmaf(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    reference_path: String,
+    distorted_path: String,
+    model: String, // "hd" | "4k" | "phone"
+    subsample: u32,
+) -> Result<(), String> {
+    // Register cancellation flag before spawning the thread.
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let (res, model_name) = match model.as_str() {
+            "4k" => ("3840x2160", "vmaf_4k_v0.6.1"),
+            "phone" => ("1920x1080", "vmaf_v0.6.1"),
+            _ => ("1920x1080", "vmaf_v0.6.1"),
+        };
+        let (w, h) = res.split_once('x').unwrap_or(("1920", "1080"));
+
+        let log_path = std::env::temp_dir()
+            .join(format!("fade_vmaf_{}.json", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+
+        // Scale both inputs to the model's native size; fps-match distorted to ref.
+        // The `phone` flag is a libvmaf toggle, not a model — map accordingly.
+        let phone_flag = if model == "phone" {
+            ":phone_model=1"
+        } else {
+            ""
+        };
+
+        let filter = format!(
+            "[0:v]scale={w}:{h}:flags=bicubic,setpts=PTS-STARTPTS[ref];\
+             [1:v]scale={w}:{h}:flags=bicubic,setpts=PTS-STARTPTS[dist];\
+             [dist][ref]libvmaf=model=version={model_name}:log_fmt=json:log_path={log}:n_subsample={ns}{phone}",
+            w = w,
+            h = h,
+            model_name = model_name,
+            log = log_path.replace(':', "\\:"),
+            ns = subsample.max(1),
+            phone = phone_flag,
+        );
+
+        let args = vec![
+            "-hide_banner".to_string(),
+            "-nostats".to_string(),
+            "-i".to_string(),
+            reference_path,
+            "-i".to_string(),
+            distorted_path,
+            "-lavfi".to_string(),
+            filter,
+            "-f".to_string(),
+            "null".to_string(),
+            "-".to_string(),
+        ];
+
+        let result = run_ffmpeg_capture_registered(
+            &args,
+            Arc::clone(&processes),
+            &job_id,
+            Arc::clone(&cancelled),
+        );
+
+        // Clean up cancellation registry entry.
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+
+        let payload = match result {
+            Ok(_) => match parse_vmaf_log(&log_path) {
+                Ok(scores) => VmafResult {
+                    job_id: job_id.clone(),
+                    data: Some(scores),
+                    error: None,
+                    cancelled: false,
+                },
+                Err(msg) => VmafResult {
+                    job_id: job_id.clone(),
+                    data: None,
+                    error: Some(msg),
+                    cancelled: false,
+                },
+            },
+            Err(msg) if msg == "CANCELLED" => VmafResult {
+                job_id: job_id.clone(),
+                data: None,
+                error: None,
+                cancelled: true,
+            },
+            Err(msg) => VmafResult {
+                job_id: job_id.clone(),
+                data: None,
+                error: Some(msg),
+                cancelled: false,
+            },
+        };
+
+        let _ = std::fs::remove_file(&log_path);
+        let _ = window.emit(&format!("analysis-result:{}", job_id), payload);
+    });
+
+    Ok(())
 }
