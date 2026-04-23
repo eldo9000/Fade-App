@@ -97,6 +97,65 @@ describe('createLimiter', () => {
     ]);
     expect(results).toEqual(['a', 7, { ok: true }]);
   });
+
+  it('timeout: task resolves before timeout — resolves normally, slot released', async () => {
+    const limiter = createLimiter(2);
+    const result = await limiter.run(async () => 'fast', 100);
+    expect(result).toBe('fast');
+    expect(limiter.active()).toBe(0);
+    expect(limiter.queued()).toBe(0);
+  });
+
+  it('timeout: task exceeds timeout — rejects with limiter timeout, slot released', async () => {
+    const limiter = createLimiter(2);
+    const gate = deferred();
+    const p = limiter.run(() => gate.promise, 10);
+    await expect(p).rejects.toThrow('limiter timeout');
+    expect(limiter.active()).toBe(0);
+    expect(limiter.queued()).toBe(0);
+    // Resolve gate after timeout to avoid unhandled rejection from the dangling task.
+    gate.resolve();
+  });
+
+  it('timeout: active() === 0 after timeout fires', async () => {
+    const limiter = createLimiter(1);
+    const gate = deferred();
+    const p = limiter.run(() => gate.promise, 10);
+    await expect(p).rejects.toThrow('limiter timeout');
+    expect(limiter.active()).toBe(0);
+    gate.resolve();
+  });
+
+  it('timeout: defaultTimeoutMs applies to all runs when no per-call timeout given', async () => {
+    const limiter = createLimiter(1, { defaultTimeoutMs: 10 });
+    const gate = deferred();
+    const p = limiter.run(() => gate.promise);
+    await expect(p).rejects.toThrow('limiter timeout');
+    expect(limiter.active()).toBe(0);
+    gate.resolve();
+  });
+
+  it('timeout: per-call timeout overrides defaultTimeoutMs', async () => {
+    const limiter = createLimiter(1, { defaultTimeoutMs: 5000 });
+    const gate = deferred();
+    // Pass a small per-call timeout even though default is large.
+    const p = limiter.run(() => gate.promise, 10);
+    await expect(p).rejects.toThrow('limiter timeout');
+    expect(limiter.active()).toBe(0);
+    gate.resolve();
+  });
+
+  it('timeout: pool recovers — subsequent tasks run after a timeout', async () => {
+    const limiter = createLimiter(1);
+    const gate = deferred();
+    const p = limiter.run(() => gate.promise, 10);
+    await expect(p).rejects.toThrow('limiter timeout');
+    // Pool must be fully recovered — a second task should run.
+    const result = await limiter.run(async () => 'recovered');
+    expect(result).toBe('recovered');
+    expect(limiter.active()).toBe(0);
+    gate.resolve();
+  });
 });
 
 describe('defaultBatchConcurrency', () => {

@@ -3,13 +3,14 @@
  * tasks and get back a promise that resolves when the task does. No deps.
  *
  * @param {number} limit  Max concurrent in-flight tasks. Floored at 1.
+ * @param {{ defaultTimeoutMs?: number }} [options]
  * @returns {{
- *   run: <T>(task: () => Promise<T>) => Promise<T>,
+ *   run: <T>(task: () => Promise<T>, timeoutMs?: number) => Promise<T>,
  *   active: () => number,
  *   queued: () => number,
  * }}
  */
-export function createLimiter(limit) {
+export function createLimiter(limit, { defaultTimeoutMs } = {}) {
   const cap = Math.max(1, Math.floor(limit) || 1);
   let inFlight = 0;
   /** @type {Array<() => void>} */
@@ -29,10 +30,18 @@ export function createLimiter(limit) {
     else inFlight--;
   };
 
-  const run = async (task) => {
+  const run = async (task, timeoutMs) => {
     await acquire();
+    const ms = timeoutMs ?? defaultTimeoutMs;
     try {
-      return await task();
+      if (!ms) return await task();
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('limiter timeout')), ms);
+        task().then(
+          (v) => { clearTimeout(timer); resolve(v); },
+          (e) => { clearTimeout(timer); reject(e); }
+        );
+      });
     } finally {
       release();
     }
