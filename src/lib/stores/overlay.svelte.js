@@ -19,7 +19,3 @@ export function showOverlay(el, rect, its, fn) {
 export function hideOverlay() {
   overlay.open = false;
 }
-
-// back-compat API shape (in case callers still use overlay.show / overlay.hide)
-overlay.show = showOverlay;
-overlay.hide = hideOverlay;

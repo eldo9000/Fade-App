@@ -19,7 +19,7 @@
   import { createLimiter, defaultBatchConcurrency } from './lib/concurrency.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
   import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
-  import { overlay } from './lib/stores/overlay.svelte.js';
+  import { overlay, hideOverlay } from './lib/stores/overlay.svelte.js';
 
   // Move a rendered element to document.body so it escapes every ancestor
   // stacking context / overflow / transform. Used by the overlay dropdown.
@@ -3254,7 +3254,7 @@
     <div {@attach portal}>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div style="position:fixed; inset:0; z-index:2147483646;"
-           role="presentation" onmousedown={() => overlay.hide()}></div>
+           role="presentation" onmousedown={() => hideOverlay()}></div>
       <div
            onmousedown={(e) => e.stopPropagation()}
            style="position:fixed;
@@ -3269,7 +3269,7 @@
               <div class="my-1 border-t border-[var(--border)]" role="separator"></div>
             {:else}
               <button
-                onmousedown={(e) => { e.stopPropagation(); overlay.onPick?.(item.value); overlay.hide(); }}
+                onmousedown={(e) => { e.stopPropagation(); overlay.onPick?.(item.value); hideOverlay(); }}
                 class="w-full flex items-center px-3 py-[5px] text-[13px] text-left transition-colors
                        cursor-default outline-none
                        hover:bg-[var(--surface-raised)] hover:text-[var(--text-primary)]
