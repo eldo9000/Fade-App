@@ -1,5 +1,5 @@
 use crate::args::model_blender::{blender_not_found_msg, build_blender_args, find_blender};
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -36,7 +36,7 @@ pub fn run(
     _opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let _ = window.emit(
         "job-progress",
         JobProgress {
@@ -46,8 +46,14 @@ pub fn run(
         },
     );
 
-    let blender_bin = find_blender().ok_or_else(blender_not_found_msg)?;
-    let script_path = locate_script()?;
+    let blender_bin = match find_blender() {
+        Some(b) => b,
+        None => return ConvertResult::Error(blender_not_found_msg()),
+    };
+    let script_path = match locate_script() {
+        Ok(p) => p,
+        Err(e) => return ConvertResult::Error(e),
+    };
 
     let in_ext = std::path::Path::new(input)
         .extension()
@@ -58,12 +64,15 @@ pub fn run(
 
     let args = build_blender_args(&blender_bin, &script_path, input, output, is_blend_input);
 
-    let mut child = Command::new(&blender_bin)
+    let mut child = match Command::new(&blender_bin)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("failed to launch blender: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("failed to launch blender: {e}")),
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -113,7 +122,7 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     let sentinel_seen = sentinel_flag.load(Ordering::SeqCst);
@@ -127,11 +136,11 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        Ok(())
+        ConvertResult::Done
     } else if exit_success && !sentinel_seen {
-        Err("blender conversion failed (no output sentinel)".to_string())
+        ConvertResult::Error("blender conversion failed (no output sentinel)".to_string())
     } else {
-        Err(if stderr_content.trim().is_empty() {
+        ConvertResult::Error(if stderr_content.trim().is_empty() {
             "blender conversion failed".to_string()
         } else {
             truncate_stderr(&stderr_content)

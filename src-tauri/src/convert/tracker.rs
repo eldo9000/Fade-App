@@ -17,7 +17,7 @@
 //! Not convertible: `.sf2` is a soundfont container, not an audio stream.
 //! Kept as `todo: true` in FORMAT_GROUPS with an explanatory comment.
 
-use crate::{tool_available, truncate_stderr, ConvertOptions, JobProgress};
+use crate::{tool_available, truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -140,7 +140,7 @@ pub fn run(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let _ = window.emit(
         "job-progress",
         JobProgress {
@@ -162,9 +162,11 @@ pub fn run(
     // SoundFont containers aren't convertible — caught here instead of at the
     // routing layer so the error message is specific.
     if in_ext == "sf2" {
-        return Err("SF2 files are SoundFont containers, not audio streams. \
+        return ConvertResult::Error(
+            "SF2 files are SoundFont containers, not audio streams. \
              Use a .mid file together with an .sf2 to render audio."
-            .to_string());
+                .to_string(),
+        );
     }
 
     // Allowed audio targets — anything ffmpeg can write from a WAV source.
@@ -172,7 +174,7 @@ pub fn run(
         "wav", "mp3", "flac", "ogg", "aac", "opus", "m4a", "aiff", "wma",
     ];
     if !ALLOWED_TARGETS.contains(&out_ext.as_str()) {
-        return Err(format!(
+        return ConvertResult::Error(format!(
             "Unsupported tracker output format: {out_ext}. \
              Allowed: {}",
             ALLOWED_TARGETS.join(", ")
@@ -190,24 +192,28 @@ pub fn run(
     };
 
     // Dispatch to the right renderer.
-    let (success, stderr_content) = match in_ext.as_str() {
-        "mid" | "midi" => render_midi(&render_target, input, job_id, Arc::clone(&processes))?,
+    let render_res = match in_ext.as_str() {
+        "mid" | "midi" => render_midi(&render_target, input, job_id, Arc::clone(&processes)),
         "mod" | "xm" | "it" | "s3m" => {
-            render_module(&render_target, input, job_id, Arc::clone(&processes))?
+            render_module(&render_target, input, job_id, Arc::clone(&processes))
         }
         other => {
-            return Err(format!("Unsupported tracker input format: {other}"));
+            return ConvertResult::Error(format!("Unsupported tracker input format: {other}"));
         }
+    };
+    let (success, stderr_content) = match render_res {
+        Ok(t) => t,
+        Err(e) => return ConvertResult::Error(e),
     };
 
     if cancelled.load(Ordering::SeqCst) {
         let _ = std::fs::remove_file(&tmp_wav_path);
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if !success {
         let _ = std::fs::remove_file(&tmp_wav_path);
-        return Err(if stderr_content.trim().is_empty() {
+        return ConvertResult::Error(if stderr_content.trim().is_empty() {
             "tracker render failed".to_string()
         } else {
             truncate_stderr(&stderr_content)
@@ -224,7 +230,7 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        return Ok(());
+        return ConvertResult::Done;
     }
 
     // Transcode WAV → target via the existing audio pipeline. We re-invoke
@@ -252,17 +258,20 @@ pub fn run(
     // Best-effort cleanup of the intermediate WAV regardless of outcome.
     let _ = std::fs::remove_file(&tmp_wav_path);
 
-    audio_result?;
-
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 100.0,
-            message: "Done".to_string(),
-        },
-    );
-    Ok(())
+    match audio_result {
+        ConvertResult::Done => {
+            let _ = window.emit(
+                "job-progress",
+                JobProgress {
+                    job_id: job_id.to_string(),
+                    percent: 100.0,
+                    message: "Done".to_string(),
+                },
+            );
+            ConvertResult::Done
+        }
+        other => other,
+    }
 }
 
 fn render_midi(

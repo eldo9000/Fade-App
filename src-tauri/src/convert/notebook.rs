@@ -8,7 +8,7 @@
 //! input stem; we pin it via `--output` (which takes the stem without
 //! extension) and pass the parent dir via `--output-dir`.
 
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -26,7 +26,7 @@ pub fn run(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let _ = window.emit(
         "job-progress",
         JobProgress {
@@ -41,7 +41,9 @@ pub fn run(
         "md" | "markdown" => "markdown",
         "py" => "python",
         "html" | "htm" => "html",
-        other => return Err(format!("Unsupported notebook output format: {other}")),
+        other => {
+            return ConvertResult::Error(format!("Unsupported notebook output format: {other}"))
+        }
     };
 
     let out_path = Path::new(output);
@@ -49,12 +51,15 @@ pub fn run(
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| ".".to_string());
-    let out_stem = out_path
+    let out_stem = match out_path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
-        .ok_or_else(|| "Invalid output path".to_string())?;
+    {
+        Some(s) => s,
+        None => return ConvertResult::Error("Invalid output path".to_string()),
+    };
 
-    let mut child = Command::new("jupyter")
+    let mut child = match Command::new("jupyter")
         .args([
             "nbconvert",
             "--to",
@@ -68,7 +73,14 @@ pub fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("jupyter nbconvert not found: {e}\n\nInstall with:\n  pip install jupyter nbconvert"))?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ConvertResult::Error(format!(
+            "jupyter nbconvert not found: {e}\n\nInstall with:\n  pip install jupyter nbconvert"
+        ))
+        }
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -111,7 +123,7 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if success {
@@ -123,9 +135,9 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        Ok(())
+        ConvertResult::Done
     } else {
-        Err(if stderr_content.trim().is_empty() {
+        ConvertResult::Error(if stderr_content.trim().is_empty() {
             "jupyter nbconvert failed".to_string()
         } else {
             truncate_stderr(&stderr_content)

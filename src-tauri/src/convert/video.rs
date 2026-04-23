@@ -1,5 +1,7 @@
 use crate::args::build_ffmpeg_video_args;
-use crate::{parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, JobProgress};
+use crate::{
+    parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult, JobProgress,
+};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -16,16 +18,19 @@ pub fn run(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let duration = probe_duration(input);
     let args = build_ffmpeg_video_args(input, output, opts);
 
-    let mut child = Command::new("ffmpeg")
+    let mut child = match Command::new("ffmpeg")
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("ffmpeg not found: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("ffmpeg not found: {e}")),
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -80,13 +85,13 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if success {
-        Ok(())
+        ConvertResult::Done
     } else {
-        Err(if error_output.trim().is_empty() {
+        ConvertResult::Error(if error_output.trim().is_empty() {
             "FFmpeg conversion failed".to_string()
         } else {
             truncate_stderr(&error_output)

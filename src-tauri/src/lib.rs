@@ -92,23 +92,25 @@ pub(crate) enum JobOutcome {
     Error { message: String },
 }
 
-impl JobOutcome {
-    /// Bridge the legacy `Result<Option<String>, String>` shape into a typed
-    /// outcome. `Ok(Some(out))` = `Done { output_path: out }`, `Ok(None)` =
-    /// `Done` with empty path (run_operation variants that return Ok(None)),
-    /// `Err("CANCELLED")` = `Cancelled`, `Err("__DONE__")` = `DoneEmitted`,
-    /// anything else = `Error`.
-    pub(crate) fn from_result(result: Result<Option<String>, String>) -> Self {
-        match result {
-            Ok(Some(out)) => JobOutcome::Done { output_path: out },
-            Ok(None) => JobOutcome::Done {
-                output_path: String::new(),
-            },
-            Err(msg) if msg == "CANCELLED" => JobOutcome::Cancelled { remove_path: None },
-            Err(msg) if msg == "__DONE__" => JobOutcome::DoneEmitted,
-            Err(msg) => JobOutcome::Error { message: msg },
-        }
-    }
+/// Typed terminal state for a `convert_file` runner. Replaces the legacy
+/// `Result<(), String>` + string sentinels (`"CANCELLED"`, `"__DONE__"`)
+/// that used to cross the runner/dispatcher boundary. Every convert/ runner
+/// that participates in the `convert_file` path now returns this enum,
+/// making cancellation a compiler-enforced state rather than a string
+/// pattern match.
+#[derive(Debug)]
+pub enum ConvertResult {
+    /// Natural completion — the dispatcher attaches the output path and
+    /// maps to `JobOutcome::Done`.
+    Done,
+    /// Runner already emitted `job-done` itself (archive extract with a
+    /// folder path). Maps to `JobOutcome::DoneEmitted`.
+    DoneEmitted,
+    /// User cancelled mid-run. Maps to `JobOutcome::Cancelled`; the
+    /// dispatcher attaches the partial output path for cleanup.
+    Cancelled,
+    /// Runner failed. Maps to `JobOutcome::Error`.
+    Error(String),
 }
 
 /// Convert a `run_operation`-dispatched `Result<(), String>` to a typed
@@ -784,7 +786,19 @@ fn convert_file(
     let cancellations = Arc::clone(&state.cancellations);
 
     std::thread::spawn(move || {
-        let result = match mtype {
+        // Bridge for convert/ runners that still return `Result<(), String>`
+        // (data, document, email, subtitle — they have no cancellation path
+        // since they don't spawn external processes the user can cancel).
+        // The `convert_file` runners tracked by TASK-2 return `ConvertResult`
+        // directly.
+        fn lift(result: Result<(), String>) -> ConvertResult {
+            match result {
+                Ok(()) => ConvertResult::Done,
+                Err(msg) => ConvertResult::Error(msg),
+            }
+        }
+
+        let result: ConvertResult = match mtype {
             "image" => run_image_convert(
                 &window,
                 &job_id,
@@ -812,10 +826,20 @@ fn convert_file(
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             ),
-            "data" => run_data_convert(&window, &job_id, &input_path, &output_path, &options),
-            "document" => {
-                run_document_convert(&window, &job_id, &input_path, &output_path, &options)
-            }
+            "data" => lift(run_data_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+            )),
+            "document" => lift(run_document_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+            )),
             "archive" => run_archive_convert(
                 &window,
                 &job_id,
@@ -861,7 +885,7 @@ fn convert_file(
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             ),
-            "subtitle" => run_subtitle_convert(
+            "subtitle" => lift(run_subtitle_convert(
                 &window,
                 &job_id,
                 &input_path,
@@ -869,7 +893,7 @@ fn convert_file(
                 &options,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            ),
+            )),
             "ebook" => run_ebook_convert(
                 &window,
                 &job_id,
@@ -879,7 +903,13 @@ fn convert_file(
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             ),
-            "email" => run_email_convert(&window, &job_id, &input_path, &output_path, &options),
+            "email" => lift(run_email_convert(
+                &window,
+                &job_id,
+                &input_path,
+                &output_path,
+                &options,
+            )),
             "notebook" => run_notebook_convert(
                 &window,
                 &job_id,
@@ -889,7 +919,7 @@ fn convert_file(
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
             ),
-            _ => Err("Unsupported format".to_string()),
+            _ => ConvertResult::Error("Unsupported format".to_string()),
         };
 
         // Clean up cancellation registry entry
@@ -898,15 +928,19 @@ fn convert_file(
             map.remove(&job_id);
         }
 
-        let mut outcome = JobOutcome::from_result(result.map(|()| Some(output_path.clone())));
-        // Convert-file owns its output; remove the partial file on cancel so
-        // a re-run cannot pick up a half-encoded output.
-        if let JobOutcome::Cancelled {
-            ref mut remove_path,
-        } = outcome
-        {
-            *remove_path = Some(output_path.clone());
-        }
+        // Map the typed runner outcome into the shared `JobOutcome`. For the
+        // `Cancelled` arm, convert-file owns its output — remove the partial
+        // file on cancel so a re-run cannot pick up a half-encoded output.
+        let outcome = match result {
+            ConvertResult::Done => JobOutcome::Done {
+                output_path: output_path.clone(),
+            },
+            ConvertResult::DoneEmitted => JobOutcome::DoneEmitted,
+            ConvertResult::Cancelled => JobOutcome::Cancelled {
+                remove_path: Some(output_path.clone()),
+            },
+            ConvertResult::Error(msg) => JobOutcome::Error { message: msg },
+        };
         finalize_job(&window, job_id, &input_path, outcome);
     });
 
@@ -3235,64 +3269,6 @@ mod tests {
     fn url_scheme_rejects_oversized() {
         let long = format!("https://example.com/{}", "a".repeat(OPEN_URL_MAX_LEN));
         assert!(validate_url_scheme(&long).is_err());
-    }
-
-    // ── JobOutcome ────────────────────────────────────────────────────────────
-
-    #[test]
-    fn job_outcome_maps_ok_some_to_done_with_path() {
-        let outcome = JobOutcome::from_result(Ok(Some("/out/x.mp4".to_string())));
-        match outcome {
-            JobOutcome::Done { output_path } => assert_eq!(output_path, "/out/x.mp4"),
-            other => panic!("expected Done, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn job_outcome_maps_ok_none_to_done_with_empty_path() {
-        let outcome = JobOutcome::from_result(Ok(None));
-        match outcome {
-            JobOutcome::Done { output_path } => assert_eq!(output_path, ""),
-            other => panic!("expected Done, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn job_outcome_maps_cancelled_sentinel() {
-        let outcome = JobOutcome::from_result(Err("CANCELLED".to_string()));
-        match outcome {
-            JobOutcome::Cancelled { remove_path } => assert!(remove_path.is_none()),
-            other => panic!("expected Cancelled, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn job_outcome_maps_done_emitted_sentinel() {
-        let outcome = JobOutcome::from_result(Err("__DONE__".to_string()));
-        assert!(matches!(outcome, JobOutcome::DoneEmitted));
-    }
-
-    #[test]
-    fn job_outcome_maps_generic_error_message() {
-        // Regression for F-29: arbitrary error strings route to the Error
-        // variant, never silently absorbed as a sentinel.
-        let outcome = JobOutcome::from_result(Err("ffmpeg exited 1".to_string()));
-        match outcome {
-            JobOutcome::Error { message } => assert_eq!(message, "ffmpeg exited 1"),
-            other => panic!("expected Error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn job_outcome_does_not_partial_match_sentinel_substrings() {
-        // Cancel sentinel is an exact match — a message containing
-        // "CANCELLED" as a substring (e.g. from an ffmpeg stderr line)
-        // must route to Error, not Cancelled.
-        let outcome = JobOutcome::from_result(Err("ffmpeg: CANCELLED by signal".to_string()));
-        assert!(matches!(outcome, JobOutcome::Error { .. }));
-
-        let outcome = JobOutcome::from_result(Err("prefix __DONE__ suffix".to_string()));
-        assert!(matches!(outcome, JobOutcome::Error { .. }));
     }
 
     // ── op_result — terminal-emission invariant ──────────────────────────────

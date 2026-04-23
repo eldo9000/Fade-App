@@ -1,4 +1,4 @@
-use crate::{truncate_stderr, ConvertOptions, JobDone, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobDone, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -53,7 +53,7 @@ pub fn run(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let operation = opts.archive_operation.as_deref().unwrap_or("convert");
     let in_ext = ext_of(input_path);
     let out_ext = ext_of(output_path);
@@ -61,10 +61,12 @@ pub fn run(
     // Repack guards: some formats are extract-only or platform-locked.
     if operation != "extract" {
         if out_ext == "rar" {
-            return Err("RAR creation is not supported (proprietary) — try 7z or zip".to_string());
+            return ConvertResult::Error(
+                "RAR creation is not supported (proprietary) — try 7z or zip".to_string(),
+            );
         }
         if out_ext == "dmg" && !cfg!(target_os = "macos") {
-            return Err("DMG creation is macOS-only".to_string());
+            return ConvertResult::Error("DMG creation is macOS-only".to_string());
         }
     }
 
@@ -91,7 +93,7 @@ pub fn run(
         let out_dir = opts.output_dir.as_deref().unwrap_or(&parent);
         let extract_folder = format!("{}/{}_extracted", out_dir, stem);
 
-        extract_archive(
+        match extract_archive(
             window,
             job_id,
             input_path,
@@ -100,7 +102,10 @@ pub fn run(
             processes.clone(),
             cancelled.clone(),
             1.0,
-        )?;
+        ) {
+            ConvertResult::Done => {}
+            other => return other,
+        }
 
         let _ = window.emit(
             "job-done",
@@ -109,12 +114,14 @@ pub fn run(
                 output_path: extract_folder,
             },
         );
-        return Err("__DONE__".to_string());
+        return ConvertResult::DoneEmitted;
     }
 
     // Convert: extract to temp dir, repack to new format.
     let tmp_dir = format!("/tmp/fade_archive_{}", job_id);
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+        return ConvertResult::Error(e.to_string());
+    }
 
     let extract_res = extract_archive(
         window,
@@ -126,9 +133,12 @@ pub fn run(
         cancelled.clone(),
         0.5,
     );
-    if let Err(e) = extract_res {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        return Err(e);
+    match extract_res {
+        ConvertResult::Done => {}
+        other => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return other;
+        }
     }
 
     let repack_res = repack_archive(
@@ -157,19 +167,24 @@ fn extract_archive(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
     progress_scale: f32,
-) -> Result<(), String> {
+) -> ConvertResult {
     // For rar/cbr, prefer `unar` (libre, handles modern RAR5 reliably);
     // fall back to 7z which can also read RAR.
     let use_unar = matches!(in_ext, "rar" | "cbr") && tool_in_path("unar");
 
     if use_unar {
-        std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
-        let mut child = Command::new("unar")
+        if let Err(e) = std::fs::create_dir_all(dest_dir) {
+            return ConvertResult::Error(e.to_string());
+        }
+        let mut child = match Command::new("unar")
             .args(["-force-overwrite", "-o", dest_dir, input_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("unar not found: {e}"))?;
+        {
+            Ok(c) => c,
+            Err(e) => return ConvertResult::Error(format!("unar not found: {e}")),
+        };
         let stderr = child.stderr.take();
         {
             let mut map = processes.lock();
@@ -203,31 +218,34 @@ fn extract_archive(
             None => false,
         };
         if cancelled.load(Ordering::SeqCst) {
-            return Err("CANCELLED".to_string());
+            return ConvertResult::Cancelled;
         }
         if !success {
-            return Err(if error_output.trim().is_empty() {
+            return ConvertResult::Error(if error_output.trim().is_empty() {
                 "unar extraction failed".to_string()
             } else {
                 truncate_stderr(&error_output)
             });
         }
-        return Ok(());
+        return ConvertResult::Done;
     }
 
     // Default: 7z. Handles zip/7z/tar/gz/bz2/xz/rar/cbz/iso and partial dmg.
-    let mut child = Command::new(seven_zip_bin())
+    let mut child = match Command::new(seven_zip_bin())
         .args(["x", input_path, &format!("-o{}", dest_dir), "-y"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            if matches!(in_ext, "rar" | "cbr") {
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ConvertResult::Error(if matches!(in_ext, "rar" | "cbr") {
                 format!("Install `unar` or `7z` to read RAR archives: {e}")
             } else {
                 format!("7z not found: {e}")
-            }
-        })?;
+            });
+        }
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -273,16 +291,16 @@ fn extract_archive(
         None => false,
     };
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
     if !success {
-        return Err(if error_output.trim().is_empty() {
+        return ConvertResult::Error(if error_output.trim().is_empty() {
             "7z extraction failed".to_string()
         } else {
             truncate_stderr(&error_output)
         });
     }
-    Ok(())
+    ConvertResult::Done
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -295,7 +313,7 @@ fn repack_archive(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     match out_ext {
         "iso" => repack_iso(window, job_id, src_dir, output_path, processes, cancelled),
         "dmg" => repack_dmg(window, job_id, src_dir, output_path, processes, cancelled),
@@ -319,7 +337,7 @@ fn repack_with_7z(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let mut repack_args: Vec<String> = vec![
         "a".to_string(),
         output_path.to_string(),
@@ -328,12 +346,15 @@ fn repack_with_7z(
     if let Some(level) = opts.archive_compression {
         repack_args.push(format!("-mx={}", level.min(9)));
     }
-    let mut child = Command::new(seven_zip_bin())
+    let mut child = match Command::new(seven_zip_bin())
         .args(&repack_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("7z not found: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("7z not found: {e}")),
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -379,16 +400,16 @@ fn repack_with_7z(
         None => false,
     };
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
     if !success {
-        return Err(if error_output.trim().is_empty() {
+        return ConvertResult::Error(if error_output.trim().is_empty() {
             "7z repack failed".to_string()
         } else {
             truncate_stderr(&error_output)
         });
     }
-    Ok(())
+    ConvertResult::Done
 }
 
 fn repack_iso(
@@ -398,9 +419,9 @@ fn repack_iso(
     output_path: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     if !tool_in_path("xorriso") {
-        return Err("ISO creation requires `xorriso`.\n\nInstall with:\n  macOS:   brew install xorriso\n  Linux:   apt install xorriso  (or equivalent)".to_string());
+        return ConvertResult::Error("ISO creation requires `xorriso`.\n\nInstall with:\n  macOS:   brew install xorriso\n  Linux:   apt install xorriso  (or equivalent)".to_string());
     }
     let _ = window.emit(
         "job-progress",
@@ -410,7 +431,7 @@ fn repack_iso(
             message: "Building ISO…".to_string(),
         },
     );
-    let mut child = Command::new("xorriso")
+    let mut child = match Command::new("xorriso")
         .args([
             "-as",
             "mkisofs",
@@ -424,7 +445,10 @@ fn repack_iso(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("xorriso failed to start: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("xorriso failed to start: {e}")),
+    };
     let stderr = child.stderr.take();
     {
         let mut map = processes.lock();
@@ -450,16 +474,16 @@ fn repack_iso(
         None => false,
     };
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
     if !success {
-        return Err(if error_output.trim().is_empty() {
+        return ConvertResult::Error(if error_output.trim().is_empty() {
             "xorriso failed to build ISO".to_string()
         } else {
             truncate_stderr(&error_output)
         });
     }
-    Ok(())
+    ConvertResult::Done
 }
 
 fn repack_dmg(
@@ -469,10 +493,10 @@ fn repack_dmg(
     output_path: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     // hdiutil is macOS-only; the caller has already gated on cfg(target_os).
     if !tool_in_path("hdiutil") {
-        return Err("DMG creation requires macOS `hdiutil`".to_string());
+        return ConvertResult::Error("DMG creation requires macOS `hdiutil`".to_string());
     }
     let _ = window.emit(
         "job-progress",
@@ -482,7 +506,7 @@ fn repack_dmg(
             message: "Building DMG…".to_string(),
         },
     );
-    let mut child = Command::new("hdiutil")
+    let mut child = match Command::new("hdiutil")
         .args([
             "create",
             "-quiet",
@@ -498,7 +522,10 @@ fn repack_dmg(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("hdiutil failed to start: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("hdiutil failed to start: {e}")),
+    };
     let stderr = child.stderr.take();
     {
         let mut map = processes.lock();
@@ -524,16 +551,16 @@ fn repack_dmg(
         None => false,
     };
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
     if !success {
-        return Err(if error_output.trim().is_empty() {
+        return ConvertResult::Error(if error_output.trim().is_empty() {
             "hdiutil failed to build DMG".to_string()
         } else {
             truncate_stderr(&error_output)
         });
     }
-    Ok(())
+    ConvertResult::Done
 }
 
 /// Parse 7z progress lines like "  7% - filename.ext"

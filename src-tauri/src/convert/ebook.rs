@@ -5,7 +5,7 @@
 //! Follows the same shape as `convert::timeline` — no progress stream,
 //! drain stdout/stderr to avoid pipe deadlock, surface stderr on failure.
 
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -22,7 +22,7 @@ pub fn run(
     _opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let _ = window.emit(
         "job-progress",
         JobProgress {
@@ -32,12 +32,15 @@ pub fn run(
         },
     );
 
-    let mut child = Command::new("ebook-convert")
+    let mut child = match Command::new("ebook-convert")
         .args([input, output])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("ebook-convert not found: {e}\n\nInstall with:\n  macOS:   brew install --cask calibre\n  Linux:   sudo apt install calibre\n  Windows: https://calibre-ebook.com/download"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("ebook-convert not found: {e}\n\nInstall with:\n  macOS:   brew install --cask calibre\n  Linux:   sudo apt install calibre\n  Windows: https://calibre-ebook.com/download")),
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -80,7 +83,7 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if success {
@@ -92,9 +95,9 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        Ok(())
+        ConvertResult::Done
     } else {
-        Err(if stderr_content.trim().is_empty() {
+        ConvertResult::Error(if stderr_content.trim().is_empty() {
             "ebook-convert failed".to_string()
         } else {
             truncate_stderr(&stderr_content)

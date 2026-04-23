@@ -9,7 +9,7 @@
 use crate::args::build_assimp_args;
 use crate::args::model_blender::needs_blender;
 use crate::convert::model_blender;
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -26,7 +26,7 @@ pub fn run(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let input_ext = std::path::Path::new(input)
         .extension()
         .and_then(|e| e.to_str())
@@ -48,12 +48,15 @@ pub fn run(
 
     let args = build_assimp_args(input, output, opts);
 
-    let mut child = Command::new("assimp")
+    let mut child = match Command::new("assimp")
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("assimp not found: {e}\n\nInstall with:\n  macOS:   brew install assimp\n  Linux:   apt install assimp-utils  (or equivalent)\n  Windows: scoop install assimp"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("assimp not found: {e}\n\nInstall with:\n  macOS:   brew install assimp\n  Linux:   apt install assimp-utils  (or equivalent)\n  Windows: scoop install assimp")),
+    };
 
     // Assimp writes progress-ish info to stdout and errors to stderr.
     // Drain both so the child can't block on a full pipe. We only surface
@@ -104,7 +107,7 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if success {
@@ -116,9 +119,9 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        Ok(())
+        ConvertResult::Done
     } else {
-        Err(if stderr_content.trim().is_empty() {
+        ConvertResult::Error(if stderr_content.trim().is_empty() {
             "assimp conversion failed".to_string()
         } else {
             truncate_stderr(&stderr_content)

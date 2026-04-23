@@ -10,7 +10,7 @@
 //! (`otf2ttf` / `ttf2otf`). Good enough for web-font pipelines, which is
 //! the dominant use case.
 
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -42,7 +42,7 @@ pub fn run(
     _opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let _ = window.emit(
         "job-progress",
         JobProgress {
@@ -67,14 +67,19 @@ pub fn run(
         "python"
     };
 
-    let mut child = Command::new(python)
+    let mut child = match Command::new(python)
         .args(["-c", FONTTOOLS_SCRIPT, input, output])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!(
-            "fonttools not found: {e}\n\nInstall with:\n  pip install fonttools brotli\n\n(brotli is required for .woff2 output.)"
-        ))?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ConvertResult::Error(format!(
+                "fonttools not found: {e}\n\nInstall with:\n  pip install fonttools brotli\n\n(brotli is required for .woff2 output.)"
+            ));
+        }
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -117,7 +122,7 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if success {
@@ -129,13 +134,17 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        Ok(())
+        ConvertResult::Done
     } else if stderr_content.contains("No module named") && stderr_content.contains("fontTools") {
-        Err("fonttools not installed.\n\nInstall with:\n  pip install fonttools brotli".to_string())
+        ConvertResult::Error(
+            "fonttools not installed.\n\nInstall with:\n  pip install fonttools brotli".to_string(),
+        )
     } else if out_ext == "woff2" && stderr_content.contains("brotli") {
-        Err("brotli Python module required for .woff2 output.\n\nInstall with:\n  pip install brotli".to_string())
+        ConvertResult::Error(
+            "brotli Python module required for .woff2 output.\n\nInstall with:\n  pip install brotli".to_string(),
+        )
     } else {
-        Err(if stderr_content.trim().is_empty() {
+        ConvertResult::Error(if stderr_content.trim().is_empty() {
             "fonttools conversion failed".to_string()
         } else {
             truncate_stderr(&stderr_content)

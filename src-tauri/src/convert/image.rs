@@ -1,5 +1,5 @@
 use crate::args::build_image_magick_args;
-use crate::{truncate_stderr, ConvertOptions, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -16,7 +16,7 @@ pub fn run(
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> ConvertResult {
     let _ = window.emit(
         "job-progress",
         JobProgress {
@@ -28,12 +28,15 @@ pub fn run(
 
     let args = build_image_magick_args(input, output, opts);
 
-    let mut child = Command::new("magick")
+    let mut child = match Command::new("magick")
         .args(&args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("ImageMagick not found: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("ImageMagick not found: {e}")),
+    };
 
     let stderr = child.stderr.take();
 
@@ -65,7 +68,7 @@ pub fn run(
     };
 
     if cancelled.load(Ordering::SeqCst) {
-        return Err("CANCELLED".to_string());
+        return ConvertResult::Cancelled;
     }
 
     if success {
@@ -77,9 +80,9 @@ pub fn run(
                 message: "Done".to_string(),
             },
         );
-        Ok(())
+        ConvertResult::Done
     } else {
-        Err(if stderr_content.trim().is_empty() {
+        ConvertResult::Error(if stderr_content.trim().is_empty() {
             "ImageMagick convert failed".to_string()
         } else {
             truncate_stderr(&stderr_content)
