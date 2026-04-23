@@ -223,10 +223,14 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
                 "cbr" => {
                     let br = opts.video_bitrate.unwrap_or(4000);
                     out.extend([
-                        "-b:v".to_string(), format!("{}k", br),
-                        "-minrate".to_string(), format!("{}k", br),
-                        "-maxrate".to_string(), format!("{}k", br),
-                        "-bufsize".to_string(), format!("{}k", br * 2),
+                        "-b:v".to_string(),
+                        format!("{}k", br),
+                        "-minrate".to_string(),
+                        format!("{}k", br),
+                        "-maxrate".to_string(),
+                        format!("{}k", br),
+                        "-bufsize".to_string(),
+                        format!("{}k", br * 2),
                     ]);
                 }
                 _ => {
@@ -378,9 +382,9 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
 /// `output` is the pre-created directory; the frame pattern is appended here.
 fn build_image_sequence_args(input: &str, output_dir: &str, opts: &ConvertOptions) -> Vec<String> {
     let img_ext = match opts.output_format.as_str() {
-        "seq_jpg"  => "jpg",
+        "seq_jpg" => "jpg",
         "seq_tiff" => "tiff",
-        _          => "png",
+        _ => "png",
     };
     let pattern = format!("{output_dir}/frame_%04d.{img_ext}");
 
@@ -391,7 +395,11 @@ fn build_image_sequence_args(input: &str, output_dir: &str, opts: &ConvertOption
     }
     args.extend(["-i".to_string(), input.to_string()]);
     if let Some(t) = opts.trim_end {
-        let end = if let Some(ss) = opts.trim_start { t - ss } else { t };
+        let end = if let Some(ss) = opts.trim_start {
+            t - ss
+        } else {
+            t
+        };
         args.extend(["-t".to_string(), end.to_string()]);
     }
 
@@ -412,7 +420,7 @@ fn build_image_sequence_args(input: &str, output_dir: &str, opts: &ConvertOption
             args.extend(["-q:v".to_string(), qv.to_string()]);
         }
         "tiff" => args.extend(["-vcodec".to_string(), "tiff".to_string()]),
-        _      => args.extend(["-vcodec".to_string(), "png".to_string()]),
+        _ => args.extend(["-vcodec".to_string(), "png".to_string()]),
     }
 
     // Optional resolution scaling.
@@ -424,7 +432,11 @@ fn build_image_sequence_args(input: &str, output_dir: &str, opts: &ConvertOption
 
     args.push("-an".to_string()); // no audio in image sequences
 
-    args.extend(["-progress".to_string(), "pipe:1".to_string(), "-nostats".to_string()]);
+    args.extend([
+        "-progress".to_string(),
+        "pipe:1".to_string(),
+        "-nostats".to_string(),
+    ]);
     args.push(pattern);
     args
 }

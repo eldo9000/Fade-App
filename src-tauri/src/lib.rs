@@ -250,8 +250,8 @@ pub struct ConvertOptions {
     pub dnxhd_bitrate: Option<u32>,    // Mbps: 36 | 115 | 120 | 145 | 175 | 185 | 220
     pub dv_standard: Option<String>,   // "ntsc" | "pal"
     pub video_bitrate_mode: Option<String>, // "crf" | "vbr" | "cbr"
-    pub video_bitrate: Option<u32>,         // kbps — used when mode is "vbr" or "cbr"
-    pub prores_profile: Option<u32>, // 0=Proxy 1=LT 2=422 3=HQ 4=4444 5=4444XQ
+    pub video_bitrate: Option<u32>,    // kbps — used when mode is "vbr" or "cbr"
+    pub prores_profile: Option<u32>,   // 0=Proxy 1=LT 2=422 3=HQ 4=4444 5=4444XQ
 
     // ── Format-specific image controls ──
     pub jpeg_chroma: Option<String>, // "420" | "422" | "444"
@@ -745,7 +745,9 @@ fn convert_file(
         let real_ext = &ext[4..]; // "png", "jpg", "tiff"
         let p = Path::new(&input_path);
         let stem = p.file_stem().unwrap_or_default().to_string_lossy();
-        let dir_base = options.output_dir.as_deref()
+        let dir_base = options
+            .output_dir
+            .as_deref()
             .map(|d| d.to_string())
             .unwrap_or_else(|| {
                 p.parent()
@@ -761,7 +763,13 @@ fn convert_file(
             .map_err(|e| format!("Cannot create sequence output directory: {e}"))?;
         seq_dir
     } else {
-        build_output_path(&input_path, &ext, options.output_dir.as_deref(), suffix, separator)
+        build_output_path(
+            &input_path,
+            &ext,
+            options.output_dir.as_deref(),
+            suffix,
+            separator,
+        )
     };
 
     // Register cancellation flag before spawning the thread
