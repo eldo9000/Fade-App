@@ -216,7 +216,8 @@ fn run_parquet(input_path: &str, output_path: &str, out_fmt: &str) -> Result<(),
     Ok(())
 }
 
-fn parse_input(in_ext: &str, raw: &str) -> Result<serde_json::Value, String> {
+/// Public for integration tests (`src-tauri/tests/conversions.rs`).
+pub fn parse_input(in_ext: &str, raw: &str) -> Result<serde_json::Value, String> {
     match in_ext {
         "json" | "ndjson" | "jsonl" => {
             serde_json::from_str(raw).map_err(|e| format!("JSON parse error: {e}"))
@@ -297,7 +298,8 @@ fn parse_xml(raw: &str) -> Result<serde_json::Value, String> {
     Ok(root_value.unwrap_or(serde_json::Value::Object(serde_json::Map::new())))
 }
 
-fn write_output(
+/// Public for integration tests (`src-tauri/tests/conversions.rs`).
+pub fn write_output(
     out_fmt: &str,
     value: &serde_json::Value,
     pretty: bool,

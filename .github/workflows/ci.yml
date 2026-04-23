@@ -93,8 +93,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
+      - name: Install ffmpeg and imagemagick
+        run: brew install ffmpeg imagemagick
+
       - name: Backend unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Backend integration tests (conversion smoke)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test conversions -- --include-ignored
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium

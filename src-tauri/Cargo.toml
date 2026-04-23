@@ -51,3 +51,6 @@ fs2             = "0.4"
 parking_lot     = "0.12"
 ts-rs           = "10"
 tokio           = { version = "1", features = ["rt", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"
