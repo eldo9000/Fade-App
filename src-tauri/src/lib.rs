@@ -1930,8 +1930,12 @@ fn run_operation(
 
 /// Return the list of streams in a media file (video, audio, subtitle, data).
 #[command]
-fn get_streams(input_path: String) -> Result<Vec<operations::StreamInfo>, String> {
-    operations::extract::get_streams(&input_path)
+async fn get_streams(input_path: String) -> Result<Vec<operations::StreamInfo>, String> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<operations::StreamInfo>, String> {
+        operations::extract::get_streams(&input_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Maximum accepted URL length for `open_url`. Generous for real-world links.

@@ -29,36 +29,54 @@ fn lcs_table(a: &[&str], b: &[&str]) -> Vec<Vec<u32>> {
 }
 
 #[tauri::command]
-pub fn diff_subtitle(a_path: String, b_path: String) -> Result<Vec<SubDiffLine>, String> {
-    crate::validate_no_traversal(&a_path).map_err(|e| format!("a: {e}"))?;
-    crate::validate_no_traversal(&b_path).map_err(|e| format!("b: {e}"))?;
-    let a_body = super::read_subtitle_capped(&a_path).map_err(|e| format!("a: {e}"))?;
-    let b_body = super::read_subtitle_capped(&b_path).map_err(|e| format!("b: {e}"))?;
-    let a: Vec<&str> = a_body.lines().collect();
-    let b: Vec<&str> = b_body.lines().collect();
-    let t = lcs_table(&a, &b);
+pub async fn diff_subtitle(a_path: String, b_path: String) -> Result<Vec<SubDiffLine>, String> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<SubDiffLine>, String> {
+        crate::validate_no_traversal(&a_path).map_err(|e| format!("a: {e}"))?;
+        crate::validate_no_traversal(&b_path).map_err(|e| format!("b: {e}"))?;
+        let a_body = super::read_subtitle_capped(&a_path).map_err(|e| format!("a: {e}"))?;
+        let b_body = super::read_subtitle_capped(&b_path).map_err(|e| format!("b: {e}"))?;
+        let a: Vec<&str> = a_body.lines().collect();
+        let b: Vec<&str> = b_body.lines().collect();
+        let t = lcs_table(&a, &b);
 
-    // Backtrack.
-    let mut out: Vec<SubDiffLine> = Vec::new();
-    let mut i = a.len();
-    let mut j = b.len();
-    while i > 0 && j > 0 {
-        if a[i - 1] == b[j - 1] {
-            out.push(SubDiffLine {
-                kind: "eq".to_string(),
-                left: Some(a[i - 1].to_string()),
-                right: Some(b[j - 1].to_string()),
-            });
-            i -= 1;
-            j -= 1;
-        } else if t[i - 1][j] >= t[i][j - 1] {
+        // Backtrack.
+        let mut out: Vec<SubDiffLine> = Vec::new();
+        let mut i = a.len();
+        let mut j = b.len();
+        while i > 0 && j > 0 {
+            if a[i - 1] == b[j - 1] {
+                out.push(SubDiffLine {
+                    kind: "eq".to_string(),
+                    left: Some(a[i - 1].to_string()),
+                    right: Some(b[j - 1].to_string()),
+                });
+                i -= 1;
+                j -= 1;
+            } else if t[i - 1][j] >= t[i][j - 1] {
+                out.push(SubDiffLine {
+                    kind: "del".to_string(),
+                    left: Some(a[i - 1].to_string()),
+                    right: None,
+                });
+                i -= 1;
+            } else {
+                out.push(SubDiffLine {
+                    kind: "add".to_string(),
+                    left: None,
+                    right: Some(b[j - 1].to_string()),
+                });
+                j -= 1;
+            }
+        }
+        while i > 0 {
             out.push(SubDiffLine {
                 kind: "del".to_string(),
                 left: Some(a[i - 1].to_string()),
                 right: None,
             });
             i -= 1;
-        } else {
+        }
+        while j > 0 {
             out.push(SubDiffLine {
                 kind: "add".to_string(),
                 left: None,
@@ -66,23 +84,9 @@ pub fn diff_subtitle(a_path: String, b_path: String) -> Result<Vec<SubDiffLine>,
             });
             j -= 1;
         }
-    }
-    while i > 0 {
-        out.push(SubDiffLine {
-            kind: "del".to_string(),
-            left: Some(a[i - 1].to_string()),
-            right: None,
-        });
-        i -= 1;
-    }
-    while j > 0 {
-        out.push(SubDiffLine {
-            kind: "add".to_string(),
-            left: None,
-            right: Some(b[j - 1].to_string()),
-        });
-        j -= 1;
-    }
-    out.reverse();
-    Ok(out)
+        out.reverse();
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

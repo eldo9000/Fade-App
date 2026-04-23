@@ -170,81 +170,85 @@ fn fmt_time_ms(ms: u64) -> String {
 }
 
 #[tauri::command]
-pub fn lint_subtitle(
+pub async fn lint_subtitle(
     input_path: String,
     thresholds: LintThresholds,
 ) -> Result<Vec<LintIssue>, String> {
-    crate::validate_no_traversal(&input_path)?;
-    let body = super::read_subtitle_capped(&input_path)?;
-    let ext = Path::new(&input_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let cues = match ext.as_str() {
-        "srt" => parse_srt(&body),
-        "vtt" => parse_vtt(&body),
-        "ass" | "ssa" => parse_ass(&body),
-        _ => return Err(format!("unsupported subtitle format: .{ext}")),
-    };
+    tokio::task::spawn_blocking(move || -> Result<Vec<LintIssue>, String> {
+        crate::validate_no_traversal(&input_path)?;
+        let body = super::read_subtitle_capped(&input_path)?;
+        let ext = Path::new(&input_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let cues = match ext.as_str() {
+            "srt" => parse_srt(&body),
+            "vtt" => parse_vtt(&body),
+            "ass" | "ssa" => parse_ass(&body),
+            _ => return Err(format!("unsupported subtitle format: .{ext}")),
+        };
 
-    let mut issues = Vec::new();
-    for (i, cue) in cues.iter().enumerate() {
-        let time = fmt_time_ms(cue.start_ms);
-        let dur_ms = cue.end_ms.saturating_sub(cue.start_ms);
-        let plain_len: usize = cue.text.chars().filter(|c| *c != '\n').count();
+        let mut issues = Vec::new();
+        for (i, cue) in cues.iter().enumerate() {
+            let time = fmt_time_ms(cue.start_ms);
+            let dur_ms = cue.end_ms.saturating_sub(cue.start_ms);
+            let plain_len: usize = cue.text.chars().filter(|c| *c != '\n').count();
 
-        if dur_ms < thresholds.min_dur_ms as u64 {
-            issues.push(LintIssue {
-                cue_index: i,
-                time: time.clone(),
-                kind: "duration_short".to_string(),
-                message: format!("cue is {} ms (<{})", dur_ms, thresholds.min_dur_ms),
-            });
-        }
-        if dur_ms > thresholds.max_dur_ms as u64 {
-            issues.push(LintIssue {
-                cue_index: i,
-                time: time.clone(),
-                kind: "duration_long".to_string(),
-                message: format!("cue is {} ms (>{})", dur_ms, thresholds.max_dur_ms),
-            });
-        }
-        if dur_ms > 0 {
-            let cps = plain_len as f64 / (dur_ms as f64 / 1000.0);
-            if cps > thresholds.cps_max {
+            if dur_ms < thresholds.min_dur_ms as u64 {
                 issues.push(LintIssue {
                     cue_index: i,
                     time: time.clone(),
-                    kind: "cps_high".to_string(),
-                    message: format!("{:.1} cps (>{})", cps, thresholds.cps_max),
+                    kind: "duration_short".to_string(),
+                    message: format!("cue is {} ms (<{})", dur_ms, thresholds.min_dur_ms),
                 });
             }
-        }
-        let lines: Vec<&str> = cue.text.split('\n').collect();
-        if lines.len() > thresholds.max_lines as usize {
-            issues.push(LintIssue {
-                cue_index: i,
-                time: time.clone(),
-                kind: "too_many_lines".to_string(),
-                message: format!("{} lines (>{})", lines.len(), thresholds.max_lines),
-            });
-        }
-        for (li, l) in lines.iter().enumerate() {
-            if l.chars().count() > thresholds.line_max_chars as usize {
+            if dur_ms > thresholds.max_dur_ms as u64 {
                 issues.push(LintIssue {
                     cue_index: i,
                     time: time.clone(),
-                    kind: "line_too_long".to_string(),
-                    message: format!(
-                        "line {} is {} chars (>{})",
-                        li + 1,
-                        l.chars().count(),
-                        thresholds.line_max_chars
-                    ),
+                    kind: "duration_long".to_string(),
+                    message: format!("cue is {} ms (>{})", dur_ms, thresholds.max_dur_ms),
                 });
             }
+            if dur_ms > 0 {
+                let cps = plain_len as f64 / (dur_ms as f64 / 1000.0);
+                if cps > thresholds.cps_max {
+                    issues.push(LintIssue {
+                        cue_index: i,
+                        time: time.clone(),
+                        kind: "cps_high".to_string(),
+                        message: format!("{:.1} cps (>{})", cps, thresholds.cps_max),
+                    });
+                }
+            }
+            let lines: Vec<&str> = cue.text.split('\n').collect();
+            if lines.len() > thresholds.max_lines as usize {
+                issues.push(LintIssue {
+                    cue_index: i,
+                    time: time.clone(),
+                    kind: "too_many_lines".to_string(),
+                    message: format!("{} lines (>{})", lines.len(), thresholds.max_lines),
+                });
+            }
+            for (li, l) in lines.iter().enumerate() {
+                if l.chars().count() > thresholds.line_max_chars as usize {
+                    issues.push(LintIssue {
+                        cue_index: i,
+                        time: time.clone(),
+                        kind: "line_too_long".to_string(),
+                        message: format!(
+                            "line {} is {} chars (>{})",
+                            li + 1,
+                            l.chars().count(),
+                            thresholds.line_max_chars
+                        ),
+                    });
+                }
+            }
         }
-    }
-    Ok(issues)
+        Ok(issues)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

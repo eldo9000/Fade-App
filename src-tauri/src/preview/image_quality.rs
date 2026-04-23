@@ -14,81 +14,85 @@ pub struct ImageQualityPreview {
 /// per-pixel difference against the original and return both as temp file paths.
 /// Only meaningful for lossy formats (JPEG, WebP, AVIF).
 #[command]
-pub fn preview_image_quality(
+pub async fn preview_image_quality(
     path: String,
     quality: u32,
     output_format: String,
 ) -> Result<ImageQualityPreview, String> {
-    crate::validate_no_traversal(&path)?;
-    let p = Path::new(&path);
-    if !p.exists() {
-        return Err(format!("File not found: {path}"));
-    }
-    match output_format.as_str() {
-        "jpeg" | "jpg" | "webp" | "avif" => {}
-        other => {
-            return Err(format!(
-                "{other} is lossless — no compression artifacts to preview"
-            ))
+    tokio::task::spawn_blocking(move || -> Result<ImageQualityPreview, String> {
+        crate::validate_no_traversal(&path)?;
+        let p = Path::new(&path);
+        if !p.exists() {
+            return Err(format!("File not found: {path}"));
         }
-    }
+        match output_format.as_str() {
+            "jpeg" | "jpg" | "webp" | "avif" => {}
+            other => {
+                return Err(format!(
+                    "{other} is lossless — no compression artifacts to preview"
+                ))
+            }
+        }
 
-    let tmp_dir = std::env::temp_dir();
-    let job_id = uuid::Uuid::new_v4().to_string();
-    let ext = if output_format == "jpeg" {
-        "jpg"
-    } else {
-        output_format.as_str()
-    };
-    let compressed = tmp_dir.join(format!("fade-imgq-enc-{job_id}.{ext}"));
-    let diff = tmp_dir.join(format!("fade-imgq-diff-{job_id}.png"));
+        let tmp_dir = std::env::temp_dir();
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let ext = if output_format == "jpeg" {
+            "jpg"
+        } else {
+            output_format.as_str()
+        };
+        let compressed = tmp_dir.join(format!("fade-imgq-enc-{job_id}.{ext}"));
+        let diff = tmp_dir.join(format!("fade-imgq-diff-{job_id}.png"));
 
-    // Pass 1: encode at requested quality (induces lossy compression artifacts)
-    let enc_out = Command::new("magick")
-        .args([
-            path.as_str(),
-            "-quality",
-            &quality.to_string(),
-            compressed.to_str().unwrap_or(""),
-        ])
-        .output()
-        .map_err(|e| format!("magick not found: {e}"))?;
-    if !enc_out.status.success() {
-        return Err(format!(
-            "encode failed: {}",
-            truncate_stderr(&String::from_utf8_lossy(&enc_out.stderr))
-        ));
-    }
+        // Pass 1: encode at requested quality (induces lossy compression artifacts)
+        let enc_out = Command::new("magick")
+            .args([
+                path.as_str(),
+                "-quality",
+                &quality.to_string(),
+                compressed.to_str().unwrap_or(""),
+            ])
+            .output()
+            .map_err(|e| format!("magick not found: {e}"))?;
+        if !enc_out.status.success() {
+            return Err(format!(
+                "encode failed: {}",
+                truncate_stderr(&String::from_utf8_lossy(&enc_out.stderr))
+            ));
+        }
 
-    // Pass 2: amplified grayscale difference (original − encoded)
-    let diff_out = Command::new("magick")
-        .args([
-            path.as_str(),
-            compressed.to_str().unwrap_or(""),
-            "-compose",
-            "Difference",
-            "-composite",
-            "-evaluate",
-            "multiply",
-            "8",
-            "-colorspace",
-            "gray",
-            diff.to_str().unwrap_or(""),
-        ])
-        .output()
-        .map_err(|e| format!("magick not found: {e}"))?;
-    if !diff_out.status.success() {
-        let _ = std::fs::remove_file(&compressed);
-        return Err(format!(
-            "diff failed: {}",
-            truncate_stderr(&String::from_utf8_lossy(&diff_out.stderr))
-        ));
-    }
+        // Pass 2: amplified grayscale difference (original − encoded)
+        let diff_out = Command::new("magick")
+            .args([
+                path.as_str(),
+                compressed.to_str().unwrap_or(""),
+                "-compose",
+                "Difference",
+                "-composite",
+                "-evaluate",
+                "multiply",
+                "8",
+                "-colorspace",
+                "gray",
+                diff.to_str().unwrap_or(""),
+            ])
+            .output()
+            .map_err(|e| format!("magick not found: {e}"))?;
+        if !diff_out.status.success() {
+            let _ = std::fs::remove_file(&compressed);
+            return Err(format!(
+                "diff failed: {}",
+                truncate_stderr(&String::from_utf8_lossy(&diff_out.stderr))
+            ));
+        }
 
-    Ok(ImageQualityPreview {
-        diff_path: diff.to_string_lossy().to_string(),
-        compressed_path: compressed.to_string_lossy().to_string(),
+        Ok(ImageQualityPreview {
+            diff_path: diff.to_string_lossy().to_string(),
+            compressed_path: compressed.to_string_lossy().to_string(),
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -116,41 +120,40 @@ mod tests {
         }
     }
 
-    #[test]
-    fn errors_when_file_missing() {
+    #[tokio::test]
+    async fn errors_when_file_missing() {
         let missing = std::env::temp_dir().join(format!(
             "fade-imgq-missing-{}-{}.jpg",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        let err = err_of(preview_image_quality(
-            missing.to_string_lossy().to_string(),
-            80,
-            "jpeg".to_string(),
-        ));
+        let err = err_of(
+            preview_image_quality(
+                missing.to_string_lossy().to_string(),
+                80,
+                "jpeg".to_string(),
+            )
+            .await,
+        );
         assert!(err.starts_with("File not found"), "got: {err}");
     }
 
-    #[test]
-    fn rejects_lossless_png() {
+    #[tokio::test]
+    async fn rejects_lossless_png() {
         let p = tmp_image();
-        let err = err_of(preview_image_quality(
-            p.to_string_lossy().to_string(),
-            80,
-            "png".to_string(),
-        ));
+        let err = err_of(
+            preview_image_quality(p.to_string_lossy().to_string(), 80, "png".to_string()).await,
+        );
         assert!(err.contains("lossless"), "got: {err}");
         fs::remove_file(&p).ok();
     }
 
-    #[test]
-    fn rejects_unknown_format() {
+    #[tokio::test]
+    async fn rejects_unknown_format() {
         let p = tmp_image();
-        let err = err_of(preview_image_quality(
-            p.to_string_lossy().to_string(),
-            50,
-            "bogus".to_string(),
-        ));
+        let err = err_of(
+            preview_image_quality(p.to_string_lossy().to_string(), 50, "bogus".to_string()).await,
+        );
         assert!(
             err.contains("lossless") || err.contains("bogus"),
             "got: {err}"
@@ -158,8 +161,8 @@ mod tests {
         fs::remove_file(&p).ok();
     }
 
-    #[test]
-    fn accepts_lossy_format_names() {
+    #[tokio::test]
+    async fn accepts_lossy_format_names() {
         // We can't actually run magick in unit tests, but we can verify the
         // format-gate logic accepts the four lossy names by checking that
         // those names are NOT rejected with the "lossless" message. We point
@@ -171,11 +174,10 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         for fmt in ["jpeg", "jpg", "webp", "avif"] {
-            let err = err_of(preview_image_quality(
-                missing.to_string_lossy().to_string(),
-                80,
-                fmt.to_string(),
-            ));
+            let err = err_of(
+                preview_image_quality(missing.to_string_lossy().to_string(), 80, fmt.to_string())
+                    .await,
+            );
             // The missing-file check runs first, so we always hit it here;
             // the key point is that we never see "lossless" for these names.
             assert!(
