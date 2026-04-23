@@ -1,69 +1,66 @@
 # Fade-App Observer State
-Last updated: 2026-04-23  ·  Run 5
+Last updated: 2026-04-22  ·  Run 6
 
 ---
 
 ## Active development areas
 
-Run 4 declared the project in its strongest post-audit state with no feature work in flight. That lasted roughly one day. A significant feature sprint has since landed across two areas.
+The B16 phase 2 sprint completed in full this session — all 7 tasks dispatched, all CI-green. The work resolved the largest outstanding debt from the post-audit deferred list.
 
-First, a full Blender headless backend (`9b13f41`) added USD, USDZ, Alembic, and Blend conversion routes using a bundled `blender_convert.py` script invoked via Tauri's sidecar path. STEP/IGES were explicitly deferred as requiring a different toolchain (FreeCAD). This is a net-new backend pathway with its own fragilities (see below).
+TASK-2 replaced the remaining string-sentinel bridge in the `convert/` path with a typed `ConvertResult` enum (`Done`, `Cancelled`, `Error(String)`), covering 14 converter modules. One sentinel remains intentionally in `operations/mod.rs:267` feeding the existing `op_result` bridge — this was explicitly scoped out.
 
-Second, a broad VideoOptions overhaul (`4bd1839`) landed: collapsible Advanced fold exposing only Codec, Resolution, and Quality at top level; a fully categorized codec dropdown (Common/Professional/Broadcast/Archival/Legacy groups with named headers); CRF/VBR/CBR quality mode switcher (mode picker buried in Advanced, quality slider promoted to top level); inverted CRF slider (left=Worst, right=Lossless); ProRes profile picker exposed directly in the visible section when ProRes is selected; and image sequence export targets (`seq_png`, `seq_jpg`, `seq_tiff`) including backend directory creation and frame pattern FFmpeg output. The VBR/CBR paths add new `video_bitrate_mode` and `video_bitrate` fields to `ConvertOptions`. The sequence path adds `prores_profile`. A companion change folded Trim and Silence Padding into a "Length" accordion inside AudioOptions.
+TASK-3 converted 6 fast probe commands (`get_file_info`, `get_streams`, `subtitle_probe`, `diff_images`, `lint_video`, `get_image_quality`) from synchronous `#[tauri::command]` to async via `tokio::task::spawn_blocking`. This required adding an explicit `tokio` dependency to `Cargo.toml`, as Tauri 2 does not re-export it.
 
-An overlay store (`src/lib/stores/overlay.svelte.js`) was added during this work — a portal-style shared dropdown state that renders at the App root to escape the panel overflow/stacking context. It carries a back-compat shim (`overlay.show`/`overlay.hide` aliased to `showOverlay`/`hideOverlay`), suggesting the API shape evolved mid-work.
+TASKs 4–5 migrated 8 long-running analysis/probe/preview commands to a full job-based lifecycle: `cancel_job` kills the child process; each command emits an `analysis-result:{job_id}` event instead of returning synchronously. The frontend gained an `invokeAnalysis` helper in `AnalysisTools.svelte` wrapping the listen+invoke pattern. Waveform streaming added cancellation checks inside the bucket-read loop.
 
-A UI polish sweep across AudioOptions, ImageOptions, ArchiveOptions, DataOptions, and FormatPicker preceded the VideoOptions work, propagating the canonical `seg-active` underline, `fade-check` tiles, `fade-range` accent fill, `--surface-hint` token, and spacing conventions. That work is complete and CI-green.
+TASK-6 added an optional `timeoutMs` parameter to `createLimiter.run()`. When provided, the task races against a timer; the `finally` block always releases the slot regardless of outcome. A factory-level `defaultTimeoutMs` option was also added.
+
+TASK-7 added 16 unit tests to `args/video.rs` covering the VBR/CBR codec paths for h264/h265 and the image sequence arg builder (`seq_png`, `seq_jpg`, `seq_tiff`) including the JPEG CRF→q:v quality mapping formula and trim/framerate/no-audio assertions.
 
 ## Fragile / high-risk areas
 
-The **Blender backend** carries the same runtime path fragility flagged in KNOWN-BUG-CLASSES BC-003/BC-004: `blender_convert.py` script path resolution at runtime is the named fragility. USD import empty-scene silent success (BC-004) is also active and unresolved.
+The **Blender backend** fragilities (BC-003, BC-004) are unchanged. `blender_convert.py` path resolution at runtime remains the primary risk; USD import empty-scene silent success remains unmitigated. STEP/IGES remain deferred.
 
-The **image sequence path dispatch** in `lib.rs` introduces a new branching path: `ext.strip_prefix("seq_")` triggers directory creation at IPC time (before thread spawn), then the args builder appends the `frame_%04d.ext` pattern to the directory path. If any intermediate step (directory creation, path construction) fails, the error surfaces before conversion begins — which is correct — but the code path is new and untested by the existing backend unit test suite. The MJPEG quality mapping (`q:v` 2–31 from CRF 0–51) in `build_image_sequence_args` is a new non-trivial mapping with no unit coverage.
+The **`$bindable` chain** — App.svelte → QueueManager → OperationsPanel/ChromaKeyPanel mutating `selectedItem.status`/`.percent`/`.error` in place — persists. No sprint work touched this pathway.
 
-The **VBR/CBR codec paths** in `codec_quality_args` are new. The CBR path sets `minrate`, `maxrate`, and `bufsize` all equal to the target bitrate — correct for strict CBR — but this combination is known to cause issues with some container formats and decoders. It has not been exercised in CI.
+The **analysis-result event pattern** introduced in TASKs 4–5 is a new IPC surface. The one-shot event listener is set up before the invoke call; if the event fires before `unlisten` is registered (a race on a very fast completion), the result may be missed. This has not been observed but is structurally possible.
 
-The **`$bindable` chain risk** from Run 4 — App.svelte → QueueManager → OperationsPanel/ChromaKeyPanel mutating `selectedItem.status`/`.percent`/`.error` in place — persists unchanged. The VideoOptions overhaul did not touch this pathway.
+The **overlay back-compat shim** (`overlay.show`/`overlay.hide` aliases) flagged in Run 5 was not cleaned up. Run 5 noted the shim exists "in case callers still use" the old shape — if dead, it should be removed; if live, the old API is an unofficial surface.
 
-The **`createLimiter` slot-leak** from Run 4 persists. No timeout or drain valve was added during the feature sprint.
-
-The overlay back-compat shim (`overlay.show`/`overlay.hide`) suggests there may be callers using the old API shape. If those callers exist in the codebase and the shim is later removed, they will break silently at runtime.
+The **missed TASK-5 commit** — vmaf.rs, spectrogram.rs, video_diff.rs — was not included in the TASK-5 sprint commit and had to be caught and committed separately as `6564d28`. The dispatcher staged only the files the worker explicitly listed in `files_changed`. This reflects a workflow gap: workers need to be explicit about all modified files.
 
 ## Deferred work accumulation
 
-The six items formally promoted at audit close (Run 4) remain untouched:
+Three of the six formally promoted audit-close deferred items were resolved this sprint: B16 phase 2 / B19 (async IPC), slot-leak watchdog, and VBR/CBR unit coverage. Three remain:
 
-1. **B16 phase 2 / B19** — async lifecycle for 14 sync analysis/probe/preview IPC commands. Largest single outstanding debt.
-2. **AudioOffset i64→i32 precision drift** — ts-rs generates `bigint` but frontend passes `number`. Micro-patch.
-3. **Windows non-C drive preview** — `assetProtocol.scope` too narrow for secondary drives.
-4. **Slot-leak watchdog for `createLimiter`** — no drain valve for unreleased semaphore slots.
-5. **`librewin_common` superset-vs-authoritative strategy** — `StoredPreset` workaround is implicit.
-6. **GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` directly into `run:` steps.
+1. **AudioOffset i64→i32 precision drift** — ts-rs generates `bigint` for `offset_ms` but frontend passes `number`. Micro-patch, no downstream breakage known.
+2. **Windows non-C drive preview** — `assetProtocol.scope` too narrow for secondary drives. Affects Windows users only.
+3. **GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` directly into `run:` steps. Not exploitable without repo write access, but a hygiene issue.
 
-The Blender backend explicitly deferred STEP/IGES support (requires FreeCAD or alternate toolchain). This has not been added to any formal deferred ledger.
+The `librewin_common` superset-vs-authoritative strategy question dropped from the active deferred list; no recent commits touched shared types or the `StoredPreset` workaround.
 
-The VideoOptions CRF/VBR/CBR implementation deferred quality mode support for codecs other than h264/h265 — VP9, AV1, and other codecs fall through to the existing CRF-only path silently. If a user selects VBR/CBR with VP9 or AV1, the mode picker will have no effect.
+The Blender backend's STEP/IGES deferral and the VBR/CBR silent fallback for VP9/AV1 (mode picker has no effect on those codecs) remain untracked in any formal ledger.
+
+SESSION-STATUS `## Next action` still reads "B16 phase 2 — convert 14 sync analysis/probe/preview IPC commands to non-blocking" and the Known Risks section still lists the createLimiter slot-leak and VBR/CBR coverage gaps as open. Both are now resolved. SESSION-STATUS requires a refresh.
 
 ## Pattern watch
 
-The **CI two-step failure pattern** recurred this session: the main feature commit (`4bd1839`) failed on `cargo fmt --check` (line-length violations in new CBR args and sequence path code); the formatting fix (`8f5946b`) then failed on Clippy (`map_identity` at video.rs:524, `manual_strip` at lib.rs:741–745). Three commits were needed to achieve a green run. This is the same pattern as the B18 audit close (where the wrap commit failed fmt and was fixed in a follow-up). The root cause is consistent: handwritten Rust that isn't run through `cargo fmt` before commit, combined with Clippy lints that aren't caught locally when warnings are treated as errors only in CI. Both failures were caught and fixed within minutes, but the pattern has now occurred twice.
+The **CI two-step failure pattern** was absent from this sprint. All 5 CI runs in the sprint batch came back green on first push. The pattern last observed at Run 5 (two failures before green on `4bd1839`) did not recur. This may reflect the dispatch workflow enforcing local cargo fmt + clippy checks before each commit.
 
-The **traversal-gate pattern** (B15, flagged in Run 4) has a new surface to check: the image sequence IPC path in `lib.rs` validates `ext` via `is_ascii_alphanumeric() || c == '_'` inline (not via the canonical `validate_output_name`/`validate_no_traversal` trio). The validation is sufficient for ext-only inputs but the divergence from the canonical pattern is worth noting.
+The **missed-files pattern** surfaced: the TASK-5 dispatcher committed only the worker-reported files, leaving vmaf.rs, video_diff.rs, and spectrogram.rs unstaged. This is the second instance of a multi-file backend task having partially incomplete commits — the first was the B18 parking_lot sweep. The pattern is: workers report `files_changed` honestly, but dispatchers stage only that list, and any files modified incidentally (e.g., by a prior failed attempt, or by a test run that writes artifacts) fall through.
 
-BC-001 (inverted SVG chevrons) and BC-002 (audio analysers black before first playback) continue to be listed as active in KNOWN-BUG-CLASSES despite Run 3 noting user-reported resolution. No update was made during this sprint.
+BC-001 and BC-002 remain listed in KNOWN-BUG-CLASSES as active despite earlier indications of resolution. No update was made this session.
 
 ## CI health
 
-`main` is green as of `034ebf7`. The current session produced two CI failures before landing green — see Pattern watch above. Prior to this session the last CI failure was `daa854f` (audit wrap), also a formatting issue. The net pattern is: CI fails on formatting/linting approximately once per major feature session, then recovers in under 30 minutes. No test failures. No flakiness.
+`main` is green as of `19ca700` (last push, 2026-04-22). All 5 CI runs from this sprint completed with `success` in 1–2 minutes. No failures, no flakiness. This is the cleanest sprint run since the audit arc — zero red pushes.
 
 ## Observer notes
 
-**Run 5 vs Run 4 — feature velocity resumed.** Run 4 closed a deep audit arc and flagged B16 phase 2 as the next highest-leverage investment. Instead, a feature sprint landed — VideoOptions overhaul, Blender backend, UI polish. This is not a problem, but it means the deferred items from Run 4 continue to age. B16 phase 2 in particular is the kind of work that compounds: every new analysis/probe command added while sync IPC is the norm extends the eventual async migration effort.
+**Run 5 deferred items resolution rate: 3/6.** The three that landed were the highest-leverage ones (B16 phase 2, slot-leak, unit coverage). The three remaining are lower-urgency hygiene or platform-specific. The project is in materially better shape than it was at Run 5.
 
-**SESSION-STATUS is stale.** It still reflects the audit close state (2026-04-22 with B16 phase 2 as next action). The VideoOptions overhaul, Blender backend, and UI polish work are not reflected. The "Mode: Stable" declaration predates the feature sprint.
+**SESSION-STATUS is stale.** The `## Next action` and `## Known Risks` sections reflect the pre-sprint state. B16 phase 2 is done; the createLimiter and VBR/CBR risks are closed. A SESSION-STATUS refresh is the most immediate protocol gap.
 
-**Git note protocol remains cold.** Of the last 20 commits, only `99144ed` (fmt fix) and `9b13f41` (Blender backend) carry structured notes. The entire VideoOptions feature sprint — 9 commits from `e26b44f` (audio-options polish) through `034ebf7` (clippy fixes) — shipped without notes. The deferred/fragile fields on the Blender backend note were filled correctly; that discipline did not carry through to the VideoOptions work, which introduced more new surface area.
+**Git note protocol remains cold.** None of the 7 sprint commits carry structured notes. The pattern from Run 5 — features landing without `deferred:/fragile:` fields — continued unbroken through this entire sprint. The Blender backend note (two sessions ago) remains the last commit with structured notes.
 
-**INVESTIGATION-LOG is stale.** No entries have been added since 2026-04-20 (the component extraction arc). The VideoOptions work involved multiple architectural decisions (sequence output path dispatch, CRF slider inversion, overlay portal design) that would normally warrant log entries if issues had arisen. None did, which is the correct reason for no entries — but the log format being entirely bypassed during a feature sprint is a protocol gap worth noting.
-
-**overlay.svelte.js back-compat shim.** The `overlay.show`/`overlay.hide` aliases exist "in case callers still use" the old shape — the comment suggests the API was renamed mid-session. Worth checking whether any live callers still reference the old shape; if not, the shim can be removed.
+**CONDUCTOR-LOG.md committed to main.** This is a Blender headless implementation progress log, apparently generated during an earlier sprint. It is now tracked in the repo. Its content is useful for continuity but its presence in the root is unusual — most artifact files of this type would live under `docs/` or similar.
