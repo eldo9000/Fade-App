@@ -17,7 +17,7 @@ CI green on `main`.
 
 ## Next action
 
-**AudioOffset i64→i32 precision drift** — `audio_offset.rs` declares `offset_ms` as `i64`, so ts-rs generates `bigint` for the TypeScript type in `src/lib/types/generated/`. Frontend callers that pass `offset_ms` as `number` silently lose precision at values above 2^53. Fix involves: changing the struct field type in `audio_offset.rs` to `i32`, regenerating the ts-rs output in `src/lib/types/generated/`, and auditing any frontend callers that pass `offset_ms` to confirm they are passing plain `number` values within `i32` range. Micro-patch, self-contained, no downstream breakage known.
+**Windows non-C drive preview** — `assetProtocol.scope` in `tauri.conf.json` covers only the default drive; secondary drives (D:\, E:\, etc.) are blocked. Affects Windows users previewing media on non-C drives. Fix: audit `tauri.conf.json` `assetProtocol` config and expand the allow_file scope to cover all drives.
 
 ## Audit outcome summary
 
