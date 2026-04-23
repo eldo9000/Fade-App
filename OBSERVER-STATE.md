@@ -1,54 +1,55 @@
 # Fade-App Observer State
-Last updated: 2026-04-22  ·  Run 7
+Last updated: 2026-04-23  ·  Run 8
 
 ---
 
 ## Active development areas
 
-A lightweight hygiene sprint followed the B16 phase 2 work. Two commits landed: SESSION-STATUS was refreshed (`ba2533e`) to reflect the completed sprint, correct the Next action to AudioOffset precision drift, and remove the two resolved Known Risks; and the overlay back-compat shim was migrated and removed (`1b229a9`), replacing the two `overlay.hide()` call sites in `App.svelte` with direct `hideOverlay()` calls and deleting the alias lines from `overlay.svelte.js`.
+The AudioOffset precision drift micro-patch landed in `3fd9750`: `offset_ms` changed from `i64` to `i32` in both the `OperationPayload::AudioOffset` enum variant in `lib.rs` and the `run()` function signature in `audio_offset.rs`. The ts-rs binding in `OperationPayload.ts` regenerated automatically, changing the TypeScript type from `bigint` to `number`. All three checks (cargo test 271 passed, clippy -D warnings clean, fmt --check clean) passed. CI green.
 
-No feature work is in flight. The project is between sprints, with the AudioOffset micro-patch named as the next concrete target.
+The task spec had a factual error: it described the struct as living in `audio_offset.rs`, but the ts-rs-annotated type lives in the `OperationPayload` enum in `lib.rs`. The worker correctly halted on the first attempt, the task was corrected, and the second dispatch succeeded. This is a known architectural pattern in this codebase: IPC boundary types are defined inline in `lib.rs` as enum variants, not in per-module struct files.
+
+No feature work is currently in flight. The project is between sprints.
 
 ## Fragile / high-risk areas
 
-The **Blender backend** fragilities (BC-003, BC-004) are unchanged from Run 6. `blender_convert.py` path resolution at runtime remains unmitigated; USD import empty-scene silent success remains unmitigated. Both items are in KNOWN-BUG-CLASSES but have no fix in progress.
+The **Blender backend** fragilities (BC-003, BC-004) are unchanged. `blender_convert.py` path resolution at runtime and USD import empty-scene silent success both remain unmitigated.
 
-The **`$bindable` chain** — App.svelte → QueueManager → OperationsPanel/ChromaKeyPanel mutating `selectedItem.status`/`.percent`/`.error` in place — persists. No work has touched this pathway in several sprints.
+The **`$bindable` chain** persists without change across all recent sprints.
 
-The **analysis-result one-shot listener race** from Run 6 persists. Structurally possible on very fast completions; not observed in practice.
+The **analysis-result one-shot listener race** persists. Structurally possible; not observed.
 
-The **overlay back-compat shim**, flagged as a risk in Run 5 and Run 6, is now resolved. The shim was live (two callers in `App.svelte`), not dead — callers were migrated to `hideOverlay()` before the shim was removed. Risk closed.
+SESSION-STATUS `## Known Risks` still lists "AudioOffset i64→i32 precision drift" as an open lower-urgency gap, and `## Mode` still reads "Next: AudioOffset precision drift micro-patch." Both are stale — AudioOffset is fixed. The Known Risks section also still lists "Windows non-C drive preview" and "GHA shell injection" as deferred items, which is accurate, but the AudioOffset entry should be removed. Minor drift.
 
 ## Deferred work accumulation
 
-Three items remain from the post-audit formal deferred list:
+Two items remain from the post-audit formal deferred list:
 
-1. **AudioOffset i64→i32 precision drift** — named as Next action in SESSION-STATUS. `audio_offset.rs` declares `offset_ms` as `i64`; ts-rs generates `bigint`; frontend passes `number`. Correctness issue at the IPC boundary above 2^53ms (impractical values, but a type mismatch). Fix: change struct field to `i32`, regenerate ts-rs output, audit frontend callers.
-2. **Windows non-C drive preview** — `assetProtocol.scope` does not cover secondary drives. Affects Windows users only. No work scheduled.
-3. **GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` in `run:` steps. Not exploitable without repo write access. No work scheduled.
+1. **Windows non-C drive preview** — named as `## Next action` in SESSION-STATUS. `assetProtocol.scope` in `tauri.conf.json` covers only the default drive; secondary drives are blocked on Windows. No fix has been attempted. The scope of the fix is narrow: `tauri.conf.json` asset protocol configuration.
+2. **GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` in `run:` steps. Low priority; not exploitable without write access.
 
-The `librewin_common` superset-vs-authoritative question and the STEP/IGES Blender deferral remain off the formal ledger. The VBR/CBR silent fallback for VP9/AV1 (mode picker has no effect on non-h264/h265 codecs) also remains untracked.
+The `librewin_common`, STEP/IGES, and VBR/CBR VP9/AV1 fallback items remain off the formal ledger.
+
+The `## Audit outcome summary` in SESSION-STATUS still lists AudioOffset as a deferred item that has not been addressed. This is now incorrect — it was addressed in `3fd9750`.
 
 ## Pattern watch
 
-The **CI two-step failure pattern** has not recurred since Run 5. Five consecutive CI runs green with no failures, across both the B16 phase 2 sprint and this hygiene sprint. The dispatch workflow's local fmt + clippy enforcement appears to be holding.
+The **task spec error pattern** surfaced again. The AudioOffset task incorrectly identified `audio_offset.rs` as containing the ts-rs-annotated struct; the actual type lives in `lib.rs`. This is the second time a task spec has misdescribed file locations (the first was the TASK-3 `get_streams` wrapper being in `lib.rs` rather than `extract.rs`). Both cases involve the same architectural pattern: commands and IPC types that appear to belong in a module file are actually defined in `lib.rs`. Task specs for future `lib.rs` changes should be written with this in mind.
 
-The **missed-files pattern** did not surface this sprint — both tasks involved small, targeted changes with no incidental file modifications.
+The **CI two-step failure pattern** has not recurred in any of the last 10 CI runs. All green on first push since Run 5.
 
-The **overlay shim resolution** is worth noting as a pattern instance: the shim was flagged defensively in Run 5 as "potentially dead," Run 6 confirmed it hadn't been cleaned up, and the audit this sprint found it was live (not dead). The corrective action was right but the framing was off — "dead shim" became "live caller migration." This is a minor example of observer framing diverging from implementation reality.
-
-BC-001 (inverted SVG chevrons) and BC-002 (audio analysers black before first playback) remain listed in KNOWN-BUG-CLASSES as active. Run 3 noted a user-reported resolution for BC-001; no formal update has been made. These entries are stale.
+BC-001 and BC-002 remain listed as active in KNOWN-BUG-CLASSES with no updates.
 
 ## CI health
 
-`main` is green as of `f64e93a`. Eight consecutive CI runs have completed with `success` across the last two sprints. Run times are consistent at 1–2 minutes. No failures, no flakiness observed.
+`main` is green as of `d59594c`. Ten consecutive successful CI runs. No failures, no flakiness. Run times 1–2 minutes consistently.
 
 ## Observer notes
 
-**Run 6 flagged items resolution:** SESSION-STATUS stale → resolved. Overlay shim → resolved (with caller migration, not dead-code removal). Both cleanups landed in a single lightweight sprint session. The deferred items and Blender fragility are unchanged.
+**Run 7 flagged AudioOffset as the named next target — it landed cleanly.** The deferred list from the post-audit close now has two items remaining (Windows non-C drive, GHA injection) out of the original six. Resolution rate: 4/6.
 
-**Git note protocol remains cold.** Neither `ba2533e` nor `1b229a9` carries structured notes. The last commit with structured notes remains `99144ed` (fmt fix, several sessions ago). The `deferred:` and `fragile:` fields that exist on `9b13f41` (Blender backend) represent the high-water mark for protocol adherence. No recent commit comes close.
+**SESSION-STATUS partially stale.** The `## Mode` line and `## Known Risks` AudioOffset entry need cleanup. Not urgent — they're cosmetic inaccuracies, not misleading about project direction.
 
-**CONDUCTOR-LOG.md in repo root.** Flagged in Run 6 — still present. No move to `docs/` or similar has occurred. Minor cosmetic issue, not a correctness risk.
+**Git note protocol remains cold.** No recent commit carries structured notes. The protocol gap persists across every sprint since the Blender backend commit.
 
-**AudioOffset is the named next target.** It is small, self-contained, and correctness-relevant. The ts-rs regeneration step requires `cargo build` or `cargo test` to trigger the type export. Frontend callers should be audited before the struct field type is changed, not after — changing from `i64` to `i32` on the Rust side regenerates the TypeScript type from `bigint` to `number`, which is the desired outcome, but any frontend code accidentally passing large values would break silently at runtime rather than at compile time.
+**`lib.rs` as the IPC boundary hub.** The pattern of IPC types and command wrappers living in `lib.rs` rather than module files has now caused task spec errors twice. This is a structural property of the codebase worth noting: `lib.rs` is load-bearing for ts-rs codegen, command registration, and dispatch — it's not just a thin entry point.
