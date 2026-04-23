@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-22
+Last updated: 2026-04-23
 
 ---
 
@@ -17,7 +17,7 @@ CI green on `main`.
 
 ## Next action
 
-**GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` directly into `run:` steps. Not exploitable without repo write access, but a hygiene issue. Fix: use an intermediate env var to pass the tag value rather than interpolating directly into the shell command.
+**Hygiene sprint complete.** All 6 post-audit deferred items closed: B16.2/B19 async IPC (7 tasks), AudioOffset i64→i32, Windows non-C drive assetProtocol, KNOWN-BUG-CLASSES BC-001–BC-004 closed, `$bindable` chain verified, GHA injection hardened. No open deferred items remain. Next: feature work or new audit cycle.
 
 ## Audit outcome summary
 
@@ -44,14 +44,12 @@ CI green on `main`.
 ## Known Risks
 
 - **`$bindable` chain verified correct** — all mutation paths use `$bindable()` + `bind:` explicitly.
-- **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** See KNOWN-BUG-CLASSES BC-003/BC-004. Binary discovery and script path construction are not hardened for all deployment contexts. USD import empty-scene silent success remains unmitigated.
+- **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** Binary discovery and script path construction are not hardened for all deployment contexts. (BC-003/BC-004 code bugs resolved; runtime path fragility is a separate concern.)
 - **analysis-result one-shot listener race.** The one-shot event listener introduced in TASKs 4–5 is set up before the invoke call; if the event fires before `unlisten` is registered on a very fast completion, the result may be missed. Structurally possible, not yet observed.
 
 **Lower-urgency known gaps (deferred):**
-- **AudioOffset i64→i32 precision drift** — ts-rs generates `bigint` for `offset_ms`; frontend passes `number`. Correctness issue at the IPC boundary for values above 2^53.
-- **Windows non-C drive preview** — `assetProtocol.scope` too narrow for secondary drives. Affects Windows users only.
-- **GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` directly into `run:` steps. Not exploitable without repo write access, but a hygiene issue.
+- None. All post-audit deferred items resolved as of 2026-04-23.
 
 ## Mode
 
-Active development. B16 phase 2 complete. Next: AudioOffset precision drift micro-patch.
+Active development. Post-audit hygiene sprint complete (2026-04-23). All 6 deferred items closed. Ready for new feature work or audit cycle.
