@@ -17,7 +17,7 @@ CI green on `main`.
 
 ## Next action
 
-**Windows non-C drive preview** — `assetProtocol.scope` in `tauri.conf.json` covers only the default drive; secondary drives (D:\, E:\, etc.) are blocked. Affects Windows users previewing media on non-C drives. Fix: audit `tauri.conf.json` `assetProtocol` config and expand the allow_file scope to cover all drives.
+**GHA shell injection hardening** — `release.yml` interpolates `${{ inputs.tag }}` directly into `run:` steps. Not exploitable without repo write access, but a hygiene issue. Fix: use an intermediate env var to pass the tag value rather than interpolating directly into the shell command.
 
 ## Audit outcome summary
 
