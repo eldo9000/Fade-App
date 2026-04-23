@@ -43,7 +43,7 @@ CI green on `main`.
 
 ## Known Risks
 
-- **`$bindable` chain through extracted components.** App.svelte → QueueManager → OperationsPanel / ChromaKeyPanel mutate `selectedItem.status`/`.percent`/`.error` in place during job execution. Any future change that accidentally converts `selectedItem` to a read-only prop will silently stop progress updates.
+- **`$bindable` chain verified correct** — all mutation paths use `$bindable()` + `bind:` explicitly.
 - **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** See KNOWN-BUG-CLASSES BC-003/BC-004. Binary discovery and script path construction are not hardened for all deployment contexts. USD import empty-scene silent success remains unmitigated.
 - **analysis-result one-shot listener race.** The one-shot event listener introduced in TASKs 4–5 is set up before the invoke call; if the event fires before `unlisten` is registered on a very fast completion, the result may be missed. Structurally possible, not yet observed.
 
