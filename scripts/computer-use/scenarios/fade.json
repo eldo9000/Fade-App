@@ -1,0 +1,172 @@
+{
+  "app": "Fade",
+  "fixture_dir": "../fixtures",
+  "setup": "open -a Fade",
+  "scenarios": [
+    {
+      "id": "img-png-to-webp",
+      "name": "Image: PNG → WebP",
+      "category": "image",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.png into the Fade queue (drag it from Finder or use any file picker the app provides). In the options panel, make sure WebP is selected as the output format. Click the Convert button and wait for the job to finish. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.webp && test -s {{fixture_dir}}/test_converted.webp",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.webp"
+    },
+    {
+      "id": "img-png-to-jpeg",
+      "name": "Image: PNG → JPEG",
+      "category": "image",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.png into the Fade queue. In the options panel, select JPEG as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.jpg && test -s {{fixture_dir}}/test_converted.jpg",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.jpg"
+    },
+    {
+      "id": "img-png-to-avif",
+      "name": "Image: PNG → AVIF",
+      "category": "image",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.png into the Fade queue. In the options panel, select AVIF as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.avif && test -s {{fixture_dir}}/test_converted.avif",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.avif"
+    },
+    {
+      "id": "img-jpeg-to-png",
+      "name": "Image: JPEG → PNG",
+      "category": "image",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.jpg into the Fade queue. In the options panel, select PNG as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.png && test -s {{fixture_dir}}/test_converted.png",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.png"
+    },
+    {
+      "id": "img-quality-min",
+      "name": "Image: PNG → JPEG at minimum quality",
+      "category": "image",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.png into the Fade queue. Select JPEG as the output format. Find the quality slider and drag it all the way to the left (minimum quality). Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.jpg",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.jpg"
+    },
+    {
+      "id": "img-resize-percent",
+      "name": "Image: PNG → WebP at 50% scale",
+      "category": "image",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.png into the Fade queue. Select WebP as the output format. Find the resize controls and select the Percentage resize mode. Set the scale to 50%. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.webp",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.webp"
+    },
+    {
+      "id": "vid-mp4-to-webm-h264",
+      "name": "Video: MP4 → WebM (H.264)",
+      "category": "video",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.mp4 into the Fade queue. Select WebM as the output format. Make sure the codec is set to H.264 (it may be the default). Click Convert and wait for the job to complete — video encoding can take 10–30 seconds. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.webm && test -s {{fixture_dir}}/test_converted.webm",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.webm",
+      "max_steps": 60
+    },
+    {
+      "id": "vid-mp4-to-webm-h265",
+      "name": "Video: MP4 → WebM (H.265)",
+      "category": "video",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.mp4 into the Fade queue. Select WebM as the output format. Open the codec dropdown and select H.265. Click Convert and wait for completion — this may take 15–30 seconds. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.webm && test -s {{fixture_dir}}/test_converted.webm",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.webm",
+      "max_steps": 60
+    },
+    {
+      "id": "vid-mp4-to-mp4-av1",
+      "name": "Video: MP4 → MP4 (AV1)",
+      "category": "video",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.mp4 into the Fade queue. In the output format picker, select MP4. Open the codec dropdown and select AV1. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.mp4 && test -s {{fixture_dir}}/test_converted.mp4",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.mp4",
+      "max_steps": 60
+    },
+    {
+      "id": "vid-resolution-1080p",
+      "name": "Video: MP4 → WebM forced to 1080p",
+      "category": "video",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.mp4 into the Fade queue. Select WebM as the output format. Find the resolution controls and select 1080p. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.webm",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.webm",
+      "max_steps": 60
+    },
+    {
+      "id": "aud-wav-to-mp3",
+      "name": "Audio: WAV → MP3",
+      "category": "audio",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.wav into the Fade queue. Select MP3 as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.mp3 && test -s {{fixture_dir}}/test_converted.mp3",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.mp3"
+    },
+    {
+      "id": "aud-wav-to-aac",
+      "name": "Audio: WAV → AAC",
+      "category": "audio",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.wav into the Fade queue. Select AAC as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.aac && test -s {{fixture_dir}}/test_converted.aac",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.aac"
+    },
+    {
+      "id": "aud-wav-to-flac",
+      "name": "Audio: WAV → FLAC",
+      "category": "audio",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.wav into the Fade queue. Select FLAC as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.flac && test -s {{fixture_dir}}/test_converted.flac",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.flac"
+    },
+    {
+      "id": "aud-bitrate-320",
+      "name": "Audio: WAV → MP3 at 320kbps",
+      "category": "audio",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.wav into the Fade queue. Select MP3 as the output format. Find the bitrate control and select 320 kbps. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.mp3",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.mp3"
+    },
+    {
+      "id": "data-csv-to-json",
+      "name": "Data: CSV → JSON",
+      "category": "data",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.csv into the Fade queue. Select JSON as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.json && test -s {{fixture_dir}}/test_converted.json",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.json"
+    },
+    {
+      "id": "data-csv-to-json-pretty",
+      "name": "Data: CSV → JSON (pretty print on)",
+      "category": "data",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.csv into the Fade queue. Select JSON as the output format. Find the pretty print checkbox and check it. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.json && grep -q '\\n' {{fixture_dir}}/test_converted.json || test -s {{fixture_dir}}/test_converted.json",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.json"
+    },
+    {
+      "id": "data-json-to-csv",
+      "name": "Data: JSON → CSV",
+      "category": "data",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.json into the Fade queue. Select CSV as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.csv && test -s {{fixture_dir}}/test_converted.csv",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.csv"
+    },
+    {
+      "id": "archive-zip-to-targz",
+      "name": "Archive: ZIP → TAR.GZ",
+      "category": "archive",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.zip into the Fade queue. Select TAR.GZ as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.tar.gz && test -s {{fixture_dir}}/test_converted.tar.gz",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.tar.gz"
+    },
+    {
+      "id": "archive-zip-to-7z",
+      "name": "Archive: ZIP → 7Z",
+      "category": "archive",
+      "task": "The app Fade should already be open. Drop the file {{fixture_dir}}/test.zip into the Fade queue. Select 7Z as the output format. Click Convert and wait for completion. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.7z && test -s {{fixture_dir}}/test_converted.7z",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.7z"
+    },
+    {
+      "id": "queue-multiple-files",
+      "name": "Queue: convert three files in one batch",
+      "category": "queue",
+      "task": "The app Fade should already be open. Add all three of these files to the Fade queue at once: {{fixture_dir}}/test.png, {{fixture_dir}}/test.wav, {{fixture_dir}}/test.csv. For each file the app should show them in the queue. Select appropriate output formats for each (WebP for the image, MP3 for the audio, JSON for the data). Click Convert All (or the main convert button) and wait for all three jobs to complete. DONE",
+      "assertion": "test -f {{fixture_dir}}/test_converted.webp && test -f {{fixture_dir}}/test_converted.mp3 && test -f {{fixture_dir}}/test_converted.json",
+      "cleanup": "rm -f {{fixture_dir}}/test_converted.webp {{fixture_dir}}/test_converted.mp3 {{fixture_dir}}/test_converted.json",
+      "max_steps": 70
+    }
+  ]
+}
