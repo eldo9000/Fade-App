@@ -329,6 +329,9 @@
   let diffError      = $state(null);
   let diffNote       = $state(null);
   let _diffPreviewGen = 0;
+  /** In-flight backend job_id for the current diff preview encode/diff chain,
+   *  so a subsequent run (or file switch) can cancel the previous one. */
+  let _diffPreviewJobId = null;
   let diffHandleSecs = $state(3); // 1 = fast, 3 = accurate, 10 = AV1-safe
 
   // Mini scrubber state for the diff clip
@@ -437,10 +440,15 @@
     imgNaturalH = e.currentTarget.naturalHeight;
   }
 
-  // Clear any diff preview when the selected file changes
+  // Clear any diff preview when the selected file changes, and cancel any
+  // in-flight backend diff job so its ffmpeg children die promptly.
   $effect(() => {
     selectedItem?.id;
     diffClipPath = null; diffError = null; diffNote = null;
+    if (_diffPreviewJobId) {
+      invoke('cancel_job', { jobId: _diffPreviewJobId }).catch(() => {});
+      _diffPreviewJobId = null;
+    }
   });
 
   async function runDiffPreview() {
@@ -452,20 +460,53 @@
     diffError = null;
     diffClipPath = null;
     diffNote = null;
+
+    // Cancel any previous in-flight diff job before starting a new one.
+    if (_diffPreviewJobId) {
+      try { await invoke('cancel_job', { jobId: _diffPreviewJobId }); } catch { /* non-fatal */ }
+      _diffPreviewJobId = null;
+    }
+
+    const jobId = crypto.randomUUID();
+    _diffPreviewJobId = jobId;
+
     try {
-      const result = await invoke('preview_diff', {
-        path: selectedItem.path,
-        codec: videoOptions.codec ?? 'h264',
-        resolution: videoOptions.resolution ?? 'original',
-        atSecs: at,
-        durationSecs: 1.0,
-        handleSecs: diffHandleSecs,
-        amplify: 8.0,
+      const result = await new Promise((resolve, reject) => {
+        let unlistenFn = null;
+        let settled = false;
+        const settle = (fn, val) => {
+          if (settled) return;
+          settled = true;
+          if (unlistenFn) unlistenFn();
+          if (_diffPreviewJobId === jobId) _diffPreviewJobId = null;
+          fn(val);
+        };
+        listen(`analysis-result:${jobId}`, (ev) => {
+          const p = ev.payload ?? {};
+          if (p.cancelled) return settle(reject, 'CANCELLED');
+          if (p.error)     return settle(reject, p.error);
+          settle(resolve, p.data);
+        }).then((fn) => {
+          if (settled) { fn(); return; }
+          unlistenFn = fn;
+        }).catch((err) => settle(reject, err));
+
+        invoke('preview_diff', {
+          jobId,
+          path: selectedItem.path,
+          codec: videoOptions.codec ?? 'h264',
+          resolution: videoOptions.resolution ?? 'original',
+          atSecs: at,
+          durationSecs: 1.0,
+          handleSecs: diffHandleSecs,
+          amplify: 8.0,
+        }).catch((err) => settle(reject, err));
       });
       if (gen !== _diffPreviewGen) return;  // stale — newer diff request in flight
       diffClipPath = result.path;
       diffNote = result.note;
     } catch (e) {
+      if (e === 'CANCELLED') return;
       if (gen !== _diffPreviewGen) return;
       diffError = String(e);
     } finally {

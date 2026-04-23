@@ -71,7 +71,7 @@
 
   // In-flight jobId per analysis type — used to cancel a prior run when the
   // user triggers the same analysis again before the first finishes.
-  const inFlight = { cutDetect: null, blackDetect: null, loudness: null, frameMd5: null };
+  const inFlight = { cutDetect: null, blackDetect: null, loudness: null, frameMd5: null, vmaf: null };
 
   async function invokeAnalysis(command, params, trackerKey = null) {
     const jobId = crypto.randomUUID();
@@ -210,12 +210,12 @@
     vmafResult = null;
     setStatus('Computing VMAF…', 'info');
     try {
-      const r = await invoke('analyze_vmaf', {
+      const r = await invokeAnalysis('analyze_vmaf', {
         referencePath: vmafReferencePath,
         distortedPath: vmafDistortedPath,
         model: vmafModel,
         subsample: Number(vmafSubsample),
-      });
+      }, 'vmaf');
       vmafResult = {
         mean: r.mean.toFixed(2),
         min: r.min.toFixed(2),
@@ -224,6 +224,7 @@
       };
       setStatus('VMAF complete', 'success');
     } catch (err) {
+      if (err === 'CANCELLED') return;
       setStatus(`VMAF failed: ${err}`, 'error');
     }
   }

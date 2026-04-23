@@ -681,6 +681,11 @@
   let mediaLoading    = $state(false);
   let _capturedId     = null;
 
+  /** In-flight backend job_ids for the per-item waveform + spectrogram jobs,
+   *  so a stale selection change can cancel whatever ffmpeg is still running. */
+  let _waveformJobId    = null;
+  let _spectrogramJobId = null;
+
   $effect(() => {
     const it = item;
     const go = waveformReady;
@@ -689,9 +694,49 @@
     if (!it || !go) return;
     const id = it.id; _capturedId = id;
     mediaLoading = true;
-    invoke('get_waveform', { path: it.path, draft: isDraft, buckets: 1600 })
-      .then(d => { if (_capturedId === id) { waveformData = /** @type {any} */ (d); mediaLoading = false; } })
-      .catch(e => { console.error('get_waveform failed:', e); if (_capturedId === id) mediaLoading = false; });
+
+    // Cancel any previous in-flight waveform job for a different item.
+    if (_waveformJobId) {
+      invoke('cancel_job', { jobId: _waveformJobId }).catch(() => {});
+      _waveformJobId = null;
+    }
+
+    const jobId = crypto.randomUUID();
+    _waveformJobId = jobId;
+
+    let unlistenFn = null;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (unlistenFn) unlistenFn();
+      if (_waveformJobId === jobId) _waveformJobId = null;
+    };
+    listen(`analysis-result:${jobId}`, (ev) => {
+      const p = ev.payload ?? {};
+      if (_capturedId === id) {
+        if (p.data) waveformData = /** @type {any} */ (p.data);
+        mediaLoading = false;
+      }
+      settle();
+    }).then((fn) => {
+      if (settled) { fn(); return; }
+      unlistenFn = fn;
+    }).catch(() => settle());
+
+    invoke('get_waveform', { jobId, path: it.path, draft: isDraft, buckets: 1600 })
+      .catch(e => {
+        console.error('get_waveform failed:', e);
+        if (_capturedId === id) mediaLoading = false;
+        settle();
+      });
+
+    return () => {
+      if (_waveformJobId === jobId) {
+        invoke('cancel_job', { jobId }).catch(() => {});
+      }
+      settle();
+    };
   });
 
   $effect(() => {
@@ -700,9 +745,43 @@
     spectrogramData = null;
     if (!it || !go) return;
     const id = it.id;
-    invoke('get_spectrogram', { path: it.path })
-      .then(b64 => { if (_capturedId === id) spectrogramData = b64; })
-      .catch(() => {});
+
+    // Cancel any previous in-flight spectrogram job for a different item.
+    if (_spectrogramJobId) {
+      invoke('cancel_job', { jobId: _spectrogramJobId }).catch(() => {});
+      _spectrogramJobId = null;
+    }
+
+    const jobId = crypto.randomUUID();
+    _spectrogramJobId = jobId;
+
+    let unlistenFn = null;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (unlistenFn) unlistenFn();
+      if (_spectrogramJobId === jobId) _spectrogramJobId = null;
+    };
+    listen(`analysis-result:${jobId}`, (ev) => {
+      const p = ev.payload ?? {};
+      if (_capturedId === id && !p.cancelled && !p.error && p.data) {
+        spectrogramData = p.data;
+      }
+      settle();
+    }).then((fn) => {
+      if (settled) { fn(); return; }
+      unlistenFn = fn;
+    }).catch(() => settle());
+
+    invoke('get_spectrogram', { jobId, path: it.path }).catch(() => settle());
+
+    return () => {
+      if (_spectrogramJobId === jobId) {
+        invoke('cancel_job', { jobId }).catch(() => {});
+      }
+      settle();
+    };
   });
 
   $effect(() => {

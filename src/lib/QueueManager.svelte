@@ -55,6 +55,9 @@
   // ── Pre-load cache ─────────────────────────────────────────────────────────
   let preloadCache = new Map(); // id → { waveform?, filmstripFrames? }
   let _bgBusy = false;
+  /** In-flight backend job_id for the bg waveform extract, so a subsequent
+   *  preload can cancel the previous one. */
+  let _bgWaveformJobId = null;
 
   // ── Async pipeline generation counter — plain number, NOT $state ──────────
   // Incremented on every selection; runLoadPipeline bails if it changes mid-flight.
@@ -170,11 +173,40 @@
     const cached = {};
     preloadCache.set(nextItem.id, cached);
 
-    try {
-      const data = await invoke('get_waveform', { path: nextItem.path, draft: isHeavyItem(nextItem) });
-      cached.waveform = data;
-      preloadCache.set(nextItem.id, cached);
-    } catch { /* non-fatal */ }
+    // Cancel any previous in-flight bg waveform job before starting a new one.
+    if (_bgWaveformJobId) {
+      try { await invoke('cancel_job', { jobId: _bgWaveformJobId }); } catch { /* non-fatal */ }
+      _bgWaveformJobId = null;
+    }
+
+    const jobId = crypto.randomUUID();
+    _bgWaveformJobId = jobId;
+
+    await new Promise((resolve) => {
+      let unlistenFn = null;
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (unlistenFn) unlistenFn();
+        if (_bgWaveformJobId === jobId) _bgWaveformJobId = null;
+        resolve();
+      };
+      listen(`analysis-result:${jobId}`, (ev) => {
+        const p = ev.payload ?? {};
+        if (!p.cancelled && !p.error && p.data) {
+          cached.waveform = p.data;
+          preloadCache.set(nextItem.id, cached);
+        }
+        settle();
+      }).then((fn) => {
+        if (settled) { fn(); return; }
+        unlistenFn = fn;
+      }).catch(() => settle());
+
+      invoke('get_waveform', { jobId, path: nextItem.path, draft: isHeavyItem(nextItem) })
+        .catch(() => settle());
+    });
 
     if (nextItem.mediaType === 'video') {
       const dur = nextItem.info?.duration_secs ?? null;
