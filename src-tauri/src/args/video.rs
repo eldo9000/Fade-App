@@ -853,4 +853,217 @@ mod tests {
         assert!(args.contains(&"-an".to_string()));
         assert!(!args.contains(&"-vcodec".to_string()));
     }
+
+    // ── h264/h265 VBR/CBR matrix ────────────────────────────────────────────
+
+    fn h264_opts(mode: &str) -> ConvertOptions {
+        ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            video_bitrate_mode: Some(mode.into()),
+            ..Default::default()
+        }
+    }
+
+    fn h265_opts(mode: &str) -> ConvertOptions {
+        ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h265".into()),
+            video_bitrate_mode: Some(mode.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn h264_vbr_emits_bitrate() {
+        let opts = ConvertOptions {
+            video_bitrate: Some(4000),
+            ..h264_opts("vbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-b:v", "4000k"));
+        assert!(!args.contains(&"-minrate".to_string()));
+        assert!(!args.contains(&"-maxrate".to_string()));
+    }
+
+    #[test]
+    fn h264_cbr_emits_full_cbr_flags() {
+        let opts = ConvertOptions {
+            video_bitrate: Some(4000),
+            ..h264_opts("cbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-b:v", "4000k"));
+        assert!(find_pair(&args, "-minrate", "4000k"));
+        assert!(find_pair(&args, "-maxrate", "4000k"));
+        assert!(find_pair(&args, "-bufsize", "8000k"));
+    }
+
+    #[test]
+    fn h264_cbr_default_bitrate() {
+        let opts = h264_opts("cbr");
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-b:v", "4000k"));
+        assert!(find_pair(&args, "-minrate", "4000k"));
+        assert!(find_pair(&args, "-maxrate", "4000k"));
+        assert!(find_pair(&args, "-bufsize", "8000k"));
+    }
+
+    #[test]
+    fn h264_crf_mode_no_bv_flag() {
+        let opts = ConvertOptions {
+            crf: Some(23),
+            ..h264_opts("crf")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        // CRF mode: -crf present, no -b:v flag
+        assert!(find_pair(&args, "-crf", "23"));
+        assert!(!args.contains(&"-b:v".to_string()));
+    }
+
+    #[test]
+    fn h264_crf_mode_none_defaults_to_crf() {
+        // video_bitrate_mode unset → defaults to crf path, no -b:v
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            crf: Some(18),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-crf", "18"));
+        assert!(!args.contains(&"-b:v".to_string()));
+    }
+
+    #[test]
+    fn h265_vbr_emits_bitrate() {
+        let opts = ConvertOptions {
+            video_bitrate: Some(6000),
+            ..h265_opts("vbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-b:v", "6000k"));
+        assert!(!args.contains(&"-minrate".to_string()));
+        assert!(!args.contains(&"-maxrate".to_string()));
+    }
+
+    #[test]
+    fn h265_cbr_emits_full_cbr_flags() {
+        let opts = ConvertOptions {
+            video_bitrate: Some(3000),
+            ..h265_opts("cbr")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(find_pair(&args, "-b:v", "3000k"));
+        assert!(find_pair(&args, "-minrate", "3000k"));
+        assert!(find_pair(&args, "-maxrate", "3000k"));
+        assert!(find_pair(&args, "-bufsize", "6000k"));
+    }
+
+    // ── Image sequence tests ────────────────────────────────────────────────
+
+    fn seq_opts(fmt: &str) -> ConvertOptions {
+        ConvertOptions {
+            output_format: fmt.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn seq_png_emits_png_codec() {
+        let opts = seq_opts("seq_png");
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        assert!(find_pair(&args, "-vcodec", "png"));
+        assert!(args.last().unwrap().ends_with("frame_%04d.png"));
+    }
+
+    #[test]
+    fn seq_jpg_emits_mjpeg_and_quality_crf0() {
+        let opts = ConvertOptions {
+            crf: Some(0),
+            ..seq_opts("seq_jpg")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        assert!(find_pair(&args, "-vcodec", "mjpeg"));
+        assert!(find_pair(&args, "-q:v", "2"));
+    }
+
+    #[test]
+    fn seq_jpg_emits_mjpeg_and_quality_crf51() {
+        let opts = ConvertOptions {
+            crf: Some(51),
+            ..seq_opts("seq_jpg")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        assert!(find_pair(&args, "-vcodec", "mjpeg"));
+        assert!(find_pair(&args, "-q:v", "31"));
+    }
+
+    #[test]
+    fn seq_jpg_emits_mjpeg_and_quality_crf23_midpoint() {
+        // CRF 23 (default): 2.0 + (23.0/51.0)*29.0 ≈ 15.08 → rounds to 15
+        let opts = ConvertOptions {
+            crf: Some(23),
+            ..seq_opts("seq_jpg")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        assert!(find_pair(&args, "-q:v", "15"));
+    }
+
+    #[test]
+    fn seq_tiff_emits_tiff_codec() {
+        let opts = seq_opts("seq_tiff");
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        assert!(find_pair(&args, "-vcodec", "tiff"));
+        assert!(args.last().unwrap().ends_with("frame_%04d.tiff"));
+    }
+
+    #[test]
+    fn seq_png_trim_start_emits_ss_before_input() {
+        let opts = ConvertOptions {
+            trim_start: Some(10.0),
+            ..seq_opts("seq_png")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        let ss_idx = args.iter().position(|a| a == "-ss").expect("has -ss");
+        let i_idx = args.iter().position(|a| a == "-i").expect("has -i");
+        // -ss must appear before -i (input seek)
+        assert!(ss_idx < i_idx);
+        assert_eq!(args[ss_idx + 1], "10");
+    }
+
+    #[test]
+    fn seq_png_trim_end_emits_t_as_duration() {
+        let opts = ConvertOptions {
+            trim_start: Some(5.0),
+            trim_end: Some(15.0),
+            ..seq_opts("seq_png")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        // duration = 15.0 - 5.0 = 10.0
+        assert!(find_pair(&args, "-t", "10"));
+    }
+
+    #[test]
+    fn seq_png_framerate_emits_r_flag() {
+        let opts = ConvertOptions {
+            frame_rate: Some("24".into()),
+            ..seq_opts("seq_png")
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+        assert!(find_pair(&args, "-r", "24"));
+    }
+
+    #[test]
+    fn seq_no_audio_always_present() {
+        for fmt in &["seq_png", "seq_jpg", "seq_tiff"] {
+            let opts = seq_opts(fmt);
+            let args = build_ffmpeg_video_args("in.mp4", "/tmp/frames", &opts);
+            assert!(
+                args.contains(&"-an".to_string()),
+                "-an missing for format {}",
+                fmt
+            );
+        }
+    }
 }
