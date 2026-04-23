@@ -1,5 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { markConverting, markError } from './itemStatus.js';
 
   let {
@@ -62,6 +63,54 @@
       : `${dir}/${stem}.${newExt}`;
   }
 
+  // ── Job-based analysis helper ─────────────────────────────────────────────
+  // Invokes a long-running analysis command that spawns a backend thread,
+  // registers a cancellable FFmpeg child, and emits its result on
+  // `analysis-result:{jobId}`. Returns the parsed data field, or rejects on
+  // backend error / cancellation.
+
+  // In-flight jobId per analysis type — used to cancel a prior run when the
+  // user triggers the same analysis again before the first finishes.
+  const inFlight = { cutDetect: null, blackDetect: null, loudness: null, frameMd5: null };
+
+  async function invokeAnalysis(command, params, trackerKey = null) {
+    const jobId = crypto.randomUUID();
+
+    // Cancel any previous in-flight run of this analysis type.
+    if (trackerKey && inFlight[trackerKey]) {
+      try { await invoke('cancel_job', { jobId: inFlight[trackerKey] }); } catch {}
+    }
+    if (trackerKey) inFlight[trackerKey] = jobId;
+
+    return new Promise((resolve, reject) => {
+      let unlistenFn = null;
+      let settled = false;
+
+      const settle = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        if (unlistenFn) unlistenFn();
+        if (trackerKey && inFlight[trackerKey] === jobId) inFlight[trackerKey] = null;
+        fn(val);
+      };
+
+      listen(`analysis-result:${jobId}`, (ev) => {
+        const p = ev.payload ?? {};
+        if (p.cancelled) return settle(reject, 'CANCELLED');
+        if (p.error)     return settle(reject, p.error);
+        // Commands define their payload as either { data, ... } or a named
+        // field. Prefer `data`, else look for common named fields.
+        const data = p.data ?? p.cuts ?? p.intervals ?? p;
+        settle(resolve, data);
+      }).then((fn) => {
+        if (settled) { fn(); return; }
+        unlistenFn = fn;
+      }).catch((err) => settle(reject, err));
+
+      invoke(command, { jobId, ...params }).catch((err) => settle(reject, err));
+    });
+  }
+
   // ── Analysis runners ──────────────────────────────────────────────────────
 
   async function runLoudness() {
@@ -72,14 +121,15 @@
     loudnessResult = null;
     setStatus('Measuring loudness…', 'info');
     try {
-      loudnessResult = await invoke('analyze_loudness', {
+      loudnessResult = await invokeAnalysis('analyze_loudness', {
         inputPath: selectedItem.path,
         targetI: target,
         targetTp: -2.0,
         truePeak: loudnessTruePeak,
-      });
+      }, 'loudness');
       setStatus('Loudness measured', 'success');
     } catch (err) {
+      if (err === 'CANCELLED') return;
       setStatus(`Loudness failed: ${err}`, 'error');
     }
   }
@@ -115,18 +165,19 @@
     cutDetectResults = [];
     setStatus('Detecting cuts…', 'info');
     try {
-      const res = await invoke('analyze_cut_detect', {
+      const res = await invokeAnalysis('analyze_cut_detect', {
         inputPath: selectedItem.path,
         algo: cutDetectAlgo,
         threshold: Number(cutDetectThreshold),
         minShotS: Number(cutDetectMinShotS),
-      });
-      cutDetectResults = res.map(c => ({
+      }, 'cutDetect');
+      cutDetectResults = (res ?? []).map(c => ({
         time: c.time.toFixed(3),
         score: c.score.toFixed(2),
       }));
       setStatus(`${cutDetectResults.length} cuts`, 'success');
     } catch (err) {
+      if (err === 'CANCELLED') return;
       setStatus(`Cut detect failed: ${err}`, 'error');
     }
   }
@@ -136,19 +187,20 @@
     blackDetectResults = [];
     setStatus('Detecting black frames…', 'info');
     try {
-      const res = await invoke('analyze_black_detect', {
+      const res = await invokeAnalysis('analyze_black_detect', {
         inputPath: selectedItem.path,
         minDuration: Number(blackDetectMinDur),
         pixTh: Number(blackDetectPixTh),
         picTh: Number(blackDetectPicTh),
-      });
-      blackDetectResults = res.map(b => ({
+      }, 'blackDetect');
+      blackDetectResults = (res ?? []).map(b => ({
         start: b.start.toFixed(3),
         end: b.end.toFixed(3),
         duration: b.duration.toFixed(3),
       }));
       setStatus(`${blackDetectResults.length} black intervals`, 'success');
     } catch (err) {
+      if (err === 'CANCELLED') return;
       setStatus(`Black detect failed: ${err}`, 'error');
     }
   }
@@ -181,17 +233,18 @@
     frameMd5Result = null;
     setStatus('Hashing frames…', 'info');
     try {
-      const r = await invoke('analyze_framemd5', {
+      const r = await invokeAnalysis('analyze_framemd5', {
         inputPath: selectedItem.path,
         stream: frameMd5Stream,
         diffPath: frameMd5DiffPath,
-      });
+      }, 'frameMd5');
       frameMd5Result = {
         hashes: r.hashes,
         firstDivergence: r.first_divergence,
       };
       setStatus('FrameMD5 complete', 'success');
     } catch (err) {
+      if (err === 'CANCELLED') return;
       setStatus(`FrameMD5 failed: ${err}`, 'error');
     }
   }
