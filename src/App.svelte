@@ -1046,7 +1046,8 @@
     const p = [];
     if (mediaType === 'audio') {
       const fmt = opts.output_format;
-      const lossless = ['wav', 'flac', 'alac', 'aiff'].includes(fmt);
+      const m4aIsLossless = fmt === 'm4a' && opts.m4a_subcodec === 'alac';
+      const lossless = ['wav', 'flac', 'alac', 'aiff'].includes(fmt) || m4aIsLossless;
       if (!lossless && opts.bitrate) p.push(`${opts.bitrate}k`);
       if (opts.sample_rate) p.push(`${opts.sample_rate}hz`);
       if (fmt === 'mp3') {
@@ -1057,8 +1058,12 @@
         if (opts.ogg_bitrate_mode === 'vbr') p.push(`q${opts.ogg_vbr_quality}`);
       } else if (fmt === 'opus') {
         p.push(opts.opus_vbr ? 'vbr' : 'cbr');
-      } else if (fmt === 'aac' || fmt === 'm4a') {
+      } else if (fmt === 'aac') {
         p.push(opts.aac_profile);
+      } else if (fmt === 'm4a') {
+        p.push(opts.m4a_subcodec);
+        if (opts.m4a_subcodec === 'alac' && opts.bit_depth != null) p.push(`${opts.bit_depth}bit`);
+        else if (opts.m4a_subcodec === 'aac') p.push(opts.aac_profile);
       } else if (fmt === 'wma') {
         p.push(opts.wma_mode);
       } else if (fmt === 'ac3') {

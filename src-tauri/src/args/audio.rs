@@ -184,19 +184,26 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
     }
 
     // ── channels → -ac (+ mp3 -joint_stereo) ──
+    let mut channels_set = false;
     if let Some(ch) = opts.channels.as_deref() {
         match ch {
-            "mono" => args.extend(["-ac".to_string(), "1".to_string()]),
-            "stereo" => args.extend(["-ac".to_string(), "2".to_string()]),
+            "mono" => { args.extend(["-ac".to_string(), "1".to_string()]); channels_set = true; }
+            "stereo" => { args.extend(["-ac".to_string(), "2".to_string()]); channels_set = true; }
             "joint" => {
                 args.extend(["-ac".to_string(), "2".to_string()]);
+                channels_set = true;
                 if fmt == "mp3" {
                     args.extend(["-joint_stereo".to_string(), "1".to_string()]);
                 }
             }
-            "5.1" => args.extend(["-ac".to_string(), "6".to_string()]),
+            "5.1" => { args.extend(["-ac".to_string(), "6".to_string()]); channels_set = true; }
             _ => {} // "source" or unknown → omit
         }
+    }
+    // libopus refuses to open with unknown/exotic channel layouts. Force stereo
+    // when the user picked "source" so opus/ogg never fails on weird inputs.
+    if !channels_set && matches!(fmt.as_str(), "opus" | "ogg") {
+        args.extend(["-ac".to_string(), "2".to_string()]);
     }
 
     (args, suppress_base_bitrate)
