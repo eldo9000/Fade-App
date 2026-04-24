@@ -687,6 +687,36 @@
 
   let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled, unlistenDrag;
 
+  // Hoisted at module scope so onDestroy can remove them.
+  function handlePopState(ev) {
+    if (globalOutputFormat && !ev.state?.format) globalOutputFormat = null;
+  }
+  // Timestamp guard — pointerdown, mousedown, and auxclick all fire for one
+  // physical button press. Without this, btn.click() (and history.back()) runs
+  // two or three times per press, causing history to overshoot.
+  let _mouseBackLastMs = 0;
+  function handleMouseBack(ev) {
+    // W3C: button 3 = X1 (back); some drivers/WKWebView report 4 or 8 instead.
+    if (ev.button !== 3 && ev.button !== 4 && ev.button !== 8) return;
+    const now = Date.now();
+    if (now - _mouseBackLastMs < 300) return;
+    _mouseBackLastMs = now;
+    const btn = document.querySelector('[data-back-button]');
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    btn.click();
+  }
+  function handleBrowserBackKey(ev) {
+    // Some mice register the X1 back button as a keyboard BrowserBack event
+    if (ev.code !== 'BrowserBack' && ev.keyCode !== 166) return;
+    const btn = document.querySelector('[data-back-button]');
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    btn.click();
+  }
+
   onMount(async () => {
     // Hydrate diagnostics from disk before installing handlers so historical
     // errors show alongside new ones in the Diagnostics panel.
@@ -713,19 +743,17 @@
     document.documentElement.style.zoom = String(zoom.level);
     window.addEventListener('keydown', zoom.handleKey);
 
-    // Mouse back button (X1) → click the first on-screen [data-back-button].
-    // Preempt in mousedown so the webview doesn't attempt history nav first;
-    // auxclick covers browsers that only surface X1 there.
-    const handleMouseBack = (ev) => {
-      if (ev.button !== 3) return;
-      const btn = document.querySelector('[data-back-button]');
-      if (!btn) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      btn.click();
-    };
-    window.addEventListener('mousedown', handleMouseBack);
-    window.addEventListener('auxclick', handleMouseBack);
+    // popstate — fired by the browser when the user presses the back button
+    // (mouse X1 or keyboard). We pushed a history entry when entering a format
+    // page; popping it means the user wants to return to the format picker.
+    window.addEventListener('popstate', handlePopState);
+
+    // Mouse back button (X1). WKWebView on macOS may fire pointer events or
+    // keyboard BrowserBack instead of mousedown for extra mouse buttons.
+    window.addEventListener('mousedown',   handleMouseBack,     { capture: true });
+    window.addEventListener('pointerdown', handleMouseBack,     { capture: true });
+    window.addEventListener('auxclick',    handleMouseBack,     { capture: true });
+    window.addEventListener('keydown',     handleBrowserBackKey, { capture: true });
 
     document.addEventListener('mouseover', _onGlobalMouseOver);
     document.addEventListener('mouseleave', () => {
@@ -849,6 +877,11 @@
   onDestroy(() => {
     document.removeEventListener('mouseover', _onGlobalMouseOver);
     window.removeEventListener('keydown', zoom.handleKey);
+    window.removeEventListener('popstate', handlePopState);
+    window.removeEventListener('mousedown',   handleMouseBack,     { capture: true });
+    window.removeEventListener('pointerdown', handleMouseBack,     { capture: true });
+    window.removeEventListener('auxclick',    handleMouseBack,     { capture: true });
+    window.removeEventListener('keydown',     handleBrowserBackKey, { capture: true });
     // Note: bg filmstrip listener cleaned up by QueueManager.$effect teardown
     unlistenDrag?.();
     unlistenProgress?.();
@@ -1034,7 +1067,7 @@
         p.push(`${opts.dts_bitrate}k`);
       } else if (fmt === 'flac') {
         p.push(`cmp${opts.flac_compression}`);
-      } else if (['wav', 'aiff', 'alac'].includes(fmt)) {
+      } else if (['wav', 'aiff', 'alac'].includes(fmt) && opts.bit_depth != null) {
         p.push(`${opts.bit_depth}bit`);
       }
       if (opts.channels) p.push(opts.channels);
@@ -1465,10 +1498,20 @@
   // ── Output format state ────────────────────────────────────────────────────
   let globalOutputFormat = $state(null); // null = nothing selected
 
+  // Push a history entry when entering a format page so the browser back button
+  // (mouse X1 or keyboard) navigates back naturally via popstate.
+  // Replace instead of push when switching between formats — only one extra entry.
+  $effect(() => {
+    if (globalOutputFormat) {
+      if (history.state?.format) history.replaceState({ format: globalOutputFormat }, '');
+      else                       history.pushState(   { format: globalOutputFormat }, '');
+    }
+  });
+
   const FORMAT_GROUPS = [
     { label: 'Audio', cat: 'audio', fmts: [
-      { id: 'mp3', live: true }, { id: 'wav' }, { id: 'flac' }, { id: 'ogg' },
-      { id: 'aac' }, { id: 'opus' }, { id: 'm4a' }, { id: 'wma' },
+      { id: 'mp3', live: true }, { id: 'wav', live: true }, { id: 'flac', live: true }, { id: 'ogg', live: true },
+      { id: 'aac', live: true }, { id: 'opus' }, { id: 'm4a' }, { id: 'wma' },
       { id: 'aiff' }, { id: 'alac' }, { id: 'ac3' }, { id: 'dts' },
       { id: 'vorbis', label: 'Vorbis', todo: true },
       { id: 'ddp', label: 'Dolby Digital+', todo: true },
@@ -2814,7 +2857,7 @@
                   bind:this={proxyDropZoneEl}
                   onclick={() => onProxyBrowse(bf.id)}
                   class="flex flex-col items-center gap-3 px-14 py-10 rounded-xl border cursor-pointer transition-colors
-                         border-white/[0.07] hover:border-white/20">
+                         border-white/[0.07] bg-white/[0.03] hover:border-white/20">
                   <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
                        class="text-white/20">
@@ -2876,7 +2919,7 @@
             </div>
           {:else if !selectedItem}
             <div class="w-full h-full flex items-center justify-center select-none">
-              <div class="flex flex-col items-center gap-3 px-14 py-10 rounded-xl border border-white/[0.07]">
+              <div class="flex flex-col items-center gap-3 px-14 py-10 rounded-xl border border-white/[0.07] bg-white/[0.03]">
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                      stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
                      class="text-white/20">
@@ -3002,7 +3045,7 @@
         {#if globalOutputFormat}
           {@const _fmt = FORMAT_GROUPS.find(g => g.fmts.some(f => f.id === globalOutputFormat))?.fmts.find(f => f.id === globalOutputFormat)}
           <button
-            onclick={() => { globalOutputFormat = null; }}
+            onclick={() => history.back()}
             data-tooltip="Back to the format picker grid."
             data-back-button
             class="px-3 py-1.5 rounded text-[11px] font-semibold bg-[var(--accent)] text-white
