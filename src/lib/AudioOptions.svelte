@@ -215,14 +215,10 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
-      <legend class="fade-label">Sample Rate</legend>
-      <div class="inline-flex flex-col">
-        {#each sampleRates as sr, i}
-          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
-        {/each}
-      </div>
-    </fieldset>
+    <div class="px-3 py-2 text-[12px] text-[var(--text-secondary)] border border-[var(--border)] rounded-md bg-[var(--surface-hint)]"
+         data-tooltip="libopus only supports 48 kHz. All input rates are resampled automatically.">
+      Sample Rate — 48 kHz (required)
+    </div>
 
   {:else if options.output_format === 'aac'}
     <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">

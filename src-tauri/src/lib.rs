@@ -3074,6 +3074,19 @@ mod tests {
     }
 
     #[test]
+    fn audio_args_ogg_forces_48k_like_opus() {
+        // OGG uses libopus and must also reject 44100 via the sample-rate override.
+        let opts = ConvertOptions {
+            output_format: "ogg".to_string(),
+            sample_rate: Some(44100),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_audio_args("i", "o.ogg", &opts);
+        let ar_idx = args.iter().position(|a| a == "-ar").expect("-ar missing");
+        assert_eq!(args[ar_idx + 1], "48000");
+    }
+
+    #[test]
     fn audio_args_m4a_alac_suppresses_bitrate() {
         let opts = ConvertOptions {
             output_format: "m4a".to_string(),

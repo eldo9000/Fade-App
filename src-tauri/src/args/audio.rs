@@ -236,8 +236,9 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         }
     }
     // libopus only accepts 8000/12000/16000/24000/48000 Hz. Always force 48000
-    // so 44.1/96/192 kHz inputs don't produce "sample rate not supported" errors.
-    let is_opus = opts.output_format.to_lowercase() == "opus";
+    // for both opus and ogg (ogg now uses libopus) so 44.1/96/192 kHz inputs
+    // don't produce "sample rate not supported" errors.
+    let is_opus = matches!(opts.output_format.to_lowercase().as_str(), "opus" | "ogg");
     let sample_rate = if is_opus {
         Some(48000u32)
     } else {

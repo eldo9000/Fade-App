@@ -139,8 +139,10 @@
     ][0];
 
     if (picked) {
-      const m = picked.match(/sample rate\s+(\d+)\s+is not supported by the libmp3lame encoder/i);
-      if (m) return `Unsupported MP3 sample rate: ${m[1]} Hz`;
+      const mp3m = picked.match(/sample rate\s+(\d+)\s+is not supported by the libmp3lame encoder/i);
+      if (mp3m) return `Unsupported MP3 sample rate: ${mp3m[1]} Hz`;
+      const opusm = picked.match(/sample rate\s+(\d+)\s+is not supported by the libopus encoder/i);
+      if (opusm) return `Unsupported sample rate: ${opusm[1]} Hz (OGG/Opus requires 48 kHz)`;
       return picked
         .replace(/^\[[^\]]+\]\s*/g, '')
         .replace(/\s+\([^)]*\)\s*$/, '')
@@ -154,7 +156,9 @@
 
   function errorHint(err) {
     const raw = _errorText(err);
-    if (/sample rate/i.test(raw)) return 'Try 44.1 kHz or 48 kHz for MP3.';
+    if (/libopus encoder/i.test(raw)) return 'OGG and Opus require 48 kHz. Switch sample rate to 48 kHz.';
+    if (/libmp3lame encoder/i.test(raw)) return 'Try 44.1 kHz or 48 kHz for MP3.';
+    if (/sample rate/i.test(raw)) return 'Check the sample rate for this format.';
     if (/codec/i.test(raw)) return 'Check the selected codec and output format.';
     if (/not supported/i.test(raw)) return 'This option is not supported for the chosen format.';
     return 'Tap Details for the full log.';
