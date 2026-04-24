@@ -1,13 +1,14 @@
 {
   "name": "fade",
   "private": true,
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "build:release": "bash scripts/build-release.sh",
     "test": "tsc --noEmit && vitest run",
     "test:e2e": "playwright test --config playwright-ct.config.ts",
     "typecheck": "tsc --noEmit"

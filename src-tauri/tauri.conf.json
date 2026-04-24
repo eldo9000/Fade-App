@@ -1,6 +1,6 @@
 {
   "productName": "Fade",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "identifier": "io.librewin.fade",
   "build": {
     "frontendDist": "../dist",
@@ -43,7 +43,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCNTg1RURBRDAyOEY4NkMKUldScytDalEybDVZTzdRbTdpbmZhY25hNi90R0dBaWdRMk9uQkI4SU9kV1pnZkRGSm5kSWdvdHoK",
+      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklEUXlOa1E1UXpRNE1VSTFNMEV4T0VJS1VsZFRURzlXVFdKVFNuaDBVVzB3TURCck0xWldSaloyVUdkSVJWUmtRa1kxYlVwQlpuQklRMlZzU2tGM1kzUjNRekZyYkhCS1RHd0s=",
       "endpoints": [
         "https://github.com/eldo9000/Fade-App/releases/latest/download/latest.json"
       ]
