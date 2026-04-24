@@ -2950,7 +2950,11 @@ mod tests {
             };
             let args = build_ffmpeg_audio_args("in.wav", "out.opus", &opts);
             let ar_idx = args.iter().position(|a| a == "-ar").expect("-ar missing");
-            assert_eq!(args[ar_idx + 1], "48000", "sample_rate {sr} should be forced to 48000");
+            assert_eq!(
+                args[ar_idx + 1],
+                "48000",
+                "sample_rate {sr} should be forced to 48000"
+            );
         }
     }
 
@@ -2988,7 +2992,9 @@ mod tests {
             ..Default::default()
         };
         let args24 = build_ffmpeg_audio_args("in.wav", "out.wav", &opts24);
-        assert!(args24.windows(2).any(|w| w[0] == "-c:a" && w[1] == "pcm_s24le"));
+        assert!(args24
+            .windows(2)
+            .any(|w| w[0] == "-c:a" && w[1] == "pcm_s24le"));
         assert!(!args24.contains(&"-sample_fmt".to_string()));
         assert!(!args24.contains(&"-b:a".to_string()));
 
@@ -2999,7 +3005,9 @@ mod tests {
             ..Default::default()
         };
         let args32 = build_ffmpeg_audio_args("in.wav", "out.wav", &opts32);
-        assert!(args32.windows(2).any(|w| w[0] == "-c:a" && w[1] == "pcm_f32le"));
+        assert!(args32
+            .windows(2)
+            .any(|w| w[0] == "-c:a" && w[1] == "pcm_f32le"));
         assert!(!args32.contains(&"-sample_fmt".to_string()));
 
         // 16-bit WAV: -sample_fmt s16 (no explicit codec needed)
@@ -3009,7 +3017,9 @@ mod tests {
             ..Default::default()
         };
         let args16 = build_ffmpeg_audio_args("in.wav", "out.wav", &opts16);
-        assert!(args16.windows(2).any(|w| w[0] == "-sample_fmt" && w[1] == "s16"));
+        assert!(args16
+            .windows(2)
+            .any(|w| w[0] == "-sample_fmt" && w[1] == "s16"));
     }
 
     #[test]

@@ -284,7 +284,9 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         if (m - 1.0).abs() > 0.01 {
             // aformat ensures stereo before extrastereo — mono input (L=R) passes through
             // unchanged since extrastereo's side signal (L-R) is zero.
-            filters.push(format!("aformat=channel_layouts=stereo,extrastereo=m={m:.3}"));
+            filters.push(format!(
+                "aformat=channel_layouts=stereo,extrastereo=m={m:.3}"
+            ));
         }
     }
     if opts.normalize_loudness == Some(true) {
