@@ -25,6 +25,12 @@
     }
   });
 
+  $effect(() => {
+    if (options.output_format === 'opus' && options.opus_application === 'lowdelay') {
+      options.opus_application = 'audio';
+    }
+  });
+
   const isLossless = $derived(['flac','wav','aiff','alac'].includes(options.output_format));
   // m4a is lossless when ALAC sub-codec selected
   const m4aIsLossless = $derived(options.output_format === 'm4a' && options.m4a_subcodec === 'alac');
@@ -248,11 +254,11 @@
     </fieldset>
 
   {:else if options.output_format === 'opus'}
-    <fieldset data-tooltip="audio — music · voip — speech · lowdelay — realtime">
+    <fieldset data-tooltip="audio — music · voip — speech">
       <legend class="fade-label">Application</legend>
-      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
-        {#each [['audio','Music'],['voip','Voice'],['lowdelay','Low-Delay']] as [v, lbl], i}
-          <button onclick={() => options.opus_application = v} class={seg(options.opus_application === v, i, 3)}>{lbl}</button>
+      <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+        {#each [['audio','Music'],['voip','Voice']] as [v, lbl], i}
+          <button onclick={() => options.opus_application = v} class={seg(options.opus_application === v, i, 2)}>{lbl}</button>
         {/each}
       </div>
     </fieldset>

@@ -1123,7 +1123,11 @@
       else if (opts.resize_mode === 'pixels') p.push(`${opts.resize_width}x${opts.resize_height}`);
       if (opts.rotation) p.push(`rot${opts.rotation}`);
     }
-    return p.filter(v => v != null && v !== '').join('_');
+    return p
+      .filter(v => v != null && v !== '')
+      .join('_')
+      .replace(/\./g, 'p')       // 5.1 → 5p1 (validator rejects dots)
+      .replace(/[^A-Za-z0-9_-]/g, '');
   }
 
   function getEffectiveSuffix(mediaType, formatOpts) {
@@ -1515,21 +1519,11 @@
   const FORMAT_GROUPS = [
     { label: 'Audio', cat: 'audio', fmts: [
       { id: 'mp3', live: true }, { id: 'wav', live: true }, { id: 'flac', live: true }, { id: 'ogg', live: true },
-      { id: 'aac', live: true }, { id: 'opus' }, { id: 'm4a' }, { id: 'wma' },
-      { id: 'aiff' }, { id: 'alac' }, { id: 'ac3' }, { id: 'dts' },
+      { id: 'aac', live: true }, { id: 'opus', live: true }, { id: 'm4a', live: true },
+      { id: 'aiff' },
       { id: 'vorbis', label: 'Vorbis', todo: true },
       { id: 'ddp', label: 'Dolby Digital+', todo: true },
       { id: 'truehd', label: 'Dolby TrueHD', todo: true },
-      // Tracker / MIDI — rendered via fluidsynth (MIDI, requires .sf2) or
-      // openmpt123 (module trackers). See src-tauri/src/convert/tracker.rs.
-      // These ids are INPUT format markers in the audio category — the user
-      // picks a tracker file as input, target codec is set by the audio fmt.
-      { id: 'mid',  label: 'MIDI' },
-      { id: 'mod',  label: 'MOD'  },
-      { id: 'xm',   label: 'XM'   },
-      { id: 'it',   label: 'IT'   },
-      // SF2 is a soundfont container, not an audio stream; not convertible.
-      { id: 'sf2',  label: 'SF2',  todo: true, preview: true },
     ]},
     { label: 'Video', cat: 'video', fmts: [
       { id: 'mp4' }, { id: 'mov' }, { id: 'webm' }, { id: 'mkv' }, { id: 'avi' }, { id: 'gif' },
