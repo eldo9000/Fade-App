@@ -43,7 +43,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklEUXlOa1E1UXpRNE1VSTFNMEV4T0VJS1VsZFRURzlXVFdKVFNuaDBVVzB3TURCck0xWldSaloyVUdkSVJWUmtRa1kxYlVwQlpuQklRMlZzU2tGM1kzUjNRekZyYkhCS1RHd0s=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQyNkQ5QzQ4MUI1M0ExOEIKUldTTG9WTWJTSnh0UW0wMDBrM1ZWRjZ2UGdIRVRkQkY1bUpBZnBIQ2VsSkF3Y3R3QzFrbHBKTGwK",
       "endpoints": [
         "https://github.com/eldo9000/Fade-App/releases/latest/download/latest.json"
       ]
