@@ -123,17 +123,17 @@
       onclick={() => { headerAdding = true; headerPresetName = ''; }}
       disabled={!activeOutputCategory || !['image','video','audio'].includes(activeOutputCategory)}
       data-tooltip="Save the current panel settings as a named preset — reusable across files and sessions."
-     
-      class="w-7 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
-             text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]
+      class="w-7 py-1 text-[15px] rounded flex items-center justify-center font-medium
+             bg-[color-mix(in_srgb,#fff_12%,var(--surface-raised))] text-white border border-[var(--border)]
+             hover:bg-[var(--accent)] hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]
              transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
     >+</button>
     <button
       disabled
       data-tooltip="Select a preset in the panel to delete it."
-     
-      class="w-7 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
-             text-[var(--text-secondary)] transition-colors leading-none opacity-30 cursor-not-allowed"
+      class="w-7 py-1 text-[15px] rounded flex items-center justify-center font-medium
+             bg-[color-mix(in_srgb,#fff_12%,var(--surface-raised))] text-white border border-[var(--border)]
+             transition-colors leading-none opacity-30 cursor-not-allowed"
     >−</button>
   </div>
 {/if}

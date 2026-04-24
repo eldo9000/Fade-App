@@ -1162,26 +1162,30 @@
       return;
     }
 
-    // Pre-flight: skip items whose output file already exists. User must
-    // delete the old output manually to re-run (avoids silent overwrite).
     const outExt = globalOutputFormat;
-    const checked = await Promise.all(compatible.map(async item => ({
-      item,
-      exists: await invoke('file_exists', {
-        path: expectedOutputPath(item, outExt,
-          getEffectiveSuffix(item.mediaType,
-            item.mediaType === 'image' ? imageOptions
-            : item.mediaType === 'video' ? videoOptions
-            : item.mediaType === 'audio' ? audioOptions
-            : null),
-          outputDir, outputSeparator),
-      }).catch(() => false),
-    })));
-    const willRun     = checked.filter(c => !c.exists).map(c => c.item);
-    const alreadyDone = checked.filter(c =>  c.exists).length;
-    if (willRun.length === 0) {
-      setStatus(alreadyDone === 1 ? 'File already exists.' : 'Files already exist.', 'error');
-      return;
+    let willRun = compatible;
+    let conflictItems = [];
+
+    if (!settings.overwriteFiles) {
+      const checked = await Promise.all(compatible.map(async item => ({
+        item,
+        exists: await invoke('file_exists', {
+          path: expectedOutputPath(item, outExt,
+            getEffectiveSuffix(item.mediaType,
+              item.mediaType === 'image' ? imageOptions
+              : item.mediaType === 'video' ? videoOptions
+              : item.mediaType === 'audio' ? audioOptions
+              : null),
+            outputDir, outputSeparator),
+        }).catch(() => false),
+      })));
+      willRun       = checked.filter(c => !c.exists).map(c => c.item);
+      conflictItems = checked.filter(c =>  c.exists).map(c => c.item);
+      for (const item of conflictItems) markError(item, 'File already exists');
+      if (willRun.length === 0) {
+        setStatus(conflictItems.length === 1 ? 'File already exists.' : 'Files already exist.', 'error');
+        return;
+      }
     }
 
     // Start a fresh batch if the previous one already finished. If the user
@@ -1194,8 +1198,8 @@
     converting = true;
     paused = false;
     const parts = [];
-    if (skipped)     parts.push(`${skipped} incompatible`);
-    if (alreadyDone) parts.push(`${alreadyDone} already exist${alreadyDone === 1 ? 's' : ''}`);
+    if (skipped)               parts.push(`${skipped} incompatible`);
+    if (conflictItems.length)  parts.push(`${conflictItems.length} already exist${conflictItems.length === 1 ? 's' : ''}`);
     setStatus(parts.length ? `Converting… — skipped ${parts.join(', ')}` : 'Converting…', 'info');
 
     // Cap concurrent ffmpeg fanout. Without this, a 100-item batch would
@@ -1991,7 +1995,7 @@
 
       <!-- Search field — filters the queue by filename / extension -->
       <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
-           style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+           style="background:var(--surface-raised)">
         <div class="relative">
           <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -2004,7 +2008,7 @@
             bind:value={leftSearch}
             placeholder=""
             class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
-                   bg-[color:color-mix(in_srgb,#000_40%,var(--surface-raised))]
+                   bg-[var(--surface)]
                    text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
                    focus:outline-none focus:border-[var(--accent)]"
           />
@@ -2119,16 +2123,11 @@
 
         <!-- Convert / Pause / Cancel -->
         {#if converting}
-          <div class="flex gap-1.5">
-            <button onclick={togglePause}
-                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-[var(--border)]
-                           text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-                           hover:border-[var(--accent)] transition-colors">
+          <div class="btn-segmented flex gap-0">
+            <button onclick={togglePause} class="btn-bevel btn-seg flex-1 py-1.5 text-[12px]">
               {paused ? 'Resume' : 'Pause'}
             </button>
-            <button onclick={cancelAll}
-                    class="flex-1 py-1.5 rounded text-[12px] font-medium border border-red-800
-                           text-red-400 hover:border-red-500 hover:bg-red-900/20 transition-colors">
+            <button onclick={cancelAll} class="btn-bevel btn-seg flex-1 py-1.5 text-[12px]">
               Cancel
             </button>
           </div>
@@ -2144,22 +2143,16 @@
           {:else}
             <div class="flex items-center gap-2">
               <span class="w-12 text-right text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)] shrink-0">Convert</span>
-              <div class="flex-1 flex gap-1.5">
+              <div class="btn-segmented flex-1 flex gap-0">
                 <button
                   onclick={() => startConvert('selected')}
                   disabled={!selectedItem || queue.length === 0 || !globalOutputFormat}
-                  class="flex-1 py-1 rounded text-[11px] font-medium transition-colors border
-                         {!selectedItem || queue.length === 0 || !globalOutputFormat
-                           ? 'border-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                           : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
+                  class="btn-bevel btn-seg flex-1 py-1 text-[11px]"
                 >Selected</button>
                 <button
                   onclick={() => startConvert('all')}
                   disabled={queue.length === 0 || !globalOutputFormat}
-                  class="flex-1 py-1 rounded text-[11px] font-semibold transition-colors
-                         {queue.length === 0 || !globalOutputFormat
-                           ? 'bg-[var(--border)] text-[var(--text-secondary)] cursor-not-allowed opacity-40'
-                           : 'bg-[var(--accent)] text-white hover:opacity-90'}"
+                  class="btn-bevel btn-seg flex-1 py-1 text-[11px]"
                 >All</button>
               </div>
             </div>
@@ -2171,14 +2164,11 @@
              Settings. Mirrors the same bindings; the Settings panel still has
              the canonical copy. -->
         <div class="flex flex-col gap-1.5">
-          <div class="flex items-stretch gap-1">
+          <div class="btn-segmented flex items-stretch gap-0">
             <button
               onclick={() => outputDestMode = 'source'}
-             
-              class="flex items-center justify-center gap-1.5 px-2 py-1 rounded border transition-colors flex-1 min-w-0 text-[11px]
-                     {outputDestMode === 'source'
-                       ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
-                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
+              class="btn-bevel btn-seg flex items-center justify-center gap-1.5 px-2 py-1 flex-1 min-w-0 text-[11px]
+                     {outputDestMode === 'source' ? 'is-active' : ''}"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
                 <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
@@ -2189,10 +2179,8 @@
             <button
               onclick={() => { outputDestMode = 'custom'; folderInput?.click(); }}
               data-tooltip={outputDestMode === 'custom' ? 'Using custom output folder' : 'Pick an output folder'}
-              class="flex items-center justify-center gap-1.5 px-2 py-1 rounded border transition-colors flex-1 min-w-0 text-[11px]
-                     {outputDestMode === 'custom'
-                       ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
-                       : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
+              class="btn-bevel btn-seg flex items-center justify-center gap-1.5 px-2 py-1 flex-1 min-w-0 text-[11px]
+                     {outputDestMode === 'custom' ? 'is-active' : ''}"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -2419,6 +2407,12 @@
                   <input type="checkbox" bind:checked={settings.appendSettingsToFilename}
                          class="w-3.5 h-3.5 accent-[var(--accent)]" />
                 </label>
+                <!-- Overwrite existing output files -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Overwrite files automatically</span>
+                  <input type="checkbox" bind:checked={settings.overwriteFiles}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
               </div>
 
               <!-- Section: UI -->
@@ -2499,9 +2493,7 @@
 
           <button
             onclick={() => settingsOpen = !settingsOpen}
-            class="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] border border-[var(--border)]
-                   text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)]
-                   transition-colors shrink-0 {settingsOpen ? 'border-[var(--accent)] text-[var(--text-primary)]' : ''}"
+            class="btn-bevel flex items-center gap-2 px-2.5 py-1.5 text-[12px] shrink-0"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
@@ -2988,7 +2980,7 @@
         </div>
         <!-- Search — narrows the ops list below -->
         <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
-             style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+             style="background:var(--surface-raised)">
           <div class="relative">
             <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                  width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -3001,7 +2993,7 @@
               bind:value={rightSearch}
               placeholder=""
               class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
-                     bg-[color:color-mix(in_srgb,#000_40%,var(--surface-raised))]
+                     bg-[var(--surface)]
                      text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
                      focus:outline-none focus:border-[var(--accent)]"
             />
@@ -3078,7 +3070,7 @@
            the options pages. -->
       {#if !globalOutputFormat}
         <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)] flex items-center gap-2"
-             style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
+             style="background:var(--surface-raised)">
           <div class="relative flex-1">
             <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                  width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -3091,7 +3083,7 @@
               bind:value={rightSearch}
               placeholder=""
               class="w-full pl-7 pr-6 py-1 text-[11px] rounded border border-[var(--border)]
-                     bg-[color:color-mix(in_srgb,#000_40%,var(--surface-raised))]
+                     bg-[var(--surface)]
                      text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]
                      focus:outline-none focus:border-[var(--accent)]"
             />

@@ -10,11 +10,20 @@
     { value: 96000,  label: '96 kHz — Hi-Fi' },
     { value: 192000, label: '192 kHz — Archival' },
   ];
+  const aacFormats = ['aac', 'm4a'];
   const sampleRates = $derived(
     options.output_format === 'mp3'
       ? allSampleRates.filter(sr => sr.value === 44100 || sr.value === 48000)
-      : allSampleRates
+      : aacFormats.includes(options.output_format)
+        ? allSampleRates.filter(sr => sr.value !== 192000)
+        : allSampleRates
   );
+
+  $effect(() => {
+    if (aacFormats.includes(options.output_format) && options.sample_rate === 192000) {
+      options.sample_rate = 96000;
+    }
+  });
 
   const isLossless = $derived(['flac','wav','aiff','alac'].includes(options.output_format));
   // m4a is lossless when ALAC sub-codec selected
