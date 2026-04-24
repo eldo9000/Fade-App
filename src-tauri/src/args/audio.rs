@@ -274,9 +274,7 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         let content_dur = te - opts.trim_start.unwrap_or(0.0);
         let fade_st = pad_front_secs + content_dur - 0.005;
         if fade_st > 0.0 {
-            filters.push(format!(
-                "afade=t=out:st={fade_st:.6}:d=0.005:curve=qsin"
-            ));
+            filters.push(format!("afade=t=out:st={fade_st:.6}:d=0.005:curve=qsin"));
         }
     }
 

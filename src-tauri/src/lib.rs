@@ -694,9 +694,8 @@ fn convert_file(
 
     if ext == "mp3" {
         if let Some(sr) = options.sample_rate {
-            const MP3_SAMPLE_RATES: &[u32] = &[
-                8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
-            ];
+            const MP3_SAMPLE_RATES: &[u32] =
+                &[8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
             if !MP3_SAMPLE_RATES.contains(&sr) {
                 return Err(format!("Unsupported MP3 sample rate: {sr} Hz"));
             }

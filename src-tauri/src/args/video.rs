@@ -130,7 +130,7 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
         }
         // Black-frame padding: tpad handles both front and end in one filter
         let front_secs = opts.pad_front.unwrap_or(0.0);
-        let end_secs   = opts.pad_end.unwrap_or(0.0);
+        let end_secs = opts.pad_end.unwrap_or(0.0);
         if front_secs > 0.0 || end_secs > 0.0 {
             filters.push(format!(
                 "tpad=start_mode=black:start_duration={:.3}:stop_mode=black:stop_duration={:.3}",
@@ -196,9 +196,7 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
                 let content_dur = te - opts.trim_start.unwrap_or(0.0);
                 let fade_st = pad_front_secs + content_dur - 0.005;
                 if fade_st > 0.0 {
-                    af.push(format!(
-                        "afade=t=out:st={fade_st:.6}:d=0.005:curve=qsin"
-                    ));
+                    af.push(format!("afade=t=out:st={fade_st:.6}:d=0.005:curve=qsin"));
                 }
             }
 
