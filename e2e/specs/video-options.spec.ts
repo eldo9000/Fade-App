@@ -19,6 +19,8 @@ const baseOpts = {
   h264_profile: 'main',
   pix_fmt: 'yuv420p',
   tune: 'none',
+  pad_front: null,
+  pad_end: null,
 }
 
 test('VideoOptions renders the codec dropdown trigger with h264 label', async ({ mount }) => {

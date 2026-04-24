@@ -1,5 +1,5 @@
 <script>
-  let { padFront = $bindable(null), padEnd = $bindable(null) } = $props();
+  let { padFront = $bindable(), padEnd = $bindable() } = $props();
 
   const MAX = 60;     // seconds
   const CURVE = 2.55; // exponent: higher = slower ramp at start, steeper at end
