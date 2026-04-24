@@ -26,6 +26,13 @@
   });
 
   $effect(() => {
+    if (options.output_format === 'mp3' && options.sample_rate != null
+        && options.sample_rate !== 44100 && options.sample_rate !== 48000) {
+      options.sample_rate = 44100;
+    }
+  });
+
+  $effect(() => {
     if (options.output_format === 'opus' && options.opus_application === 'lowdelay') {
       options.opus_application = 'audio';
     }
