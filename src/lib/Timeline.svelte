@@ -11,6 +11,7 @@
   let audioEl        = $state(null);
   let isPlaying      = $state(false);
   let currentTime    = $state(0);
+  let virtualTime    = $state(0); // display position; can extend into silence zones (negative = front pad)
   let _prevAudio     = null;
   let _ownedInternal = false;
 
@@ -36,8 +37,8 @@
       _ownedInternal = true;
     }
 
-    const onTime  = () => { currentTime = el.currentTime; };
-    const onEnded = () => { isPlaying = false; currentTime = 0; };
+    const onTime  = () => { currentTime = el.currentTime; if (!dragging) virtualTime = currentTime; };
+    const onEnded = () => { isPlaying = false; currentTime = 0; virtualTime = 0; };
     const onPlay  = () => { isPlaying = true; };
     const onPause = () => { isPlaying = false; };
     el.addEventListener('timeupdate', onTime);
@@ -266,6 +267,7 @@
   }
 
   function seekTo(secs) {
+    virtualTime = secs;
     currentTime = Math.max(0, Math.min(duration ?? 0, secs));
     if (audioEl) audioEl.currentTime = currentTime;
     if (_shadowEl) _shadowEl.currentTime = currentTime;
@@ -854,13 +856,15 @@
   let playFrac = $derived(duration ? Math.max(0, Math.min(1, currentTime / duration)) : 0);
 
   // ── Silence padding fractions (relative to total displayed width) ─────────
-  // Silence padding only applies to audio output; suppress for video.
-  let padFrontSecs   = $derived(item?.mediaType === 'video' ? 0 : (options?.pad_front ?? 0));
-  let padEndSecs     = $derived(item?.mediaType === 'video' ? 0 : (options?.pad_end   ?? 0));
+  let padFrontSecs   = $derived(options?.pad_front ?? 0);
+  let padEndSecs     = $derived(options?.pad_end   ?? 0);
   let totalDispSecs  = $derived((duration ?? 0) + padFrontSecs + padEndSecs);
-  let silFrontFrac   = $derived(totalDispSecs > 0 ? padFrontSecs / totalDispSecs : 0);
-  let silEndFrac     = $derived(totalDispSecs > 0 ? padEndSecs   / totalDispSecs : 0);
-  let audioWidthFrac = $derived(Math.max(0, 1 - silFrontFrac - silEndFrac));
+  let silFrontFrac    = $derived(totalDispSecs > 0 ? padFrontSecs / totalDispSecs : 0);
+  let silEndFrac      = $derived(totalDispSecs > 0 ? padEndSecs   / totalDispSecs : 0);
+  let audioWidthFrac  = $derived(Math.max(0, 1 - silFrontFrac - silEndFrac));
+  let displayPlayFrac = $derived(totalDispSecs > 0
+    ? Math.max(0, Math.min(1, (padFrontSecs + virtualTime) / totalDispSecs))
+    : 0);
 
   // Fade handle fractions — clamped so they stay inside [startFrac, endFrac].
   let fadeInFrac = $derived(
@@ -893,6 +897,7 @@
   // ── Drag ──────────────────────────────────────────────────────────────────
   let trackEl       = $state(null);
   let filmstripEl   = $state(null);
+  let zoomLayerEl   = $state(null);
   let dragging      = $state(null); // 'start' | 'end' | 'playhead' | 'fade_in' | 'fade_out'
   let _dragEl       = null; // element the current drag started on
   let _wasPlayingBeforeDrag = false;
@@ -948,6 +953,12 @@
     const r = el.getBoundingClientRect();
     return (e.clientX - r.left) / r.width; // unclamped; trim may extend into silence padding
   }
+  function getDisplayFrac(e) {
+    const el = zoomLayerEl ?? trackEl;
+    if (!el) return 0;
+    const r = el.getBoundingClientRect();
+    return (e.clientX - r.left) / r.width; // fraction of full display width incl. silence zones
+  }
   function fracToSecs(f) { return f * (duration ?? 0); }
 
   // While scrubbing, keep playback active so the Web Audio analysers have
@@ -972,6 +983,15 @@
     _wasPlayingBeforeDrag = false;
   }
 
+  function onSilenceZoneDown(e) {
+    if (e.button !== 0) return;
+    if (!duration) return;
+    onscrubstart?.();
+    dragging = 'playhead';
+    _beginScrub();
+    const f = Math.max(0, Math.min(1, getDisplayFrac(e)));
+    seekWithDeclick(f * totalDispSecs - padFrontSecs);
+  }
   function onTrackDown(e) {
     if (e.button !== 0) return; // only left click seeks; middle/right bubble to viewport for pan
     if (!duration) return;
@@ -1018,7 +1038,7 @@
       const dy = e.clientY - _dragStartY;
       options.fade_out_curve = Math.max(-3, Math.min(3, _dragStartCurve + dy / 100));
     }
-    else seekTo(fracToSecs(Math.max(0, Math.min(1, f))));
+    else { const df = Math.max(0, Math.min(1, getDisplayFrac(e))); seekTo(df * totalDispSecs - padFrontSecs); }
   }
   function onWindowMouseUp() {
     if (dragging === 'playhead') _endScrub();
@@ -1163,14 +1183,6 @@
               {/if}
             {/each}
           </div>
-          <!-- Playhead -->
-          {#if duration}
-            <div class="absolute inset-y-0 z-10 pointer-events-none"
-                 style="left:{playFrac * 100}%; transform:translateX(-50%)">
-              <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-[2px]"
-                   style="background:#60a5fa; opacity:0.85"></div>
-            </div>
-          {/if}
         </div>
       {/if}
 
@@ -1186,20 +1198,25 @@
            onmousedown={onTrackAuxDown}
            oncontextmenu={(e) => { if (zoom > 1) e.preventDefault(); }}>
       <!-- Zoom/pan transform layer -->
-      <div class="absolute inset-y-0" style="left:{leftPct}%; width:{widthPct}%; transition:left 0.18s ease, width 0.18s ease">
-      <!-- Silence region: front (audio only) -->
-      {#if silFrontFrac > 0 && item?.mediaType !== 'video'}
-        <div class="absolute inset-y-0 left-0 rounded-l overflow-hidden pointer-events-none"
-             style="width:{silFrontFrac * 100}%; background:#0e0e0e; border-right:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div bind:this={zoomLayerEl} class="absolute inset-y-0" style="left:{leftPct}%; width:{widthPct}%; transition:left 0.18s ease, width 0.18s ease">
+      <!-- Silence region: front -->
+      {#if silFrontFrac > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="absolute inset-y-0 left-0 rounded-l overflow-hidden cursor-crosshair"
+             style="width:{silFrontFrac * 100}%; background:#0e0e0e; border-right:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease"
+             onmousedown={onSilenceZoneDown}>
           <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 10 100" xmlns="http://www.w3.org/2000/svg">
             <line x1="0" y1="50" x2="10" y2="50" stroke="rgba(96,165,250,0.45)" stroke-width="1" vector-effect="non-scaling-stroke" />
           </svg>
         </div>
       {/if}
-      <!-- Silence region: end (audio only) -->
-      {#if silEndFrac > 0 && item?.mediaType !== 'video'}
-        <div class="absolute inset-y-0 right-0 rounded-r overflow-hidden pointer-events-none"
-             style="width:{silEndFrac * 100}%; background:#0e0e0e; border-left:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease">
+      <!-- Silence region: end -->
+      {#if silEndFrac > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="absolute inset-y-0 right-0 rounded-r overflow-hidden cursor-crosshair"
+             style="width:{silEndFrac * 100}%; background:#0e0e0e; border-left:1px dashed rgba(96,165,250,0.25); transition:width 0.18s ease"
+             onmousedown={onSilenceZoneDown}>
           <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 10 100" xmlns="http://www.w3.org/2000/svg">
             <line x1="0" y1="50" x2="10" y2="50" stroke="rgba(96,165,250,0.45)" stroke-width="1" vector-effect="non-scaling-stroke" />
           </svg>
@@ -1339,6 +1356,14 @@
       </div>
     {/if}
       </div><!-- /track -->
+      <!-- Playhead — in zoom layer so it can enter silence zones -->
+      {#if duration}
+        <div class="absolute inset-y-0 z-20 pointer-events-none"
+             style="left:{displayPlayFrac * 100}%; transform:translateX(-50%)">
+          <div class="absolute top-0 bottom-0 left-1/2 -translate-x-px w-[2px]"
+               style="background:#60a5fa; opacity:0.85"></div>
+        </div>
+      {/if}
       </div><!-- /transform layer -->
       </div><!-- /viewport -->
 
@@ -1396,7 +1421,7 @@
       <button onclick={() => seekWithDeclick(options?.trim_start ?? 0)}
               class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
-              title="Go to start">
+             >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
         </svg>
@@ -1405,7 +1430,7 @@
       <button onpointerdown={() => _audioCtx?.resume()} onclick={togglePlay}
               class="flex items-center justify-center rounded hover:brightness-110"
               style="width:30px; height:26px; color:white; background:{isPlaying ? '#2563eb' : 'transparent'}; border:1px solid {isPlaying ? '#3b82f6' : '#3b82f6'}"
-              title="{isPlaying ? 'Pause' : 'Play'} (Space)">
+             >
         {#if isPlaying}
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
             <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
@@ -1420,7 +1445,7 @@
       <button onclick={stop}
               class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
-              title="Stop">
+             >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <rect x="6" y="6" width="12" height="12"/>
         </svg>
@@ -1429,7 +1454,7 @@
       <button onclick={() => seekWithDeclick(options?.trim_end ?? duration ?? 0)}
               class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1)"
-              title="Go to end">
+             >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 18l8.5-6L6 6v12z"/><rect x="16" y="6" width="2" height="12"/>
         </svg>
@@ -1438,7 +1463,7 @@
       <button onclick={() => loopEnabled = !loopEnabled}
               class="flex items-center justify-center rounded hover:brightness-125"
               style="width:30px; height:26px; color:{loopEnabled ? 'white' : 'rgba(255,255,255,0.6)'}; background:{loopEnabled ? '#2563eb' : 'rgba(255,255,255,0.07)'}; border:1px solid {loopEnabled ? '#3b82f6' : 'rgba(255,255,255,0.1)'}"
-              title="Loop">
+             >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
           <path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>

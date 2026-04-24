@@ -1,5 +1,6 @@
 <script>
   import { seg, segV } from './segStyles.js';
+  import SilencePad from './SilencePad.svelte';
 
   let { options = $bindable(), errors = {} } = $props();
 
@@ -657,7 +658,7 @@
           <fieldset data-tooltip="GIF output width in pixels — height auto-scaled to preserve aspect ratio">
             <legend class="fade-label">Output Width (px)</legend>
             <div class="grid" style="grid-template-columns:repeat(4,1fr)">
-              {#each [320, 480, 640, 'original'] as w, i}
+              {#each ['320', '480', '640', 'original'] as w, i}
                 <button onclick={() => options.gif_width = w} class={seg(options.gif_width === w, i, 4)}>{w}</button>
               {/each}
             </div>
@@ -665,7 +666,7 @@
           <fieldset data-tooltip="GIF frame rate — lower = smaller file. 10 fps typical for memes · 15 fps smoother · Orig keeps source rate">
             <legend class="fade-label">Frame Rate</legend>
             <div class="grid" style="grid-template-columns:repeat(4,1fr)">
-              {#each [5, 10, 15, 'original'] as r, i}
+              {#each ['5', '10', '15', 'original'] as r, i}
                 <button onclick={() => options.gif_fps = r} class={seg(options.gif_fps === r, i, 4)}>{r === 'original' ? 'Orig' : r + ' fps'}</button>
               {/each}
             </div>
@@ -720,6 +721,14 @@
                 </button>
               {/each}
             </div>
+          </fieldset>
+        {/if}
+
+        <!-- ── Silence / Black-frame padding ────────────────────────── -->
+        {#if options.output_format !== 'gif'}
+          <fieldset data-tooltip="Prepend/append silence + black frames to the output. Front pad adds black frames before the video starts; end pad adds them after it ends.">
+            <legend class="fade-label">Silence Padding</legend>
+            <SilencePad bind:padFront={options.pad_front} bind:padEnd={options.pad_end} />
           </fieldset>
         {/if}
 

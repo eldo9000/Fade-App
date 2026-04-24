@@ -15,6 +15,9 @@ const DEFAULTS = {
   conversionCollapsed: false,    // right-sidebar "Conversion" super-section fold state
   toolsCollapsed: false,         // right-sidebar "Tools" super-section fold state
   filesCollapsed: true,          // right-sidebar "Files" super-section fold state (data / doc / archive)
+  appendSettingsToFilename: false, // append conversion settings to output file name (useful for sweep testing)
+  showHelpTooltips: true,          // data-tooltip popup bubbles on hover
+  showFileInfo: true,              // queue item info popover on hover
 };
 
 function load() {

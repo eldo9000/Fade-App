@@ -692,6 +692,17 @@ fn convert_file(
         return Err(format!("Invalid output format: {ext}"));
     }
 
+    if ext == "mp3" {
+        if let Some(sr) = options.sample_rate {
+            const MP3_SAMPLE_RATES: &[u32] = &[
+                8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
+            ];
+            if !MP3_SAMPLE_RATES.contains(&sr) {
+                return Err(format!("Unsupported MP3 sample rate: {sr} Hz"));
+            }
+        }
+    }
+
     // Route by INPUT extension first for pipelines where the backend is
     // picked by what we're reading, not what we're writing (ipynb → md/py/html
     // would otherwise route through the document pipeline, which doesn't

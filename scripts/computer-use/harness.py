@@ -316,9 +316,10 @@ def main() -> None:
     client = anthropic.Anthropic(api_key=api_key)
 
     # Run app setup if specified
-    if "setup" in manifest:
-        print(f"Setup: {manifest['setup']}")
-        subprocess.run(manifest["setup"], shell=True)
+    setup_cmd = manifest.get("setup", "").strip()
+    if setup_cmd:
+        print(f"Setup: {setup_cmd}")
+        subprocess.run(setup_cmd, shell=True)
         time.sleep(3)
 
     print(f"\n{manifest.get('app', 'App')} — {len(scenarios)} scenario(s)\n")

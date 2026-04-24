@@ -120,13 +120,22 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
         }
     }
 
-    // ── Video filter (-vf): scale + optional subtitle burn ──
+    // ── Video filter (-vf): scale + black-frame padding + optional subtitle burn ──
     if opts.extract_audio != Some(true) {
         let mut filters: Vec<String> = Vec::new();
         if let Some(res) = &opts.resolution {
             if res != "original" {
                 filters.push(resolution_to_scale(res));
             }
+        }
+        // Black-frame padding: tpad handles both front and end in one filter
+        let front_secs = opts.pad_front.unwrap_or(0.0);
+        let end_secs   = opts.pad_end.unwrap_or(0.0);
+        if front_secs > 0.0 || end_secs > 0.0 {
+            filters.push(format!(
+                "tpad=start_mode=black:start_duration={:.3}:stop_mode=black:stop_duration={:.3}",
+                front_secs, end_secs
+            ));
         }
         if opts.output_format == "mkv" && opts.mkv_subtitle.as_deref() == Some("burn") {
             filters.push(format!("subtitles={}", input));
@@ -163,6 +172,45 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
         }
         if let Some(sr) = opts.sample_rate {
             args.extend(["-ar".to_string(), sr.to_string()]);
+        }
+        // Audio filter chain — pad + de-click at trim boundaries.
+        // De-click uses a 5 ms qsin ramp to prevent waveform discontinuity clicks.
+        // Skipped for stream-copy (can't insert filters without re-encoding).
+        if opts.extract_audio != Some(true) && !is_copy {
+            let mut af: Vec<String> = Vec::new();
+
+            let pad_front_secs = opts.pad_front.filter(|&s| s > 0.0).unwrap_or(0.0);
+            if pad_front_secs > 0.0 {
+                let ms = (pad_front_secs * 1000.0).round() as u64;
+                af.push(format!("adelay={ms}:all=1"));
+            }
+
+            if opts.trim_start.is_some() {
+                af.push(format!(
+                    "afade=t=in:st={:.6}:d=0.005:curve=qsin",
+                    pad_front_secs
+                ));
+            }
+
+            if let Some(te) = opts.trim_end {
+                let content_dur = te - opts.trim_start.unwrap_or(0.0);
+                let fade_st = pad_front_secs + content_dur - 0.005;
+                if fade_st > 0.0 {
+                    af.push(format!(
+                        "afade=t=out:st={fade_st:.6}:d=0.005:curve=qsin"
+                    ));
+                }
+            }
+
+            if let Some(secs) = opts.pad_end {
+                if secs > 0.0 {
+                    af.push(format!("apad=pad_dur={secs:.3}"));
+                }
+            }
+
+            if !af.is_empty() {
+                args.extend(["-af".to_string(), af.join(",")]);
+            }
         }
     }
 

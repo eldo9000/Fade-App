@@ -4,12 +4,17 @@
   let { options = $bindable(), errors = {} } = $props();
 
   const bitrates = [64, 128, 192, 256, 320];
-  const sampleRates = [
+  const allSampleRates = [
     { value: 44100,  label: '44.1 kHz — CD' },
     { value: 48000,  label: '48 kHz — Video standard' },
     { value: 96000,  label: '96 kHz — Hi-Fi' },
     { value: 192000, label: '192 kHz — Archival' },
   ];
+  const sampleRates = $derived(
+    options.output_format === 'mp3'
+      ? allSampleRates.filter(sr => sr.value === 44100 || sr.value === 48000)
+      : allSampleRates
+  );
 
   const isLossless = $derived(['flac','wav','aiff','alac'].includes(options.output_format));
   // m4a is lossless when ALAC sub-codec selected

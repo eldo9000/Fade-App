@@ -272,7 +272,7 @@
       </div>
     {/if}
     <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
-           title="4× oversampling for accurate true-peak measurement. Slower but required for broadcast compliance.">
+          >
       <input type="checkbox" bind:checked={loudnessTruePeak} class="accent-[var(--accent)]"/>
       <span class="text-[11px] text-white/70 font-medium">True peak</span>
     </label>
@@ -305,17 +305,17 @@
       <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Mode</span>
       <div class="w-px h-6 bg-[var(--border)]"></div>
       <button onclick={() => audioNormMode = 'ebu'}
-              title="Two-pass EBU R128 loudnorm. Most accurate; preserves dynamics with linear=true."
+             
               class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                      {audioNormMode === 'ebu' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">EBU R128</button>
       <div class="w-px h-6 bg-[var(--border)]"></div>
       <button onclick={() => audioNormMode = 'peak'}
-              title="Scale peak sample to a dBFS ceiling. Fast, no perceptual weighting."
+             
               class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                      {audioNormMode === 'peak' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Peak</button>
       <div class="w-px h-6 bg-[var(--border)]"></div>
       <button onclick={() => audioNormMode = 'rg'}
-              title="Write ReplayGain tags only. No sample changes. Players apply the gain on playback."
+             
               class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                      {audioNormMode === 'rg' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">ReplayGain tag</button>
     </div>
@@ -339,7 +339,7 @@
                class="w-14 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
       </div>
       <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
-             title="Two-pass with linear=true preserves dynamic range. Single-pass is dynamic compression.">
+            >
         <input type="checkbox" bind:checked={audioNormLinear} class="accent-[var(--accent)]"/>
         <span class="text-[11px] text-white/70 font-medium">Linear (preserve dynamics)</span>
       </label>
@@ -361,12 +361,12 @@
       <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Algo</span>
       <div class="w-px h-6 bg-[var(--border)]"></div>
       <button onclick={() => cutDetectAlgo = 'scdet'}
-              title="FFmpeg scdet filter. Modern scoring, range ~5–15."
+             
               class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                      {cutDetectAlgo === 'scdet' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">scdet</button>
       <div class="w-px h-6 bg-[var(--border)]"></div>
       <button onclick={() => cutDetectAlgo = 'scene'}
-              title="Classic select='gt(scene,T)'. Range 0.2–0.5."
+             
               class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                      {cutDetectAlgo === 'scene' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">scene</button>
     </div>
@@ -413,13 +413,13 @@
              class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
     </div>
     <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
-         title="pix_th: pixel luma threshold below which a pixel counts as black.">
+        >
       <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Pix th</label>
       <input type="number" step="0.01" min="0" max="1" bind:value={blackDetectPixTh}
              class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
     </div>
     <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
-         title="pic_th: fraction of pixels below pix_th for a frame to count as black.">
+        >
       <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Pic th</label>
       <input type="number" step="0.01" min="0" max="1" bind:value={blackDetectPicTh}
              class="w-16 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
@@ -477,7 +477,7 @@
       </select>
     </div>
     <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
-         title="Score every Nth frame. 1 = every frame (slowest, most accurate). 5 = 5× faster.">
+        >
       <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Subsample</label>
       <input type="number" step="1" min="1" bind:value={vmafSubsample}
              class="w-12 bg-transparent text-[12px] text-white outline-none text-right font-mono tabular-nums"/>
@@ -525,7 +525,7 @@
     <button onclick={() => frameMd5DiffPath
               ? (frameMd5DiffPath = null)
               : pickAuxFile((p) => frameMd5DiffPath = p, 'audio/*,video/*')}
-            title="Optional second file. When set, first differing frame is highlighted."
+           
             class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">
       {frameMd5DiffPath ? 'Clear diff file' : 'Add diff file…'}
     </button>

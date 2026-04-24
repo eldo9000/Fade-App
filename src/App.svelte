@@ -14,11 +14,11 @@
   import DataOptions from './lib/DataOptions.svelte';
   import FormatPicker from './lib/FormatPicker.svelte';
   import ArchiveOptions from './lib/ArchiveOptions.svelte';
-  import { validateOptions } from './lib/utils.js';
+  import { validateOptions, mediaTypeFor } from './lib/utils.js';
   import { markConverting, markError, markDone, markCancelled, applyProgressIfActive } from './lib/itemStatus.js';
   import { createLimiter, defaultBatchConcurrency } from './lib/concurrency.js';
   import { createZoom, ZOOM_STEPS } from './lib/stores/zoom.svelte.js';
-  import { tooltip, setHint } from './lib/stores/tooltip.svelte.js';
+  import { setHint } from './lib/stores/tooltip.svelte.js';
   import { overlay, hideOverlay } from './lib/stores/overlay.svelte.js';
 
   // Move a rendered element to document.body so it escapes every ancestor
@@ -28,6 +28,7 @@
     return () => { if (node.parentNode === document.body) document.body.removeChild(node); };
   }
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { createSettings } from './lib/stores/settings.svelte.js';
   import { pushError, clearDiagnostics, getEntries as getDiagEntries, snapshotText as diagSnapshot, loadPersisted as loadPersistedDiag, uploadDiagnostics, BETA } from './lib/stores/diagnostics.svelte.js';
   import { getVersion } from '@tauri-apps/api/app';
@@ -574,13 +575,15 @@
     vp9_speed: 1,
     mkv_subtitle: 'copy',
     avi_video_bitrate: 4000,
-    gif_width: 480,
-    gif_fps: 10,
+    gif_width: '480',
+    gif_fps: '10',
     gif_loop: 'infinite',
     gif_palette_size: 256,
     gif_dither: 'floyd',
     preserve_metadata: true,
     output_dir: null,
+    pad_front: null,
+    pad_end: null,
     // ── Professional codec defaults ──
     hap_format: 'hap',
     dnxhr_profile: 'dnxhr_sq',
@@ -682,7 +685,7 @@
 
   // ── Event listeners ────────────────────────────────────────────────────────
 
-  let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled;
+  let unlistenProgress, unlistenDone, unlistenError, unlistenCancelled, unlistenDrag;
 
   onMount(async () => {
     // Hydrate diagnostics from disk before installing handlers so historical
@@ -723,6 +726,12 @@
     };
     window.addEventListener('mousedown', handleMouseBack);
     window.addEventListener('auxclick', handleMouseBack);
+
+    document.addEventListener('mouseover', _onGlobalMouseOver);
+    document.addEventListener('mouseleave', () => {
+      if (_currentTipId !== null) { _startFadeOut(_currentTipId); _currentTipId = null; }
+      _tipTarget = null;
+    });
 
     // Pre-load Test-Files folder
     try {
@@ -774,6 +783,62 @@
       checkAllDone();
     });
 
+    unlistenDrag = await getCurrentWebview().onDragDropEvent((ev) => {
+      const { type } = ev.payload;
+      if (type === 'enter') {
+        dragOver = true;
+        dragInsertIndex = null;
+        dragExts = (ev.payload.paths ?? []).map(p => (p.split('.').pop() ?? '').toLowerCase());
+      } else if (type === 'over') {
+        dragOver = true;
+        const dpr = window.devicePixelRatio || 1;
+        const cx = ev.payload.position.x / dpr;
+        const cy = ev.payload.position.y / dpr;
+        // Rect-based folder detection — works even with the overlay on top
+        const folderRows = leftPanelEl ? Array.from(leftPanelEl.querySelectorAll('[data-folder-drop]')) : [];
+        const hovered = folderRows.find(el => { const r = el.getBoundingClientRect(); return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom; });
+        externalDragFolderId = hovered?.getAttribute('data-folder-drop') ?? null;
+        if (leftPanelEl) {
+          const r = leftPanelEl.getBoundingClientRect();
+          dragInsertIndex = (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom)
+            ? _computeDropIndex(cy) : null;
+        }
+      } else if (type === 'drop') {
+        const dpr = window.devicePixelRatio || 1;
+        const cx = ev.payload.position.x / dpr;
+        const cy = ev.payload.position.y / dpr;
+        externalDragFolderId = null;
+        // Dropped onto a folder row in the left sidebar (rect-based, works through overlay)
+        const folderRows = leftPanelEl ? Array.from(leftPanelEl.querySelectorAll('[data-folder-drop]')) : [];
+        const droppedFolder = folderRows.find(el => { const r = el.getBoundingClientRect(); return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom; });
+        if (droppedFolder) {
+          _handleTauriDrop(ev.payload.paths ?? [], null, droppedFolder.getAttribute('data-folder-drop'));
+          return;
+        }
+        // Dropped onto the proxy drop zone in the center panel
+        if (proxyDropZoneEl && selectedItem?.kind === 'folder') {
+          const r = proxyDropZoneEl.getBoundingClientRect();
+          if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
+            _handleTauriDrop(ev.payload.paths ?? [], null, selectedItem.id);
+            return;
+          }
+        }
+        let dropIdx = null;
+        if (leftPanelEl) {
+          const r = leftPanelEl.getBoundingClientRect();
+          if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
+            dropIdx = _computeDropIndex(cy);
+          }
+        }
+        _handleTauriDrop(ev.payload.paths ?? [], dropIdx);
+      } else {
+        dragOver = false;
+        externalDragFolderId = null;
+        dragExts = [];
+        dragInsertIndex = null;
+      }
+    });
+
     presetManagerEl?.loadPresets();
     checkTools();
 
@@ -782,8 +847,10 @@
   });
 
   onDestroy(() => {
+    document.removeEventListener('mouseover', _onGlobalMouseOver);
     window.removeEventListener('keydown', zoom.handleKey);
     // Note: bg filmstrip listener cleaned up by QueueManager.$effect teardown
+    unlistenDrag?.();
     unlistenProgress?.();
     unlistenDone?.();
     unlistenError?.();
@@ -860,7 +927,9 @@
 
   // ── Browse ─────────────────────────────────────────────────────────────────
 
-  let _proxyAddTarget = null;
+  let _proxyAddTarget      = null;
+  let proxyDropZoneEl      = $state(null);
+  let externalDragFolderId = $state(null);
 
   function onBrowse() { fileInput?.click(); }
 
@@ -939,6 +1008,98 @@
 
   // Operations functions are now owned by OperationsPanel.svelte.
 
+  function buildSettingsSuffix(mediaType, opts) {
+    if (!opts) return '';
+    const p = [];
+    if (mediaType === 'audio') {
+      const fmt = opts.output_format;
+      const lossless = ['wav', 'flac', 'alac', 'aiff'].includes(fmt);
+      if (!lossless && opts.bitrate) p.push(`${opts.bitrate}k`);
+      if (opts.sample_rate) p.push(`${opts.sample_rate}hz`);
+      if (fmt === 'mp3') {
+        p.push(opts.mp3_bitrate_mode);
+        if (opts.mp3_bitrate_mode === 'vbr') p.push(`q${opts.mp3_vbr_quality}`);
+      } else if (fmt === 'ogg') {
+        p.push(opts.ogg_bitrate_mode);
+        if (opts.ogg_bitrate_mode === 'vbr') p.push(`q${opts.ogg_vbr_quality}`);
+      } else if (fmt === 'opus') {
+        p.push(opts.opus_vbr ? 'vbr' : 'cbr');
+      } else if (fmt === 'aac' || fmt === 'm4a') {
+        p.push(opts.aac_profile);
+      } else if (fmt === 'wma') {
+        p.push(opts.wma_mode);
+      } else if (fmt === 'ac3') {
+        p.push(`${opts.ac3_bitrate}k`);
+      } else if (fmt === 'dts') {
+        p.push(`${opts.dts_bitrate}k`);
+      } else if (fmt === 'flac') {
+        p.push(`cmp${opts.flac_compression}`);
+      } else if (['wav', 'aiff', 'alac'].includes(fmt)) {
+        p.push(`${opts.bit_depth}bit`);
+      }
+      if (opts.channels) p.push(opts.channels);
+    } else if (mediaType === 'video') {
+      const fmt = opts.output_format;
+      p.push(opts.codec);
+      p.push(opts.resolution === 'original' ? 'orig' : String(opts.resolution));
+      p.push(opts.frame_rate === 'original' ? 'origfps' : `${opts.frame_rate}fps`);
+      p.push(opts.video_bitrate_mode);
+      if (opts.video_bitrate_mode === 'crf') p.push(`crf${opts.crf}`);
+      else p.push(`${opts.video_bitrate}k`);
+      p.push(opts.preset);
+      if (['h264', 'h265'].includes(opts.codec)) {
+        p.push(opts.h264_profile);
+        p.push(opts.pix_fmt);
+        if (opts.tune && opts.tune !== 'none') p.push(opts.tune);
+      }
+      if (opts.codec === 'av1') p.push(`spd${opts.av1_speed}`);
+      else if (opts.codec === 'vp9') p.push(`spd${opts.vp9_speed}`);
+      else if (opts.codec === 'prores') p.push(`pro${opts.prores_profile}`);
+      else if (opts.codec === 'hap') p.push(opts.hap_format);
+      else if (opts.codec === 'dnxhr') p.push(opts.dnxhr_profile);
+      else if (opts.codec === 'dnxhd') p.push(`${opts.dnxhd_bitrate}M`);
+      else if (opts.codec === 'dv') p.push(opts.dv_standard);
+      if (fmt === 'webm') p.push(opts.webm_bitrate_mode);
+      if (fmt === 'mkv') p.push(`sub${opts.mkv_subtitle}`);
+      if (fmt === 'avi') p.push(`${opts.avi_video_bitrate}k`);
+      if (fmt === 'gif') {
+        p.push(opts.gif_width === 'original' ? 'origw' : `${opts.gif_width}w`);
+        p.push(opts.gif_fps === 'original' ? 'origfps' : `${opts.gif_fps}fps`);
+        p.push(opts.gif_loop);
+        p.push(`pal${opts.gif_palette_size}`);
+        p.push(opts.gif_dither);
+      }
+      if (opts.remove_audio) p.push('noaudio');
+      else if (opts.extract_audio) p.push('extaudio');
+      else {
+        p.push(`aud${opts.audio_format}`);
+        p.push(`${opts.bitrate}k`);
+        p.push(`${opts.sample_rate}hz`);
+      }
+    } else if (mediaType === 'image') {
+      const fmt = opts.output_format;
+      p.push(fmt);
+      if (['jpeg', 'webp', 'avif'].includes(fmt)) p.push(`q${opts.quality}`);
+      if (fmt === 'png') { p.push(`cmp${opts.png_compression}`); p.push(opts.png_color_mode); }
+      if (fmt === 'tiff') { p.push(opts.tiff_compression); p.push(`${opts.tiff_bit_depth}bit`); }
+      if (fmt === 'jpeg') { p.push(opts.jpeg_chroma); if (opts.jpeg_progressive) p.push('progressive'); }
+      if (fmt === 'webp') p.push(opts.webp_lossless ? 'lossless' : `mth${opts.webp_method}`);
+      if (fmt === 'avif') { p.push(`spd${opts.avif_speed}`); p.push(opts.avif_chroma); }
+      if (fmt === 'bmp') p.push(`${opts.bmp_bit_depth}bit`);
+      if (opts.resize_mode === 'percent') p.push(`${opts.resize_percent}pct`);
+      else if (opts.resize_mode === 'pixels') p.push(`${opts.resize_width}x${opts.resize_height}`);
+      if (opts.rotation) p.push(`rot${opts.rotation}`);
+    }
+    return p.filter(v => v != null && v !== '').join('_');
+  }
+
+  function getEffectiveSuffix(mediaType, formatOpts) {
+    if (!settings.appendSettingsToFilename) return outputSuffix;
+    const part = buildSettingsSuffix(mediaType, formatOpts);
+    if (!part) return outputSuffix;
+    return outputSuffix ? `${outputSuffix}_${part}` : part;
+  }
+
   async function startConvert(mode = 'all') {
     const errors = validateOptions(videoOptions, audioOptions);
     if (Object.keys(errors).length > 0) { validationErrors = errors; return; }
@@ -974,7 +1135,13 @@
     const checked = await Promise.all(compatible.map(async item => ({
       item,
       exists: await invoke('file_exists', {
-        path: expectedOutputPath(item, outExt, outputSuffix, outputDir, outputSeparator),
+        path: expectedOutputPath(item, outExt,
+          getEffectiveSuffix(item.mediaType,
+            item.mediaType === 'image' ? imageOptions
+            : item.mediaType === 'video' ? videoOptions
+            : item.mediaType === 'audio' ? audioOptions
+            : null),
+          outputDir, outputSeparator),
       }).catch(() => false),
     })));
     const willRun     = checked.filter(c => !c.exists).map(c => c.item);
@@ -1004,18 +1171,22 @@
     for (const item of willRun) {
       if (paused) break;
 
-      const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'document' ? { ...documentOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'archive'  ? { ...archiveOptions,  output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'model'    ? { ...modelOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'timeline' ? { ...timelineOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'subtitle' ? { ...subtitleOptions, output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'ebook'    ? { ...ebookOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             : item.mediaType === 'email'    ? { ...emailOptions,    output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir }
-             :                                 { ...fontOptions,     output_suffix: outputSuffix, output_separator: outputSeparator, output_dir: outputDir };
+      const itemSuffix = item.mediaType === 'image' ? getEffectiveSuffix('image', imageOptions)
+        : item.mediaType === 'video'   ? getEffectiveSuffix('video', videoOptions)
+        : item.mediaType === 'audio'   ? getEffectiveSuffix('audio', audioOptions)
+        : outputSuffix;
+      const opts = item.mediaType === 'image'    ? { ...imageOptions,    output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'video'    ? { ...videoOptions,    output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'audio'    ? { ...audioOptions,    output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'data'     ? { ...dataOptions,     output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'document' ? { ...documentOptions, output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'archive'  ? { ...archiveOptions,  output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'model'    ? { ...modelOptions,    output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'timeline' ? { ...timelineOptions, output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'subtitle' ? { ...subtitleOptions, output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'ebook'    ? { ...ebookOptions,    output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             : item.mediaType === 'email'    ? { ...emailOptions,    output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir }
+             :                                 { ...fontOptions,     output_suffix: itemSuffix, output_separator: outputSeparator, output_dir: outputDir };
 
       limiter.run(() => {
         // Re-check at slot-acquire time: user may have paused / cancelled / cleared
@@ -1086,7 +1257,97 @@
   let customOutputDir = $state(null);
   let folderInput = $state(null);
   let outputDir = $derived(outputDestMode === 'source' ? null : (customOutputDir ?? null));
+  // ── Popup tooltip (per-instance, independent lifecycle) ──────────────────
+  const TIP_MAX_W = 280;
+  const TIP_MARGIN = 8;
+
+  let tipInstances  = $state([]);
+  let _nextTipId    = 0;
+  let _tipTarget    = null;
+  let _currentTipId = null; // id of the instance tied to the currently-hovered element
+
+  function _computeTipPos(el) {
+    const z = parseFloat(document.documentElement.style.zoom || '1') || 1;
+    const r = el.getBoundingClientRect();
+    const top = (r.top + r.height / 2) / z;
+    let left, flipped;
+    if (leftPanelEl?.contains(el)) {
+      left    = (leftPanelEl.getBoundingClientRect().right + 8) / z;
+      flipped = false;
+    } else if (rightPanelEl?.contains(el)) {
+      left    = (rightPanelEl.getBoundingClientRect().left - 8) / z;
+      flipped = true;
+    } else {
+      const spaceRight = window.innerWidth - r.right;
+      left    = spaceRight >= (TIP_MAX_W + 16) ? (r.right + 8) / z : (r.left - 8) / z;
+      flipped = spaceRight < (TIP_MAX_W + 16);
+    }
+    return { left, top, flipped };
+  }
+
+  const _tipNodeMap = new Map(); // node refs for viewport clamping only
+
+  function _tipAction(node, id) {
+    _tipNodeMap.set(id, node);
+    requestAnimationFrame(() => {
+      if (!_tipNodeMap.has(id)) return;
+      const h = node.offsetHeight;
+      if (h) {
+        const z = parseFloat(document.documentElement.style.zoom || '1') || 1;
+        const min = (h / 2 + TIP_MARGIN) / z;
+        const max = (window.innerHeight - h / 2 - TIP_MARGIN) / z;
+        tipInstances = tipInstances.map(i =>
+          i.id === id ? { ...i, top: Math.min(Math.max(i.top, min), max) } : i
+        );
+      }
+    });
+    return { destroy() { _tipNodeMap.delete(id); } };
+  }
+
+  function _startFadeOut(id) {
+    tipInstances = tipInstances.filter(i => i.id !== id);
+  }
+
+  function _onGlobalMouseOver(e) {
+    const el = e.target?.closest?.('[data-tooltip]');
+    if (el === _tipTarget) return;
+    _tipTarget = el ?? null;
+
+    if (_currentTipId !== null) {
+      _startFadeOut(_currentTipId);
+      _currentTipId = null;
+    }
+
+    if (!el || !settings.showHelpTooltips) return;
+    const text = el.dataset.tooltip ?? '';
+    if (!text) return;
+
+    const id = _nextTipId++;
+    const pos = _computeTipPos(el);
+    tipInstances = [...tipInstances, { id, text, ...pos }];
+    _currentTipId = id;
+  }
+
   let dragOver = $state(false);
+  let dragExts = $state([]); // file extensions extracted from Tauri drag-enter paths
+  let dragSupported = $derived(
+    dragExts.length === 0 ||
+    dragExts.every(ext => mediaTypeFor(ext) !== 'unknown')
+  );
+  let leftPanelEl  = $state(null);
+  let rightPanelEl = $state(null);
+  let dragInsertIndex = $state(null); // insertion line position in queue list
+
+  function _computeDropIndex(clientY) {
+    if (!leftPanelEl) return null;
+    const rows = [...leftPanelEl.querySelectorAll('[role="listitem"]')];
+    if (!rows.length) return 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return rows.length;
+  }
 
   // Hide files whose stem ends with `_<outputSuffix>` — these are prior outputs
   // that would otherwise keep getting re-converted each time Fade scans the folder.
@@ -1114,24 +1375,18 @@
     e.target.value = '';
   }
 
-  function _isExternalFileDrag(e) {
-    return !!e.dataTransfer?.types?.includes('Files');
-  }
-  function onWindowDragover(e) {
-    if (!_isExternalFileDrag(e)) return;   // ignore intra-app row drags
-    e.preventDefault();
-    dragOver = true;
-  }
-  function onWindowDragleave(e) { if (!e.relatedTarget) dragOver = false; }
-  async function onWindowDrop(e) {
-    if (!_isExternalFileDrag(e)) { dragOver = false; return; }
-    e.preventDefault();
+  // Drag-drop is handled via Tauri's onDragDropEvent (wired in onMount).
+  // HTML5 ondragover/ondrop on the root div are kept as empty stubs so
+  // svelte doesn't warn about missing event handlers; the actual work
+  // happens in the Tauri listener.
+  function onWindowDragover(e) { e.preventDefault(); }
+  function onWindowDragleave() {}
+  function onWindowDrop(e) { e.preventDefault(); }
+
+  async function _handleTauriDrop(paths, dropIdx = null, folderId = null) {
     dragOver = false;
-    const paths = Array.from(e.dataTransfer?.files ?? []).map(f => f.path ?? f.name);
-    if (!paths.length) return;
-    // Expand any dropped directories via scan_dir, honouring the Subfolders
-    // toggle. `file_exists` returns true for dirs; we rely on scan_dir
-    // returning [] for regular files so a single call per path works.
+    dragExts = [];
+    dragInsertIndex = null;
     const expanded = [];
     for (const p of paths) {
       try {
@@ -1142,7 +1397,14 @@
         expanded.push(p);
       }
     }
-    if (expanded.length) queueManagerEl?.addFiles(expanded);
+    const supported = expanded.filter(p => {
+      const ext = (p.split('.').pop() ?? '').toLowerCase();
+      return mediaTypeFor(ext) !== 'unknown';
+    });
+    if (!supported.length) return;
+    if (folderId) queueManagerEl?.addFiles(supported, folderId);
+    else if (dropIdx !== null) queueManagerEl?.addFilesAt(supported, dropIdx);
+    else queueManagerEl?.addFiles(supported);
   }
 
   // ── Presets ────────────────────────────────────────────────────────────────
@@ -1205,7 +1467,7 @@
 
   const FORMAT_GROUPS = [
     { label: 'Audio', cat: 'audio', fmts: [
-      { id: 'mp3' }, { id: 'wav' }, { id: 'flac' }, { id: 'ogg' },
+      { id: 'mp3', live: true }, { id: 'wav' }, { id: 'flac' }, { id: 'ogg' },
       { id: 'aac' }, { id: 'opus' }, { id: 'm4a' }, { id: 'wma' },
       { id: 'aiff' }, { id: 'alac' }, { id: 'ac3' }, { id: 'dts' },
       { id: 'vorbis', label: 'Vorbis', todo: true },
@@ -1581,6 +1843,7 @@
   // an item they're not allowed to select.
   $effect(() => {
     if (!selectedItem) return;
+    if (selectedItem.kind === 'folder') return; // proxy nodes are always selectable
     if (compatibleTypes.length > 0 && !compatibleTypes.includes(selectedItem.mediaType)) {
       queueManagerEl?.handleSelect(null);
     }
@@ -1628,7 +1891,8 @@
   <!-- ── 3-column body (full height, no titlebar) ───────────────────────────── -->
 
     <!-- ── LEFT: File queue (320px expanded / 229px compact) ──────────────── -->
-    <aside class="{queueCompact ? 'w-[229px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative {settingsOpen ? 'z-[500]' : 'z-50'}"
+    <aside bind:this={leftPanelEl}
+           class="{queueCompact ? 'w-[229px]' : 'w-[320px]'} shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative {settingsOpen ? 'z-[500]' : 'z-50'}"
            role="region" aria-label="File queue">
 
       <!-- Queue header — pl-20 clears macOS traffic lights.
@@ -1644,7 +1908,7 @@
         <!-- Left: Proxy Node (flipped from right) -->
         <button
           onclick={() => queueManagerEl?.addBatchFolder()}
-          title="Add a proxy node — batch files together for matched rename / output routing"
+          data-tooltip="Add a proxy node — batch files together for matched rename / output routing"
           class="btn-bevel flex items-center gap-1 px-2 py-0.5 text-[11px] shrink-0"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1659,7 +1923,7 @@
         <div class="btn-segmented flex items-stretch shrink-0">
           <button
             onclick={() => queueCompact = true}
-            title="Compact list"
+            data-tooltip="Compact list"
             class="btn-bevel btn-seg w-9 py-1 px-2 flex items-center justify-center {queueCompact ? 'is-active' : 'is-muted'}"
           >
             <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor">
@@ -1671,7 +1935,7 @@
           </button>
           <button
             onclick={() => queueCompact = false}
-            title="Expanded list"
+            data-tooltip="Expanded list"
             class="btn-bevel btn-seg w-8 flex items-center justify-center {!queueCompact ? 'is-active' : 'is-muted'}"
           >
             <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor">
@@ -1704,7 +1968,7 @@
           {#if leftSearch}
             <button
               onclick={() => leftSearch = ''}
-              title="Clear filter"
+             
               class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[13px] leading-none"
             >×</button>
           {/if}
@@ -1756,7 +2020,10 @@
         compact={queueCompact}
         showExtColumn={settings.fileTypeColumn}
         brightFiletype={settings.brightFiletype}
+        disableHoverInfo={!settings.showFileInfo}
+        {externalDragFolderId}
         {itemHasEdits}
+        {dragInsertIndex}
       />
 
       <!-- Hidden folder picker input -->
@@ -1864,7 +2131,7 @@
           <div class="flex items-stretch gap-1">
             <button
               onclick={() => outputDestMode = 'source'}
-              title="Write outputs alongside the source files"
+             
               class="flex items-center justify-center gap-1.5 px-2 py-1 rounded border transition-colors flex-1 min-w-0 text-[11px]
                      {outputDestMode === 'source'
                        ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
@@ -1878,7 +2145,7 @@
             </button>
             <button
               onclick={() => { outputDestMode = 'custom'; folderInput?.click(); }}
-              title={customOutputDir ? `Output → ${customOutputDir}` : 'Pick an output folder'}
+              data-tooltip={outputDestMode === 'custom' ? 'Using custom output folder' : 'Pick an output folder'}
               class="flex items-center justify-center gap-1.5 px-2 py-1 rounded border transition-colors flex-1 min-w-0 text-[11px]
                      {outputDestMode === 'custom'
                        ? 'bg-[var(--accent)] text-white border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
@@ -1897,7 +2164,7 @@
               maxlength="1"
               disabled={converting}
               onfocus={(e) => e.currentTarget.select()}
-              title="Single character placed between filename and suffix (default: _)"
+             
               class="w-[24px] px-1 py-1 text-[11px] text-center rounded border border-[var(--border)]
                      bg-[var(--surface)] text-[var(--text-primary)] outline-none font-mono
                      focus:border-[var(--accent)] transition-colors disabled:opacity-40"
@@ -1908,7 +2175,7 @@
               disabled={converting}
               placeholder="suffix"
               onfocus={(e) => e.currentTarget.select()}
-              title="Suffix appended to output filenames (e.g. name{outputSeparator}{outputSuffix}.mp4)"
+             
               class="w-[88px] px-2 py-1 text-[11px] rounded border border-[var(--border)]
                      bg-[var(--surface)] text-[var(--text-primary)] outline-none font-mono
                      focus:border-[var(--accent)] transition-colors disabled:opacity-40"
@@ -2086,7 +2353,7 @@
                     maxlength="1"
                     disabled={converting}
                     onfocus={(e) => e.currentTarget.select()}
-                    title="Separator character (default: _)"
+                   
                     class="w-[28px] px-1 py-1 text-[12px] text-center rounded border border-[var(--border)]
                            bg-[var(--surface)] text-[var(--text-primary)] outline-none
                            focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
@@ -2103,6 +2370,12 @@
                            focus:border-[var(--accent)] transition-colors disabled:opacity-40 font-mono"
                   />
                 </div>
+                <!-- Append settings to filename -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Add Settings to File Name</span>
+                  <input type="checkbox" bind:checked={settings.appendSettingsToFilename}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
               </div>
 
               <!-- Section: UI -->
@@ -2147,6 +2420,18 @@
                   <input type="checkbox" bind:checked={settings.brightFiletype}
                          class="w-3.5 h-3.5 accent-[var(--accent)]" />
                 </label>
+                <!-- Help tooltips -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">Help tooltips</span>
+                  <input type="checkbox" bind:checked={settings.showHelpTooltips}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
+                <!-- File info popover -->
+                <label class="flex items-center justify-between gap-2 cursor-pointer">
+                  <span class="text-[12px] text-[var(--text-primary)]">File info</span>
+                  <input type="checkbox" bind:checked={settings.showFileInfo}
+                         class="w-3.5 h-3.5 accent-[var(--accent)]" />
+                </label>
               </div>
 
               <!-- Section: Data -->
@@ -2183,20 +2468,17 @@
             Settings
           </button>
 
-          <!-- Status box: last job/queue outcome. Clicking copies diagnostics.
+          <!-- Status box: last job/queue outcome.
                Colour coded: gray = info/placeholder, green = success, red = error. -->
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div onclick={copyDiagnostics}
-               class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded cursor-pointer
-                      bg-[color-mix(in_srgb,#fff_8%,var(--surface-raised))]
-                      hover:bg-[color-mix(in_srgb,#fff_12%,var(--surface-raised))] transition-colors"
-               aria-live="polite"
-               title="Copy diagnostics to clipboard">
-            <span class="text-[11px] truncate text-right
-                         {statusKind === 'success' && statusMessage ? 'text-green-400'
-                          : statusKind === 'error' && statusMessage ? 'text-red-400'
-                          : 'text-gray-400'}">{statusMessage || 'Copy diagnostics.'}</span>
+          <div class="flex-1 min-w-0 px-2.5 flex items-center justify-end rounded
+                      bg-[color-mix(in_srgb,#fff_8%,var(--surface-raised))]"
+               aria-live="polite">
+            {#if statusMessage}
+              <span class="text-[11px] truncate text-right
+                           {statusKind === 'success' ? 'text-green-400'
+                            : statusKind === 'error' ? 'text-red-400'
+                            : 'text-gray-400'}">{statusMessage}</span>
+            {/if}
           </div>
         </div>
       </div>
@@ -2220,9 +2502,9 @@
              over preview fidelity, so there is no toggle back to full quality. -->
         {#if selectedItem && ['video', 'audio'].includes(selectedItem.mediaType) && isHeavyItem(selectedItem)}
           <div
-            title="Large file — previews running in draft mode for performance"
+            data-tooltip="Draft mode — this file is large or long, so previews run at reduced resolution for performance. Conversion output is unaffected."
             class="absolute top-2 left-2 z-20 px-2 py-0.5 rounded text-[11px] font-mono
-                   border backdrop-blur-sm select-none pointer-events-none
+                   border backdrop-blur-sm select-none cursor-default
                    bg-black/50 border-white/10 text-white/50"
           >DRAFT</div>
         {/if}
@@ -2322,16 +2604,13 @@
                 <button
                   onclick={dismissDiff}
                   class="px-2 py-1 rounded bg-[var(--accent)] text-white text-[11px] font-medium hover:opacity-90"
-                  title="Return to source preview"
+                 
                 >Exit diff</button>
               {:else}
                 <select
                   bind:value={diffHandleSecs}
                   disabled={diffLoading}
-                  title="Runway (handle) length on each side of the target region.
-1s — fast, less accurate rate control
-3s — accurate for CRF x264 / x265
-10s — needed for long-GOP codecs (AV1)"
+                 
                   class="px-1.5 py-1 rounded bg-black/60 border border-white/15 text-white text-[11px] font-mono
                          hover:border-[var(--accent)] transition-colors disabled:opacity-50 outline-none"
                 >
@@ -2344,7 +2623,7 @@
                   disabled={diffLoading}
                   class="px-2 py-1 rounded bg-black/60 border border-white/15 text-white text-[11px] font-medium
                          hover:bg-black/80 hover:border-[var(--accent)] transition-colors disabled:opacity-50"
-                  title="Encode a 1s snippet at the current cursor with handles on each side and show the amplified difference vs. the source"
+                 
                 >
                   {#if diffLoading}Encoding…{:else}Diff preview{/if}
                 </button>
@@ -2527,6 +2806,24 @@
                 <p class="text-[10px] text-white/25 italic">
                   Folder-level rendering is not wired yet — these controls will drive batch output once implemented.
                 </p>
+
+                <!-- Drop zone -->
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  bind:this={proxyDropZoneEl}
+                  onclick={() => onProxyBrowse(bf.id)}
+                  class="flex flex-col items-center gap-3 px-14 py-10 rounded-xl border cursor-pointer transition-colors
+                         border-white/[0.07] hover:border-white/20">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+                       class="text-white/20">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <p class="text-white/25 text-[13px] font-medium">Drop files or click Browse</p>
+                </div>
               </div>
             </div>
           {:else if selectedItem?.mediaType === 'image' && liveSrc}
@@ -2578,70 +2875,16 @@
               </p>
             </div>
           {:else if !selectedItem}
-            <div class="w-full h-full overflow-y-auto flex flex-col items-center px-10 py-10 select-none">
-              <!-- Drop prompt -->
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                   stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
-                   class="text-white/12 mb-3 shrink-0">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              <p class="text-white/25 text-[13px] font-medium mb-1">Drop files or click Browse</p>
-              <p class="text-white/12 text-[11px] mb-8">Select a file in the queue to preview and configure</p>
-
-              <!-- Input formats -->
-              <div class="w-full max-w-xl mb-8">
-                <p class="text-[18px] font-semibold mb-3"
-                   style="color:rgba(255,255,255,0.34)">Supported Input Formats</p>
-                <div class="flex flex-col gap-2.5">
-                  {#each [
-                    { label: 'Image',           exts: ['jpg','jpeg','png','gif','webp','avif','bmp','svg','ico'] },
-                    { label: 'RAW / Pro Image', exts: ['heic','heif','tiff','psd','raw','cr2','cr3','nef','arw','dng','orf','rw2','exr','hdr','dds','xcf'] },
-                    { label: 'Video',           exts: ['mp4','m4v','mkv','webm','mov','avi','flv','wmv','mpg','mpeg','ogv','ts','3gp','divx','rmvb','asf'] },
-                    { label: 'Audio',           exts: ['mp3','aac','ogg','wav','flac','m4a','opus','wma','aiff','alac','ac3','dts'] },
-                    { label: 'Document',        exts: ['pdf'] },
-                    { label: '3D Model',        exts: ['obj','gltf','glb','stl','fbx','ply','3ds','dae','x3d'] },
-                    { label: 'Archive',         exts: ['zip','tar','gz','7z'] },
-                    { label: 'Data',            exts: ['json','csv','tsv','xml','yaml'] },
-                  ] as g}
-                    <div class="flex gap-3 items-baseline">
-                      <span class="shrink-0 text-[10px] font-semibold w-28 text-right"
-                            style="color:rgba(255,255,255,0.22)">{g.label}</span>
-                      <span class="text-[10px] font-mono leading-relaxed">
-                        {#each g.exts as ext, i}
-                          <span style="color:rgba(255,255,255,0.44)">{ext}</span>{#if i < g.exts.length - 1}{'  '}{/if}
-                        {/each}
-                      </span>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-
-              <!-- Output formats -->
-              <div class="w-full max-w-xl">
-                <p class="text-[18px] font-semibold mb-3"
-                   style="color:rgba(255,255,255,0.34)">Output Formats</p>
-                <div class="flex flex-col gap-2.5">
-                  {#each [
-                    { label: 'Audio',    exts: ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','alac','ac3','dts'] },
-                    { label: 'Video',    exts: ['mp4','mov','webm','mkv','avi','gif'] },
-                    { label: 'Image',    exts: ['jpeg','png','webp','tiff','bmp','avif'] },
-                    { label: 'Document', exts: ['html','pdf','txt','md'] },
-                    { label: 'Data',     exts: ['json','csv','tsv','xml','yaml'] },
-                    { label: 'Archive',  exts: ['zip','tar','gz','7z'] },
-                  ] as g}
-                    <div class="flex gap-3 items-baseline">
-                      <span class="shrink-0 text-[10px] font-semibold w-28 text-right"
-                            style="color:rgba(255,255,255,0.22)">{g.label}</span>
-                      <span class="text-[10px] font-mono leading-relaxed">
-                        {#each g.exts as ext, i}
-                          <span style="color:rgba(255,255,255,0.33)">{ext}</span>{#if i < g.exts.length - 1}{'  '}{/if}
-                        {/each}
-                      </span>
-                    </div>
-                  {/each}
-                </div>
+            <div class="w-full h-full flex items-center justify-center select-none">
+              <div class="flex flex-col items-center gap-3 px-14 py-10 rounded-xl border border-white/[0.07]">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+                     class="text-white/20">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="text-white/25 text-[13px] font-medium">Drop files or click Browse</p>
               </div>
             </div>
           {/if}
@@ -2679,7 +2922,8 @@
 
     <!-- ── RIGHT: Options panel (333px) ─────────────────────────────────────── -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <aside class="w-[333px] shrink-0 border-l border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative"
+    <aside bind:this={rightPanelEl}
+           class="w-[333px] shrink-0 border-l border-[var(--border)] flex flex-col bg-[var(--surface-raised)] relative"
            role="region" aria-label="Conversion options"
            onmouseover={onPanelMouseOver}
            onfocus={onPanelMouseOver}
@@ -2721,7 +2965,7 @@
             {#if rightSearch}
               <button
                 onclick={() => rightSearch = ''}
-                title="Clear filter"
+               
                 class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[13px] leading-none"
               >×</button>
             {/if}
@@ -2770,29 +3014,29 @@
           <h2 class="flex-1 min-w-0 text-center text-[14px] font-semibold text-white/85 truncate">
             {_fmt?.label ?? globalOutputFormat.toUpperCase()}
           </h2>
+          <PresetManager
+            bind:this={presetManagerEl}
+            bind:imageOptions
+            bind:videoOptions
+            bind:audioOptions
+            bind:globalOutputFormat
+            bind:presetsMode
+            bind:combinedPresets={presetsList}
+            {activeOutputCategory}
+            {setStatus}
+          />
+        {:else}
+          <h2 class="text-[11px] font-semibold uppercase tracking-widest text-white/35">Output Formats &amp; Tools</h2>
         {/if}
-
-        <!-- Presets selector — always visible; filtered to active category when one is selected -->
-        <PresetManager
-          bind:this={presetManagerEl}
-          bind:imageOptions
-          bind:videoOptions
-          bind:audioOptions
-          bind:globalOutputFormat
-          bind:presetsMode
-          bind:combinedPresets={presetsList}
-          {activeOutputCategory}
-          {setStatus}
-        />
       </div>
 
       <!-- Search — filters the format/tool grid below. Only visible on the
            picker page (when globalOutputFormat is null) so it doesn't clutter
            the options pages. -->
       {#if !globalOutputFormat}
-        <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)]"
+        <div class="shrink-0 px-2 py-1.5 border-b border-[var(--border)] flex items-center gap-2"
              style="background:color-mix(in srgb, var(--surface-raised) 60%, #000 40%)">
-          <div class="relative">
+          <div class="relative flex-1">
             <svg class="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
                  width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
                  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -2811,11 +3055,22 @@
             {#if rightSearch}
               <button
                 onclick={() => rightSearch = ''}
-                title="Clear filter"
+               
                 class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[13px] leading-none"
               >×</button>
             {/if}
           </div>
+          <PresetManager
+            bind:this={presetManagerEl}
+            bind:imageOptions
+            bind:videoOptions
+            bind:audioOptions
+            bind:globalOutputFormat
+            bind:presetsMode
+            bind:combinedPresets={presetsList}
+            {activeOutputCategory}
+            {setStatus}
+          />
         </div>
       {/if}
 
@@ -2837,7 +3092,7 @@
                 onclick={() => settings.conversionCollapsed = !settings.conversionCollapsed}
                 class="w-full flex items-center gap-2 mb-3 group"
               >
-                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Media</span>
+                <span class="text-[13px] font-semibold uppercase tracking-wider !text-white">Media</span>
                 <div class="flex-1 h-px bg-[var(--border)]"></div>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -2853,7 +3108,7 @@
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider
-                                     {_presets.length > 0 ? 'text-[var(--text-secondary)]' : 'text-[var(--text-secondary)]/25'}">
+                                     {_presets.length > 0 ? '!text-[var(--text-secondary)]' : '!text-[var(--text-secondary)]/25'}">
                           {group.label}
                         </span>
                         <div class="flex-1 h-px {_presets.length > 0 ? 'bg-[var(--border)]' : 'bg-[var(--border)]/25'}"></div>
@@ -2894,7 +3149,7 @@
                 onclick={() => settings.conversionCollapsed = !settings.conversionCollapsed}
                 class="w-full flex items-center gap-2 mb-3 group"
               >
-                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Media</span>
+                <span class="text-[13px] font-semibold uppercase tracking-wider !text-white">Media</span>
                 <div class="flex-1 h-px bg-[var(--border)]"></div>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -2916,7 +3171,7 @@
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
-                        <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider !text-[var(--text-secondary)]">
                           {group.label}
                         </span>
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
@@ -2946,7 +3201,9 @@
                             }}
                             data-tooltip={group.cat === 'codec' ? `${f.label} — encode as ${f.codec} in ${f.ext.toUpperCase()}` : `Convert to ${(f.label ?? f.id).toUpperCase()} — ${group.label.toLowerCase()} output`}
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
-                                   {f.todo
+                                   {f.live
+                                     ? '!border-[var(--border)] !text-white hover:bg-[var(--accent)] hover:!text-white hover:!border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
+                                     : f.todo
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
                                      : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
@@ -2965,7 +3222,7 @@
                 onclick={() => settings.toolsCollapsed = !settings.toolsCollapsed}
                 class="w-full flex items-center gap-2 mb-3 group"
               >
-                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Tools</span>
+                <span class="text-[13px] font-semibold uppercase tracking-wider !text-white">Tools</span>
                 <div class="flex-1 h-px bg-[var(--border)]"></div>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -2988,7 +3245,7 @@
                     {#if _fmts.length > 0}
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
-                        <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        <span class="text-[9px] font-semibold uppercase tracking-wider !text-[var(--text-secondary)]">
                           {group.label}
                         </span>
                         <div class="flex-1 h-px bg-[var(--border)]"></div>
@@ -3031,7 +3288,7 @@
                 onclick={() => settings.filesCollapsed = !settings.filesCollapsed}
                 class="w-full flex items-center gap-2 mb-3 group"
               >
-                <span class="text-[13px] font-semibold uppercase tracking-wider text-white">Files</span>
+                <span class="text-[13px] font-semibold uppercase tracking-wider !text-white">Files</span>
                 <div class="flex-1 h-px bg-[var(--border)]"></div>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -3052,7 +3309,7 @@
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider
-                                     {group.todo ? 'text-green-600' : 'text-[var(--text-secondary)]'}">
+                                     {group.todo ? 'text-green-600' : '!text-[var(--text-secondary)]'}">
                           {group.label}
                         </span>
                         <div class="flex-1 h-px {group.todo ? 'bg-green-900' : 'bg-[var(--border)]'}"></div>
@@ -3121,42 +3378,13 @@
       </div>
       {/if}
 
-      <!-- ── Bottom footer: hint text + zoom controls — always visible ──── -->
-      <div class="shrink-0 border-t border-[var(--border)] flex flex-col gap-2 px-3 pt-2.5 pb-1"
+      <!-- ── Bottom footer: zoom controls + version ──────────────────────── -->
+      <div class="shrink-0 border-t border-[var(--border)] grid grid-cols-3 items-center px-3 py-1"
            style="background:var(--surface-hint)">
-
-        <!-- Hint text — opacity + transition driven by shared tooltip store
-             (see tooltip.svelte.js). Handles 100ms in, 2s hold + 2s out,
-             and 100ms crossfade on interrupt. Update-available notice
-             layers centered over the same band when Notify is on and no
-             tooltip is active; clicking opens Settings. -->
-        <div class="relative min-h-[2.5rem]">
-          <p class="text-[11px] leading-relaxed"
-             style="color:rgba(255,255,255,0.5);
-                    opacity:{tooltip.opacity};
-                    transition:opacity {tooltip.duration}ms linear {tooltip.delay}ms">
-            {tooltip.text}
-          </p>
-          {#if settings.notifyUpdates && (updateState === 'available' || updateState === 'ready') && tooltip.opacity < 0.05}
-            <button
-              type="button"
-              onclick={() => { settingsOpen = true; }}
-              class="absolute inset-0 flex items-center justify-center text-[11px] leading-relaxed
-                     bg-transparent border-0 cursor-pointer transition-colors"
-              style="color:rgba(255,255,255,0.5)"
-              onmouseenter={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.85)'}
-              onmouseleave={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.5)'}
-            >{updateState === 'ready' ? 'Update ready — restart to apply' : 'Update available'}</button>
-          {/if}
-        </div>
-
-        <!-- Zoom (left) + version (right, tucked low with slow pulse) -->
-        <div class="flex items-center justify-between gap-0.5">
-          <div class="flex items-center gap-0.5">
+        <div class="flex items-center gap-0.5">
           <button
             onclick={(e) => zoomClick(zoom.stepOut, e)}
             data-tooltip="Zoom out the entire UI — ⌘- or Ctrl-"
-            title="Zoom out (⌘-)"
             disabled={zoom.level === ZOOM_STEPS[0]}
             class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
@@ -3164,7 +3392,6 @@
           <button
             onclick={(e) => zoomClick(zoom.reset, e)}
             data-tooltip="Reset zoom to 100% — ⌘0 or Ctrl0"
-            title="Reset zoom (⌘0)"
             class="px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors
                    bg-white/5 hover:bg-white/10
                    {zoom.level !== 1.0 ? 'text-white' : ''}"
@@ -3173,14 +3400,17 @@
           <button
             onclick={(e) => zoomClick(zoom.stepIn, e)}
             data-tooltip="Zoom in the entire UI — ⌘+ or Ctrl+"
-            title="Zoom in (⌘+)"
             disabled={zoom.level === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
             class="w-5 h-5 flex items-center justify-center rounded text-[11px] transition-colors
                    bg-white/5 hover:bg-white/10 disabled:opacity-20 disabled:cursor-default"
             style="color:rgba(255,255,255,0.45)">+</button>
-          </div>
+        </div>
+        <div></div>
+        <div class="flex justify-end">
           <button onclick={() => aboutOpen = true}
-                  class="fade-pulse text-[10px] font-medium select-none hover:opacity-80 transition-opacity cursor-pointer">Fade {appVersion ? `v${appVersion}` : ''}</button>
+                  class="fade-pulse text-[10px] font-medium select-none hover:!text-white/70 transition-colors cursor-pointer whitespace-nowrap">
+            Fade{appVersion ? ` v${appVersion}` : ''} — Update available
+          </button>
         </div>
       </div>
 
@@ -3242,12 +3472,47 @@
 
   <!-- Full-window drag overlay -->
   {#if dragOver}
-    <div class="absolute inset-0 z-40 flex items-center justify-center
-                bg-[var(--accent)]/10 border-2 border-dashed border-[var(--accent)]
-                pointer-events-none rounded-sm">
-      <p class="text-[var(--accent)] text-lg font-medium">Drop files to add</p>
+    <div class="drag-overlay absolute inset-0 z-40 flex flex-col items-center justify-center
+                pointer-events-none">
+      <!-- Status text -->
+      <p class="text-[13px] font-medium mb-4 transition-colors duration-150
+                {dragSupported ? 'text-white/50' : 'text-red-400'}">
+        {dragSupported
+          ? (dragExts.length > 1 ? `${dragExts.length} files` : 'Drop to add')
+          : `${dragExts.filter(e => mediaTypeFor(e) === 'unknown').map(e => `.${e}`).join(', ')} not supported`}
+      </p>
+      <!-- Anchor knob -->
+      <div class="w-12 h-12 rounded-full border transition-all duration-150 flex items-center justify-center
+                  {dragSupported
+                    ? 'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] shadow-[0_0_16px_color-mix(in_srgb,var(--accent)_35%,transparent)]'
+                    : 'border-white/15 bg-white/5'}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+             class="{dragSupported ? 'text-[var(--accent)]' : 'text-white/20'}">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
     </div>
   {/if}
+
+  <!-- ── Popup tooltip — portaled to body, styled like Queue's file info card ── -->
+  {#each tipInstances as inst (inst.id)}
+    <div {@attach portal}
+         use:_tipAction={inst.id}
+         style:position="fixed"
+         style:left="{inst.left}px"
+         style:top="{inst.top}px"
+         style:transform={inst.flipped ? 'translateX(-100%) translateY(-50%)' : 'translateY(-50%)'}
+         style:z-index="9998"
+         style:pointer-events="none">
+      <div style="background:#1e1e22; border:1px solid rgba(255,255,255,0.1); border-radius:7px;
+                  padding:8px 12px; max-width:{TIP_MAX_W}px; box-shadow:0 8px 24px rgba(0,0,0,0.25)">
+        <p style="font-size:11px; line-height:1.5; color:rgba(255,255,255,0.78); white-space:pre-line; word-break:break-word">{inst.text}</p>
+      </div>
+    </div>
+  {/each}
 
   <!-- ── Overlay dropdown — portaled to document.body to escape every stacking context ── -->
   {#if overlay.open}
@@ -3329,5 +3594,13 @@
   :global(input[type="checkbox"]) {
     transform: scale(1.25);
     transform-origin: center;
+  }
+
+  @keyframes drag-overlay-in {
+    0%   { background: rgba(0,0,0,0);    backdrop-filter: blur(0px); }
+    100% { background: rgba(0,0,0,0.45); backdrop-filter: blur(1.25px); }
+  }
+  .drag-overlay {
+    animation: drag-overlay-in 0.18s ease-out forwards;
   }
 </style>

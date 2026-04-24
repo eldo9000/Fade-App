@@ -149,22 +149,22 @@
     <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Algo</span>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => { chromaAlgo = 'chromakey'; generateChromaPreview(); }}
-            title="YUV-space key. Best for green / blue screens with evenly-lit backdrops."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaAlgo === 'chromakey' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">chromakey</button>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => { chromaAlgo = 'colorkey'; generateChromaPreview(); }}
-            title="RGB-space hard cut. Best for solid flat-colour mattes (title cards, generated BG)."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaAlgo === 'colorkey' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">colorkey</button>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => { chromaAlgo = 'hsvkey'; generateChromaPreview(); }}
-            title="HSV-space key. Use when lighting on the screen is uneven."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaAlgo === 'hsvkey' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">hsvkey</button>
   </div>
   <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
-         title="Key colour. Defaults to pure green. Use the eyedropper-style native picker.">
+        >
     <span class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Colour</span>
     <input type="color" bind:value={chromaColor}
            oninput={generateChromaPreview}
@@ -192,7 +192,7 @@
 </div>
 <!-- Row 4: despill -->
 <div class="flex items-center gap-2 w-full"
-     title={chromaAlgo === 'colorkey' ? 'Despill not meaningful for hard colorkey cuts.' : 'Remove coloured light bouncing onto the subject from the screen.'}>
+    >
   <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer shrink-0"
          class:opacity-40={chromaAlgo === 'colorkey'}>
     <input type="checkbox" bind:checked={chromaDespill}
@@ -212,7 +212,7 @@
 <!-- Row 5: upsample toggle -->
 <div class="flex items-center gap-2 w-full">
   <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
-         title="Prepend format=yuv444p before the key. Helps noticeably on 4:2:0 sources where the chroma planes are blurry.">
+        >
     <input type="checkbox" bind:checked={chromaUpsample}
            onchange={generateChromaPreview}
            class="accent-[var(--accent)]"/>
@@ -225,27 +225,27 @@
     <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">Output</span>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => chromaOutputFormat = 'mov_prores4444'}
-            title="MOV + ProRes 4444 — editorial standard, great alpha, big files."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaOutputFormat === 'mov_prores4444' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">ProRes 4444</button>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => chromaOutputFormat = 'mov_qtrle'}
-            title="MOV + QuickTime Animation (RLE) — lossless, huge files, very compatible."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaOutputFormat === 'mov_qtrle' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">QtRLE</button>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => chromaOutputFormat = 'webm_vp9'}
-            title="WebM + VP9 with yuva420p — browser-playable alpha video."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaOutputFormat === 'webm_vp9' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">VP9+alpha</button>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => chromaOutputFormat = 'png_sequence'}
-            title="PNG sequence — writes a sibling &lt;name&gt;_frames/ directory, one file per frame."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaOutputFormat === 'png_sequence' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">PNG seq</button>
     <div class="w-px h-6 bg-[var(--border)]"></div>
     <button onclick={() => chromaOutputFormat = 'mkv_ffv1'}
-            title="MKV + FFV1 — lossless archival, smaller than QtRLE."
+           
             class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                    {chromaOutputFormat === 'mkv_ffv1' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">FFV1</button>
   </div>

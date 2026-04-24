@@ -32,10 +32,13 @@
     compatibleTypes     = [],
     onSelectionChange   = null,
     // Queue display props forwarded to Queue
-    compact         = false,
-    showExtColumn   = true,
-    brightFiletype  = false,
-    itemHasEdits    = () => false,
+    compact              = false,
+    showExtColumn        = true,
+    brightFiletype       = false,
+    disableHoverInfo     = false,
+    externalDragFolderId = null,
+    itemHasEdits         = () => false,
+    dragInsertIndex      = null,
   } = $props();
 
   // ── Internal selection state ───────────────────────────────────────────────
@@ -244,23 +247,57 @@
   // ── Queue mutations ────────────────────────────────────────────────────────
 
   /** Add file paths to the queue. */
+  function _makeItem(path, folderId = null) {
+    const name = path.split('/').pop() ?? path;
+    const ext  = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+    const mt   = mediaTypeFor(ext);
+    const id   = crypto.randomUUID();
+    return { id, kind: 'file', parentId: folderId, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
+  }
+
+  function _enqueueInfoFetch(item) {
+    if (['video', 'audio', 'image'].includes(item.mediaType)) {
+      invoke('get_file_info', { path: item.path }).then(info => {
+        const q = queue.find(q => q.id === item.id);
+        if (q) q.info = info;
+      }).catch(() => {});
+    }
+  }
+
   export function addFiles(paths, folderId = null) {
     const folderIdx = folderId ? queue.findIndex(q => q.id === folderId) : -1;
     let insertAt = folderIdx !== -1 ? folderIdx + 1 : queue.length;
     for (const path of paths) {
-      const name = path.split('/').pop() ?? path;
-      const ext  = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
-      const mt   = mediaTypeFor(ext);
-      const id   = crypto.randomUUID();
-      const item = { id, kind: 'file', parentId: folderId, path, name, ext, mediaType: mt, status: 'pending', percent: 0, info: null };
+      const item = _makeItem(path, folderId);
       queue.splice(insertAt, 0, item);
       insertAt++;
-      if (['video', 'audio', 'image'].includes(mt)) {
-        invoke('get_file_info', { path }).then(info => {
-          const q = queue.find(q => q.id === id);
-          if (q) q.info = info;
-        }).catch(() => {});
+      _enqueueInfoFetch(item);
+    }
+    setTimeout(_bgPreloadNext, 500);
+  }
+
+  // Insert at a flat-visible-list index (from drag drop position).
+  // dropIdx is the index before which to insert, matching Queue's flatVisible order.
+  export function addFilesAt(paths, dropIdx) {
+    const src = visibleQueue ?? queue;
+    const topLevel = src.filter(q => q.kind === 'folder' || !q.parentId);
+    const flat = [];
+    for (const item of topLevel) {
+      flat.push(item);
+      if (item.kind === 'folder' && item.expanded) {
+        src.filter(q => q.kind === 'file' && q.parentId === item.id).forEach(c => flat.push(c));
       }
+    }
+    const anchor = flat[dropIdx] ?? null;
+    let queueInsertAt = anchor
+      ? queue.findIndex(q => q.id === anchor.id)
+      : queue.length;
+    if (queueInsertAt === -1) queueInsertAt = queue.length;
+    for (const path of paths) {
+      const item = _makeItem(path);
+      queue.splice(queueInsertAt, 0, item);
+      queueInsertAt++;
+      _enqueueInfoFetch(item);
     }
     setTimeout(_bgPreloadNext, 500);
   }
@@ -436,5 +473,8 @@
   {compact}
   {showExtColumn}
   {brightFiletype}
+  {disableHoverInfo}
+  {externalDragFolderId}
   {itemHasEdits}
+  dropLineIndex={dragInsertIndex}
 />

@@ -811,7 +811,7 @@
           <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">Keep original tracks</button>
           <button
             onclick={() => replaceAudioAutoSync = !replaceAudioAutoSync}
-            title="Cross-correlate to find offset, pitch-preserved stretch to match length, and reuse the video's existing audio sample-rate & codec."
+           
             class="px-3 py-1.5 rounded text-[12px] font-semibold border transition-colors
                    {replaceAudioAutoSync
                      ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
@@ -849,7 +849,7 @@
               bind:value={replaceAudioOffsetMs}
               ondblclick={() => replaceAudioOffsetMs = 0}
               class="flex-1 min-w-0 accent-[var(--accent)]"
-              title="Double-click to reset to 0"
+             
             />
             <input
               type="number"
@@ -919,24 +919,24 @@
             </select>
           </div>
           <button class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
-                  title="Pick a reference video and copy its fps/resolution/pix_fmt into the fields above.">Match reference…</button>
+                 >Match reference…</button>
         </div>
         <div class="flex flex-wrap items-center gap-2 w-full">
           <div class="inline-flex items-center rounded-md overflow-hidden border border-[var(--border)]">
             <span class="px-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">FPS algo</span>
             <div class="w-px h-6 bg-[var(--border)]"></div>
             <button onclick={() => conformFpsAlgo = 'drop'}
-                    title="Drop / duplicate frames. Fast, deterministic. Judder on non-integer ratios."
+                   
                     class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                            {conformFpsAlgo === 'drop' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Drop/dup</button>
             <div class="w-px h-6 bg-[var(--border)]"></div>
             <button onclick={() => conformFpsAlgo = 'blend'}
-                    title="Blend adjacent frames. Smoother than drop/dup, but ghosting on motion."
+                   
                     class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                            {conformFpsAlgo === 'blend' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">Blend</button>
             <div class="w-px h-6 bg-[var(--border)]"></div>
             <button onclick={() => conformFpsAlgo = 'mci'}
-                    title="Motion-compensated interpolation (minterpolate). Highest quality, 5–30× slower. May warp on complex motion / occlusions."
+                   
                     class="px-2.5 py-1.5 text-[11px] font-semibold transition-colors
                            {conformFpsAlgo === 'mci' ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:bg-white/5'}">
               Optical flow
@@ -947,7 +947,7 @@
             <!-- svelte-ignore a11y_label_has_associated_control -->
             <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Scale</label>
             <select bind:value={conformScaleAlgo}
-                    title="Bilinear: fast, soft. Bicubic: balanced. Lanczos: sharp downscale, ringing risk upscale. Spline: smoother upscale."
+                   
                     class="bg-transparent text-[12px] text-white outline-none">
               <option value="bilinear">Bilinear</option>
               <option value="bicubic">Bicubic</option>
@@ -956,7 +956,7 @@
             </select>
           </div>
           <label class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1 cursor-pointer"
-                 title="Apply error-diffusion dither when converting 10-bit → 8-bit. Prevents banding in gradients. Auto-applied only if source and target depths differ.">
+                >
             <input type="checkbox" bind:checked={conformDither}
                    class="accent-[var(--accent)]"/>
             <span class="text-[11px] text-white/70 font-medium">10→8 dither</span>
@@ -1395,7 +1395,7 @@
                   }}
                   disabled={i === 0}
                   class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)] text-white/60 hover:text-white hover:border-[var(--accent)] disabled:opacity-30"
-                  title="Move up"
+                 
                 >↑</button>
                 <button
                   onclick={() => {
@@ -1406,12 +1406,12 @@
                   }}
                   disabled={i === mergeSelection.length - 1}
                   class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)] text-white/60 hover:text-white hover:border-[var(--accent)] disabled:opacity-30"
-                  title="Move down"
+                 
                 >↓</button>
                 <button
                   onclick={() => mergeSelection = mergeSelection.filter(x => x !== id)}
                   class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)] text-white/60 hover:text-red-400 hover:border-red-400"
-                  title="Remove"
+                 
                 >×</button>
               </div>
             {/each}
@@ -1475,7 +1475,7 @@
           {:else if subtitlingTab === 'analyze'}
             <div class="flex flex-wrap items-center gap-2 w-full">
               <div class="flex items-center gap-1.5 rounded border border-[var(--border)] px-2 py-1"
-                   title="Characters-per-second reading speed ceiling. >21 is too fast to read comfortably.">
+                  >
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="text-[10px] uppercase tracking-wider text-white/40 font-semibold">CPS max</label>
                 <input type="number" step="1" bind:value={subLintCpsMax}
@@ -1515,7 +1515,7 @@
               <button onclick={() => subDiffReferencePath
                         ? (subDiffReferencePath = null)
                         : pickAuxFile?.((p) => subDiffReferencePath = p, '.srt,.vtt,.ass,.ssa')}
-                      title="Optional reference subtitle for a diff. Without one, Lint runs on the selected file."
+                     
                       class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors">
                 {subDiffReferencePath ? 'Clear diff reference' : 'Pick diff reference…'}
               </button>
@@ -1530,7 +1530,7 @@
                 onclick={runSubProbe}
                 disabled={!selectedItem}
                 class="px-3 py-1.5 rounded text-[12px] font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
-                title="Probe the currently selected video for subtitle streams (ffprobe).">Detect tracks</button>
+               >Detect tracks</button>
             </div>
 
             {#if subLintResults}

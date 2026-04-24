@@ -1,7 +1,7 @@
 {
   "app": "Fade",
   "fixture_dir": "../fixtures",
-  "setup": "open -a Fade",
+  "setup": "",
   "scenarios": [
     {
       "id": "img-png-to-webp",

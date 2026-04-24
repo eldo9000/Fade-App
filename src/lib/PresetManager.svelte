@@ -123,7 +123,7 @@
       onclick={() => { headerAdding = true; headerPresetName = ''; }}
       disabled={!activeOutputCategory || !['image','video','audio'].includes(activeOutputCategory)}
       data-tooltip="Save the current panel settings as a named preset — reusable across files and sessions."
-      title="Save current settings as preset"
+     
       class="w-7 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
              text-[var(--text-secondary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]
              transition-colors leading-none disabled:opacity-30 disabled:cursor-not-allowed"
@@ -131,7 +131,7 @@
     <button
       disabled
       data-tooltip="Select a preset in the panel to delete it."
-      title="Delete preset"
+     
       class="w-7 py-1 text-[15px] border border-[var(--border)] rounded flex items-center justify-center
              text-[var(--text-secondary)] transition-colors leading-none opacity-30 cursor-not-allowed"
     >−</button>

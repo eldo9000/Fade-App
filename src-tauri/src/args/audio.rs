@@ -220,15 +220,26 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         args.extend(["-ar".to_string(), sr.to_string()]);
     }
 
-    // DSP filter chain — order: pad_front → filters → stereo width → loudnorm → limiter → pad_end
+    // DSP filter chain — order: pad_front → declick_in → filters → declick_out → limiter → pad_end
+    // De-click uses a 5 ms quarter-sine (qsin) ramp: starts/ends at exact zero amplitude,
+    // preventing the waveform discontinuity click at trim cut points. Applied after pad_front
+    // so it operates on actual audio content, not the leading silence.
     let mut filters: Vec<String> = Vec::new();
 
-    if let Some(secs) = opts.pad_front {
-        if secs > 0.0 {
-            let ms = (secs * 1000.0).round() as u64;
-            filters.push(format!("adelay={ms}:all=1"));
-        }
+    let pad_front_secs = opts.pad_front.filter(|&s| s > 0.0).unwrap_or(0.0);
+    if pad_front_secs > 0.0 {
+        let ms = (pad_front_secs * 1000.0).round() as u64;
+        filters.push(format!("adelay={ms}:all=1"));
     }
+
+    // De-click in: only needed when audio is cut mid-stream at the start.
+    if opts.trim_start.is_some() {
+        filters.push(format!(
+            "afade=t=in:st={:.6}:d=0.005:curve=qsin",
+            pad_front_secs
+        ));
+    }
+
     if let Some(freq) = opts.dsp_highpass_freq {
         if freq > 0.0 {
             filters.push(format!("highpass=f={freq:.1}:p=2"));
@@ -256,6 +267,19 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         let linear = 10.0_f64.powf(db / 20.0);
         filters.push(format!("alimiter=limit={linear:.6}:attack=5:release=50"));
     }
+
+    // De-click out: only needed when audio is cut mid-stream at the end.
+    // Placed before pad_end so the fade targets the audio content, not trailing silence.
+    if let Some(te) = opts.trim_end {
+        let content_dur = te - opts.trim_start.unwrap_or(0.0);
+        let fade_st = pad_front_secs + content_dur - 0.005;
+        if fade_st > 0.0 {
+            filters.push(format!(
+                "afade=t=out:st={fade_st:.6}:d=0.005:curve=qsin"
+            ));
+        }
+    }
+
     if let Some(secs) = opts.pad_end {
         if secs > 0.0 {
             filters.push(format!("apad=pad_dur={secs:.3}"));

@@ -78,8 +78,8 @@ struct FilmstripFrameEvent {
 /// Each frame is a separate fast-seek ffmpeg call at nice -n 19 / 1 thread.
 ///
 /// `draft` controls per-frame decode width:
-/// - `false` (standard): `scale=60` — roughly half the data of a full decode.
-/// - `true`  (heavy file / draft): `scale=30` — another 75% pixel reduction.
+/// - `false` (standard): `scale=173` — good thumbnail fidelity.
+/// - `true`  (heavy file / draft): `scale=86` — half of standard, still readable.
 ///
 /// Frame count is caller-driven. Current policy keeps 20 frames in both modes;
 /// the scale reduction alone delivers the heavy-mode speed-up.
@@ -99,9 +99,9 @@ pub fn get_filmstrip(
     let count = clamp_count(count);
 
     let scale_filter = if draft {
-        "scale=30:-2:flags=fast_bilinear"
+        "scale=86:-2:flags=fast_bilinear"
     } else {
-        "scale=60:-2:flags=fast_bilinear"
+        "scale=173:-2:flags=fast_bilinear"
     }
     .to_string();
 

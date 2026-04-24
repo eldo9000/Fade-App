@@ -126,7 +126,7 @@
     {/if}
     {#if updateState === 'available' && isManualUpdatePlatform}
       <button onclick={openReleasesPage}
-              title="Opens the GitHub releases page in your browser"
+             
               class="ml-auto px-2.5 py-1 rounded text-[11px] font-semibold shrink-0
                      bg-[var(--accent)] text-white border border-[color-mix(in_srgb,var(--accent)_70%,#000)]
                      hover:opacity-90 transition-opacity">

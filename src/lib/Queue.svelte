@@ -1,7 +1,7 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  let { queue, selectedId, selectedIds = new Set(), onselect, onremove, oncancel, ontogglefolder, onmovetofolder, ondragstartfile, ondragendfile, compatibleTypes = [], compact = false, showExtColumn = true, disableHoverInfo = false, brightFiletype = false, itemHasEdits = () => false } = $props();
+  let { queue, selectedId, selectedIds = new Set(), onselect, onremove, oncancel, ontogglefolder, onmovetofolder, ondragstartfile, ondragendfile, compatibleTypes = [], compact = false, showExtColumn = true, disableHoverInfo = false, brightFiletype = false, itemHasEdits = () => false, dropLineIndex = null, externalDragFolderId = null } = $props();
 
   // Two-pass layout: top-level rows (root files + folders) and a per-folder
   // child list. Folders always render; their children render only when
@@ -10,6 +10,19 @@
   function childrenOf(folderId) {
     return queue.filter(q => q.kind === 'file' && q.parentId === folderId);
   }
+
+  // Flat ordered list of every visible item (folders + their expanded children in place).
+  // Used to map dropLineIndex → render position.
+  let flatVisible = $derived.by(() => {
+    const out = [];
+    for (const item of topLevel) {
+      out.push(item);
+      if (item.kind === 'folder' && item.expanded) {
+        for (const child of childrenOf(item.id)) out.push(child);
+      }
+    }
+    return out;
+  });
 
   function isSelected(id) { return selectedIds.has(id) || selectedId === id; }
 
@@ -107,6 +120,46 @@
     expandedErrors = next;
   }
 
+  function _errorText(err) {
+    return String(err ?? '').replace(/\r/g, '').trim();
+  }
+
+  function errorSummary(err) {
+    const raw = _errorText(err);
+    const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
+    const picked = [
+      ...lines.filter(line => /sample rate .* not supported/i.test(line)),
+      ...lines.filter(line => /not supported/i.test(line)),
+      ...lines.filter(line => /could not/i.test(line)),
+      ...lines.filter(line => /invalid/i.test(line)),
+      ...lines.filter(line => /failed/i.test(line)),
+      ...lines.filter(line => /nothing was written/i.test(line)),
+      ...lines.filter(line => /task finished with error code/i.test(line)),
+      ...lines.filter(line => /error/i.test(line)),
+    ][0];
+
+    if (picked) {
+      const m = picked.match(/sample rate\s+(\d+)\s+is not supported by the libmp3lame encoder/i);
+      if (m) return `Unsupported MP3 sample rate: ${m[1]} Hz`;
+      return picked
+        .replace(/^\[[^\]]+\]\s*/g, '')
+        .replace(/\s+\([^)]*\)\s*$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    const firstPlain = lines.find(line => /[A-Za-z]/.test(line) && !/^(last#|size=|bitrate=|elapsed=|speed=|[\[\]0-9:]+)/i.test(line));
+    return firstPlain || 'Conversion failed';
+  }
+
+  function errorHint(err) {
+    const raw = _errorText(err);
+    if (/sample rate/i.test(raw)) return 'Try 44.1 kHz or 48 kHz for MP3.';
+    if (/codec/i.test(raw)) return 'Check the selected codec and output format.';
+    if (/not supported/i.test(raw)) return 'This option is not supported for the chosen format.';
+    return 'Tap Details for the full log.';
+  }
+
   // Incompatible = an output format is selected and this item's mediaType
   // isn't in the compat list. Used to block selection and swap popover copy.
   function isIncompatible(item) {
@@ -175,10 +228,10 @@
 </script>
 
 {#snippet errorBlock(item)}
-  <div class="mt-0.5">
-    <div class="flex items-center gap-1">
-      <p class="text-[11px] text-red-500 truncate flex-1">
-        {item.error?.split('\n')[0] ?? 'Conversion failed'}
+    <div class="mt-0.5">
+      <div class="flex items-center gap-1">
+      <p class="text-[11px] text-red-400 truncate flex-1">
+        {errorSummary(item.error)}
       </p>
       {#if item.error && item.error.includes('\n')}
         <button
@@ -250,7 +303,7 @@
         onclick={(e) => onRowClick(e, item, false)}
         class="relative flex items-center gap-2 px-3 py-1 border-b border-[var(--border)] cursor-pointer group transition-colors
                {!isSelected(item.id) ? 'hover:bg-[var(--surface)]' : ''}
-               {dragOverFolder === item.id ? 'bg-[var(--accent)]/15 ring-1 ring-inset ring-[var(--accent)]' : ''}"
+               {dragOverFolder === item.id || externalDragFolderId === item.id ? 'bg-[var(--accent)]/15 ring-1 ring-inset ring-[var(--accent)]' : ''}"
         style={isSelected(item.id)
           ? 'background:color-mix(in srgb,var(--accent) 12%,transparent); border-left:2px solid var(--accent); padding-left:10px'
           : ''}
@@ -307,7 +360,7 @@
         onmouseleave={onItemLeave}
         class="relative overflow-hidden flex items-center gap-2 py-1.5 border-b border-[var(--border)] group transition-colors
                {indent ? 'pl-8 pr-3' : 'px-3'}
-               {_incompat ? 'cursor-default' : 'cursor-pointer'}
+               {item.status === 'error' ? 'cursor-help' : _incompat ? 'cursor-default' : 'cursor-pointer'}
                {_incompat && !isSelected(item.id) ? 'bg-black/40 text-[var(--text-secondary)]/60' : ''}
                {!_incompat && !isSelected(item.id) ? 'hover:bg-[var(--surface)]' : ''}"
         style={isSelected(item.id)
@@ -319,12 +372,15 @@
                style="background: linear-gradient(to right, color-mix(in srgb, var(--accent) 18%, transparent) {item.percent ?? 0}%, transparent {item.percent ?? 0}%)">
           </div>
         {/if}
+        {#if indent}
+          <div class="absolute left-[14px] inset-y-0 w-px pointer-events-none" style="background:rgba(255,255,255,0.08)"></div>
+        {/if}
 
         <!-- Col 1 (both modes): status dot (or dash if edited), traffic-light coloured -->
         <div class="shrink-0 w-5 flex items-center justify-center">
           {#if _edited && item.status === 'pending'}
             <span class="w-2 h-2 rounded-full {_incompat ? 'bg-white/10' : 'bg-[var(--accent)]'}"
-                  title="Edits applied"></span>
+                 ></span>
           {:else}
             <span class="w-2 h-2 rounded-full {_incompat ? 'bg-white/10' : dotColor(item.status)}
                          {item.status === 'converting' ? 'animate-pulse' : ''}"></span>
@@ -338,7 +394,7 @@
                       {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}
                       {_edited ? 'italic' : ''}"
                style="mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%); -webkit-mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%)"
-               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="{brightFiletype ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-70'}">.{item.ext}</span>{/if}</p>
+              >{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}{#if item.ext && !showExtColumn}<span class="{brightFiletype ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-70'}">.{item.ext}</span>{/if}</p>
             {#if item.status === 'error'}
               {@render errorBlock(item)}
             {/if}
@@ -361,7 +417,7 @@
                       {_incompat ? 'text-[var(--text-secondary)]/60' : 'text-[var(--text-primary)]'}
                       {_edited ? 'italic' : ''}"
                style="mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%); -webkit-mask-image:linear-gradient(to right,black calc(100% - 4rem),transparent 100%)"
-               title={item.path}>{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
+              >{item.ext ? item.name.slice(0, -(item.ext.length + 1)) : item.name}</p>
             {#if item.ext}
               <p class="text-[13px] leading-tight truncate {brightFiletype ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-70'}">{item.ext}</p>
             {/if}
@@ -410,16 +466,17 @@
       </div>
     {/snippet}
 
-    {#each topLevel as item (item.id)}
+    {#if dropLineIndex === 0}
+      <div class="drop-line"></div>
+    {/if}
+    {#each flatVisible as item, i (item.id)}
       {#if item.kind === 'folder'}
         {@render folderRow(item)}
-        {#if item.expanded}
-          {#each childrenOf(item.id) as child (child.id)}
-            {@render fileRow(child, true)}
-          {/each}
-        {/if}
       {:else}
-        {@render fileRow(item, false)}
+        {@render fileRow(item, !!item.parentId)}
+      {/if}
+      {#if dropLineIndex === i + 1}
+        <div class="drop-line"></div>
       {/if}
     {/each}
   {/if}
@@ -440,6 +497,7 @@
 <!-- Info hover popover — fixed so it escapes the sidebar's overflow -->
 {#if hoveredItem}
   {@const info = hoveredItem.info}
+  {@const isError = hoveredItem.status === 'error'}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     onmouseenter={onPopoverEnter}
@@ -447,9 +505,9 @@
     style="position:fixed; left:{popoverLeft}px; top:{popoverTop}px; transform:translateY(-50%); z-index:1000"
   >
     <!-- Box -->
-    <div style="background:#1e1e22; border:1px solid rgba(255,255,255,0.1); border-radius:7px;
+    <div style="background:{isError ? '#23171a' : '#1e1e22'}; border:1px solid {isError ? 'rgba(248,113,113,0.28)' : 'rgba(255,255,255,0.1)'}; border-radius:7px;
                 padding:10px 13px; min-width:180px; max-width:248px;
-                box-shadow:0 8px 24px rgba(0,0,0,0.5)">
+                box-shadow:0 8px 24px rgba(0,0,0,0.25)">
       {#if hoveredItem.kind === 'folder'}
         <!-- Proxy node hint -->
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">
@@ -463,6 +521,24 @@
         <p style="font-size:10px; color:rgba(255,255,255,0.5); line-height:1.5">
           Drag files or folders onto this node to add them.
         </p>
+      {:else if isError}
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(248,113,113,0.95)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 8v5"/>
+            <path d="M12 16h.01"/>
+          </svg>
+          <p style="font-size:11px; font-weight:600; color:rgba(255,255,255,0.92)">{hoveredItem.name}</p>
+        </div>
+        <p style="font-size:10px; color:rgba(248,113,113,0.92); line-height:1.5; margin-bottom:4px">{errorSummary(hoveredItem.error)}</p>
+        <p style="font-size:10px; color:rgba(255,255,255,0.52); line-height:1.45; margin-bottom:8px">{errorHint(hoveredItem.error)}</p>
+        <button
+          onclick={(e) => { e.stopPropagation(); toggleError(hoveredItem.id); }}
+          style="display:inline-flex; align-items:center; gap:4px; font-size:10px; color:rgba(248,113,113,0.92); background:none; border:none; padding:0; cursor:pointer"
+        >{expandedErrors.has(hoveredItem.id) ? '▾ Hide details' : '▸ Details'}</button>
+        {#if expandedErrors.has(hoveredItem.id)}
+          <pre style="margin-top:6px; font-size:10px; color:rgba(255,255,255,0.76); line-height:1.45; white-space:pre-wrap; word-break:break-word">{_errorText(hoveredItem.error)}</pre>
+        {/if}
       {:else}
       <!-- Filename row — same [copy | text] skeleton as the info rows below,
            so all copy buttons sit at the same x. -->
@@ -472,7 +548,7 @@
           style="flex-shrink:0; width:14px; height:14px; display:flex; align-items:center; justify-content:center;
                  background:none; border:none; padding:0; cursor:pointer;
                  color:{copiedField === 'name' ? 'rgba(96,165,250,1)' : 'rgba(255,255,255,0.25)'}; transition:color 0.12s"
-          title="Copy filename"
+         
         >
           {#if copiedField === 'name'}
             <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -487,7 +563,7 @@
         </button>
         <p style="flex:1; min-width:0; font-size:11px; font-weight:600; color:rgba(255,255,255,0.92);
                   white-space:nowrap; overflow:hidden; text-overflow:ellipsis"
-           title={hoveredItem.path}>{hoveredItem.name}</p>
+          >{hoveredItem.name}</p>
       </div>
       {#if hoveredIncompatible}
         <!-- Replace the info rows with a single explanatory line. The user
@@ -513,7 +589,7 @@
                 style="flex-shrink:0; width:14px; height:14px; display:flex; align-items:center; justify-content:center;
                        background:none; border:none; padding:0; cursor:pointer;
                        color:{copiedField === row.key ? 'rgba(96,165,250,1)' : 'rgba(255,255,255,0.25)'}; transition:color 0.12s"
-                title="Copy"
+               
               >
                 {#if copiedField === row.key}
                   <!-- Check -->
@@ -541,3 +617,15 @@
     </div>
   </div>
 {/if}
+
+
+<style>
+  .drop-line {
+    height: 2px;
+    margin: 0 8px;
+    border-radius: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent);
+    pointer-events: none;
+  }
+</style>

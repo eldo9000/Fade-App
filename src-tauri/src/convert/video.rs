@@ -91,6 +91,7 @@ pub fn run(
     if success {
         ConvertResult::Done
     } else {
+        let _ = std::fs::remove_file(output);
         ConvertResult::Error(if error_output.trim().is_empty() {
             "FFmpeg conversion failed".to_string()
         } else {
