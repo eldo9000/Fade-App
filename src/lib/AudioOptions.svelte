@@ -6,7 +6,7 @@
   const bitrates = [64, 128, 192, 256, 320];
   const allSampleRates = [
     { value: 44100,  label: '44.1 kHz — CD' },
-    { value: 48000,  label: '48 kHz — Video standard' },
+    { value: 48000,  label: '48 kHz — Video' },
     { value: 96000,  label: '96 kHz — Hi-Fi' },
     { value: 192000, label: '192 kHz — Archival' },
   ];
@@ -19,7 +19,7 @@
   const isLossless = $derived(['flac','wav','aiff','alac'].includes(options.output_format));
   // m4a is lossless when ALAC sub-codec selected
   const m4aIsLossless = $derived(options.output_format === 'm4a' && options.m4a_subcodec === 'alac');
-  const hideBitrate = $derived(isLossless || m4aIsLossless || options.output_format === 'ac3' || options.output_format === 'dts' || (options.output_format === 'mp3' && options.mp3_bitrate_mode === 'vbr') || (options.output_format === 'ogg' && options.ogg_bitrate_mode === 'vbr'));
+  const hideBitrate = $derived(isLossless || m4aIsLossless || options.output_format === 'ac3' || options.output_format === 'dts' || options.output_format === 'mp3' || (options.output_format === 'ogg' && options.ogg_bitrate_mode === 'vbr'));
 
   function parseTime(raw) {
     if (!raw && raw !== 0) return null;
@@ -46,22 +46,17 @@
   function clearTrim() { options.trim_start = null; options.trim_end = null; }
 
   let lengthOpen = $state(false);
+  let processingOpen = $state(false);
+
+  function oggQualityToKbps(q) {
+    // q=-1..10 → index 0..11
+    const kbps = [32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+    const idx = Math.max(0, Math.min(11, (q ?? 5) + 1));
+    return kbps[idx];
+  }
 
   // ── Button style helpers ───────────────────────────────────────────────────
 
-  // Dev-only green segment helpers
-  function devSeg(i, total) {
-    const base  = 'px-3 py-[5px] text-center text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-l-md' : i === total - 1 ? 'rounded-r-md' : '';
-    const ml    = i > 0 ? '-ml-px' : '';
-    return [base, round, ml, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
-  }
-  function devSegV(i, total) {
-    const base  = 'w-full px-3 py-[5px] text-left text-[12px] font-medium border transition-colors relative';
-    const round = i === 0 ? 'rounded-t-md' : i === total - 1 ? 'rounded-b-md' : '';
-    const mt    = i > 0 ? '-mt-px' : '';
-    return [base, round, mt, 'border-green-900 text-green-400 hover:border-green-700 hover:bg-green-950/40'].filter(Boolean).join(' ');
-  }
 
   // 2-D grid (N columns) — corners get their own rounding
   function segGrid(i, cols, total, active = false) {
@@ -106,24 +101,28 @@
     </fieldset>
   {/if}
 
-  <!-- Sample rate — vertical connected stack (full label text) -->
-  <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
-    <legend class="fade-label">
-      Sample Rate
-    </legend>
-    <div class="inline-flex flex-col">
-      {#each sampleRates as sr, i}
-        <button
-          onclick={() => options.sample_rate = sr.value}
-          class={segV(options.sample_rate === sr.value, i, sampleRates.length)}
-        >{sr.label}</button>
-      {/each}
-    </div>
-  </fieldset>
-
   <!-- ── Format-specific controls ──────────────────────────────────────── -->
+  <!-- Order within each block: quality first · sample rate just above channels · channels last -->
 
   {#if options.output_format === 'mp3'}
+    <!-- Top slot: CBR bitrate buttons OR VBR quality slider — swaps in place, nothing below moves -->
+    {#if options.mp3_bitrate_mode === 'vbr'}
+      <fieldset data-tooltip="LAME VBR quality: 0 ≈ 245 kbps avg · 4 ≈ 165 kbps · 9 ≈ 65 kbps">
+        <legend class="fade-label">VBR Quality — V{options.mp3_vbr_quality}</legend>
+        <input type="range" min="0" max="9" step="1" bind:value={options.mp3_vbr_quality} class="fade-range"
+               style="--fade-range-pct:{((options.mp3_vbr_quality ?? 0) / 9) * 100}%" />
+        <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>V0 best</span><span>V9 smallest</span></div>
+      </fieldset>
+    {:else}
+      <fieldset data-tooltip="64–128 kbps for voice/podcast · 192 kbps standard for music streaming · 320 kbps for archival MP3">
+        <legend class="fade-label">Bitrate — kbps</legend>
+        <div class="grid" style="grid-template-columns: repeat({bitrates.length}, 1fr)">
+          {#each bitrates as br, i}
+            <button onclick={() => options.bitrate = br} class={seg(options.bitrate === br, i, bitrates.length)}>{br}</button>
+          {/each}
+        </div>
+      </fieldset>
+    {/if}
     <fieldset data-tooltip="CBR — fixed bitrate · VBR — variable bitrate (smaller files at same quality)">
       <legend class="fade-label">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
@@ -132,15 +131,15 @@
         {/each}
       </div>
     </fieldset>
-    {#if options.mp3_bitrate_mode === 'vbr'}
-      <fieldset data-tooltip="LAME VBR quality: 0 ≈ 245 kbps avg · 4 ≈ 165 kbps · 9 ≈ 65 kbps">
-        <legend class="fade-label">VBR Quality — V{options.mp3_vbr_quality}</legend>
-        <input type="range" min="0" max="9" step="1" bind:value={options.mp3_vbr_quality} class="fade-range"
-               style="--fade-range-pct:{((options.mp3_vbr_quality ?? 0) / 9) * 100}%" />
-        <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>V0 best</span><span>V9 smallest</span></div>
-      </fieldset>
-    {/if}
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="grid" style="grid-template-columns: repeat(2, 1fr)">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={seg(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels · Joint — stereo with shared bits (MP3 only)">
       <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo'],['joint','Joint']] as [v, lbl], i}
@@ -158,7 +157,15 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels">
       <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -174,7 +181,7 @@
              style="--fade-range-pct:{((options.flac_compression ?? 0) / 8) * 100}%" />
       <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 fastest</span><span>8 smallest</span></div>
     </fieldset>
-    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
+    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio">
       <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit']] as [v, lbl], i}
@@ -182,8 +189,24 @@
         {/each}
       </div>
     </fieldset>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
 
   {:else if options.output_format === 'ogg'}
+    {#if options.ogg_bitrate_mode === 'vbr'}
+      <fieldset data-tooltip="Opus VBR target bitrate: -1 → 32 kbps · 0 → 48 · 5 → 128 · 10 → 320 kbps">
+        <legend class="fade-label">Quality — {oggQualityToKbps(options.ogg_vbr_quality)} kbps</legend>
+        <input type="range" min="-1" max="10" step="1" bind:value={options.ogg_vbr_quality} class="fade-range"
+               style="--fade-range-pct:{(((options.ogg_vbr_quality ?? -1) - -1) / 11) * 100}%" />
+        <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>32 kbps</span><span>320 kbps</span></div>
+      </fieldset>
+    {/if}
     <fieldset data-tooltip="VBR — variable bitrate by quality setting · CBR — fixed bitrate · ABR — averages to a target">
       <legend class="fade-label">Bitrate Mode</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
@@ -192,25 +215,25 @@
         {/each}
       </div>
     </fieldset>
-    {#if options.ogg_bitrate_mode === 'vbr'}
-      <fieldset data-tooltip="Vorbis quality: -1 lowest · 10 highest · 3–6 typical">
-        <legend class="fade-label">Quality — {options.ogg_vbr_quality}</legend>
-        <input type="range" min="-1" max="10" step="1" bind:value={options.ogg_vbr_quality} class="fade-range"
-               style="--fade-range-pct:{(((options.ogg_vbr_quality ?? -1) - -1) / 11) * 100}%" />
-        <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>-1 lowest</span><span>10 highest</span></div>
-      </fieldset>
-    {/if}
-
-  {:else if options.output_format === 'aac'}
-    <fieldset data-tooltip="LC universal · HE efficient ≤128 kbps · HEv2 adds Parametric Stereo for very low bitrates">
-      <legend class="fade-label">Profile</legend>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
       <div class="inline-flex flex-col">
-        {#each [['lc','AAC-LC'],['he','HE-AAC'],['hev2','HE-AACv2']] as [v, lbl], i}
-          <button onclick={() => options.aac_profile = v} class={segV(options.aac_profile === v, i, 3)}>{lbl}</button>
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
         {/each}
       </div>
     </fieldset>
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
+
+  {:else if options.output_format === 'aac'}
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels">
       <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -235,7 +258,11 @@
       <input type="checkbox" bind:checked={options.opus_vbr} class="fade-check" />
       Variable bitrate (VBR)
     </label>
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
+    <div class="px-3 py-2 text-[12px] text-[var(--text-secondary)] border border-[var(--border)] rounded-md bg-[var(--surface-hint)]"
+         data-tooltip="libopus only supports 48 kHz. All input rates are resampled automatically.">
+      Sample Rate — 48 kHz (required)
+    </div>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels">
       <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -263,6 +290,14 @@
         </div>
       </fieldset>
     {/if}
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
 
   {:else if options.output_format === 'wma'}
     <fieldset data-tooltip="Standard — stereo lossy · Pro — multi-channel lossy · Lossless — bit-perfect like FLAC but Windows-only">
@@ -273,9 +308,17 @@
         {/each}
       </div>
     </fieldset>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
 
   {:else if options.output_format === 'alac'}
-    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit float for mixing / processing without clipping">
+    <fieldset data-tooltip="16-bit CD-quality · 24-bit studio · 32-bit">
       <legend class="fade-label">Bit Depth</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [[16,'16-bit'],[24,'24-bit'],[32,'32-bit']] as [v, lbl], i}
@@ -283,7 +326,15 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels">
       <legend class="fade-label">Channels</legend>
       <div class="grid" style="grid-template-columns:repeat(3,1fr)">
         {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
@@ -293,14 +344,6 @@
     </fieldset>
 
   {:else if options.output_format === 'ac3'}
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="fade-label">Channels</legend>
-      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
-        {#each [['mono','Mono'],['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
-          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
-        {/each}
-      </div>
-    </fieldset>
     <fieldset data-tooltip="448 kbps typical for 5.1 broadcast · 48 kHz required">
       <legend class="fade-label">Bitrate — kbps</legend>
       <div class="grid" style="grid-template-columns:repeat(4,1fr)">
@@ -309,16 +352,24 @@
         {/each}
       </div>
     </fieldset>
-
-  {:else if options.output_format === 'dts'}
-    <fieldset data-tooltip="Source — match input · Mono — single channel, smallest · Stereo — two channels · Joint — stereo with shared bits (MP3 only) · 5.1 — surround">
-      <legend class="fade-label">Channels</legend>
-      <div class="grid" style="grid-template-columns:repeat(2,1fr)">
-        {#each [['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
-          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 2)}>{lbl}</button>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
         {/each}
       </div>
     </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels · 5.1 — surround">
+      <legend class="fade-label">Channels</legend>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        {#each [['mono','Mono'],['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
+          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
+        {/each}
+      </div>
+    </fieldset>
+
+  {:else if options.output_format === 'dts'}
     <fieldset data-tooltip="FFmpeg encodes DTS core only">
       <legend class="fade-label">Bitrate — kbps</legend>
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
@@ -327,18 +378,48 @@
         {/each}
       </div>
     </fieldset>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Stereo — two channels · 5.1 — surround">
+      <legend class="fade-label">Channels</legend>
+      <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+        {#each [['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
+          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 2)}>{lbl}</button>
+        {/each}
+      </div>
+    </fieldset>
   {/if}
 
-  <!-- Processing -->
-  <fieldset
-    data-tooltip="Hard-limit peaks · EBU R128 normalisation · Butterworth highpass/lowpass · Stereo width adjustment"
-  >
-    <legend class="fade-label">
-      Processing
-    </legend>
+  <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
+                bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
+                {options.preserve_metadata ? 'text-[var(--text-primary)]' : 'text-white/75'}"
+         data-tooltip="Keep ID3/Vorbis tags and cover art in the output. Uncheck to strip (removes title, artist, album, embedded artwork).">
+    <input type="checkbox" bind:checked={options.preserve_metadata} class="fade-check" />
+    Preserve metadata
+  </label>
 
-    <!-- Accordion-style DSP toggles: rounded, separated, chevron, inline expansion -->
-    <div class="space-y-1">
+  <!-- Processing — collapsible, same style as VideoOptions Advanced -->
+  <div class="border border-[var(--border)] rounded-md overflow-hidden">
+    <button
+      onclick={() => processingOpen = !processingOpen}
+      class="w-full flex items-center justify-between px-3 py-2 text-[12px]
+             text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+             bg-[var(--surface-hint)] transition-colors"
+    >
+      <span>Processing</span>
+      <svg class="w-3.5 h-3.5 shrink-0 transition-transform {processingOpen ? 'rotate-180' : ''}"
+           viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 6l4 4 4-4"/>
+      </svg>
+    </button>
+    {#if processingOpen}
+    <div class="space-y-1 p-3 pt-2">
 
       <!-- Length -->
       <div>
@@ -355,21 +436,23 @@
           <div class="mt-1 px-1 space-y-3">
             <fieldset data-tooltip="Trim the output — enter time as MM:SS or raw seconds. Leave blank to keep that edge.">
               <legend class="fade-label">Trim (MM:SS or seconds)</legend>
-              <div class="flex gap-3 items-end">
+              <div class="flex gap-3 items-center">
                 <div class="flex-1">
-                  <label class="text-[11px] text-[var(--text-secondary)]" for="aud-trim-start">Start</label>
                   <input id="aud-trim-start" type="text"
                     value={trimStartRaw} oninput={onTrimStartInput}
-                    class="w-full mt-1 px-3 py-1.5 rounded-md border border-[var(--border)]
-                           bg-[var(--surface)] text-[var(--text-primary)] text-[13px]
+                    placeholder="Start"
+                    class="w-full px-3 py-1.5 rounded-md border border-[var(--border)]
+                           bg-[var(--surface)] text-[var(--text-primary)] text-[13px] text-right
+                           placeholder:text-[var(--text-secondary)] placeholder:text-right
                            focus:outline-none focus:border-[var(--accent)]"
                   />
                 </div>
                 <div class="flex-1">
-                  <label class="text-[11px] text-[var(--text-secondary)]" for="aud-trim-end">End</label>
                   <input id="aud-trim-end" type="text"
                     value={trimEndRaw} oninput={onTrimEndInput}
-                    class="w-full mt-1 px-3 py-1.5 rounded-md text-[13px]
+                    placeholder="End"
+                    class="w-full px-3 py-1.5 rounded-md text-[13px] text-right
+                           placeholder:text-[var(--text-secondary)] placeholder:text-right
                            focus:outline-none focus:border-[var(--accent)]
                            bg-[var(--surface)] text-[var(--text-primary)]
                            {errors.audio_trim ? 'border border-red-500' : 'border border-[var(--border)]'}"
@@ -473,18 +556,17 @@
                 class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.dsp_highpass_freq != null ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Highpass</span>
-          {#if options.dsp_highpass_freq != null}<span class="font-mono text-[11px]">{options.dsp_highpass_freq} Hz</span>{/if}
           <svg class="shrink-0 transition-transform duration-200 {options.dsp_highpass_freq != null ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
         </button>
         {#if options.dsp_highpass_freq != null}
           <div class="mt-1 px-1 space-y-1.5">
             <div class="flex items-center gap-2">
+              <input type="range" min="0" max="100" value={Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100))} oninput={(e) => options.dsp_highpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="fade-range flex-1"
+                     style="--fade-range-pct:{Math.max(0, Math.min(100, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100)))}%" />
               <input type="number" value={options.dsp_highpass_freq} oninput={(e) => options.dsp_highpass_freq = Math.max(1, parseFloat(e.target.value) || 80)} min="1" max="20000" step="1"
-                     class="w-24 px-2 py-1 text-[12px] font-mono rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
-              <span class="text-[11px] text-[var(--text-secondary)]">Hz</span>
+                     placeholder="Hz"
+                     class="w-20 px-2 py-1 text-[12px] font-mono text-right rounded border border-[var(--border)] bg-white/[0.06] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-secondary)]" />
             </div>
-            <input type="range" min="0" max="100" value={Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100))} oninput={(e) => options.dsp_highpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="fade-range"
-                   style="--fade-range-pct:{Math.max(0, Math.min(100, Math.round(Math.log10(Math.max(1, options.dsp_highpass_freq) / 20) / 3 * 100)))}%" />
             <div class="flex justify-between text-[10px] text-[var(--text-secondary)]"><span>20 Hz</span><span>630 Hz</span><span>20 kHz</span></div>
           </div>
         {/if}
@@ -496,18 +578,17 @@
                 class="w-full px-3 py-[5px] rounded-md text-left text-[12px] font-medium border flex items-center gap-2 transition-colors
                        {options.dsp_lowpass_freq != null ? 'seg-active z-10' : 'seg-inactive border-[var(--border)] text-[color-mix(in_srgb,var(--text-primary)_70%,transparent)] hover:z-10'}">
           <span class="flex-1">Lowpass</span>
-          {#if options.dsp_lowpass_freq != null}<span class="font-mono text-[11px]">{options.dsp_lowpass_freq} Hz</span>{/if}
           <svg class="shrink-0 transition-transform duration-200 {options.dsp_lowpass_freq != null ? 'rotate-180' : ''}" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l4 4 4-4"/></svg>
         </button>
         {#if options.dsp_lowpass_freq != null}
           <div class="mt-1 px-1 space-y-1.5">
             <div class="flex items-center gap-2">
+              <input type="range" min="0" max="100" value={Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))} oninput={(e) => options.dsp_lowpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="fade-range flex-1"
+                     style="--fade-range-pct:{Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))}%" />
               <input type="number" value={options.dsp_lowpass_freq} oninput={(e) => options.dsp_lowpass_freq = Math.max(1, parseFloat(e.target.value) || 8000)} min="1" max="20000" step="1"
-                     class="w-24 px-2 py-1 text-[12px] font-mono rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
-              <span class="text-[11px] text-[var(--text-secondary)]">Hz</span>
+                     placeholder="Hz"
+                     class="w-20 px-2 py-1 text-[12px] font-mono text-right rounded border border-[var(--border)] bg-white/[0.06] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-secondary)]" />
             </div>
-            <input type="range" min="0" max="100" value={Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))} oninput={(e) => options.dsp_lowpass_freq = Math.round(20 * Math.pow(1000, parseFloat(e.target.value) / 100))} class="fade-range"
-                   style="--fade-range-pct:{Math.min(100, Math.max(0, Math.round(Math.log10(Math.max(1, options.dsp_lowpass_freq) / 20) / 3 * 100)))}%" />
             <div class="flex justify-between text-[10px] text-[var(--text-secondary)]"><span>20 Hz</span><span>630 Hz</span><span>20 kHz</span></div>
           </div>
         {/if}
@@ -533,14 +614,17 @@
 
     </div>
 
-  </fieldset>
-
-  <label class="inline-flex items-center gap-2.5 cursor-pointer text-[13px]
-                bg-[var(--surface-hint)] border border-[var(--border)] rounded-md px-3 py-2
-                {options.preserve_metadata ? 'text-[var(--text-primary)]' : 'text-white/75'}"
-         data-tooltip="Keep ID3/Vorbis tags and cover art in the output. Uncheck to strip (removes title, artist, album, embedded artwork).">
-    <input type="checkbox" bind:checked={options.preserve_metadata} class="fade-check" />
-    Preserve metadata
-  </label>
+    {/if}
+  </div>
 
 </div>
+
+<style>
+  :global(input[type=number]) {
+    color-scheme: dark;
+  }
+  :global(input[type=number]::-webkit-inner-spin-button),
+  :global(input[type=number]::-webkit-outer-spin-button) {
+    opacity: 0.5;
+  }
+</style>

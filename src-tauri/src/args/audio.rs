@@ -1,5 +1,23 @@
 use crate::ConvertOptions;
 
+/// Maps the OGG quality slider (-1..=10) to an Opus target bitrate in kbps.
+fn ogg_quality_to_opus_kbps(q: i32) -> u32 {
+    match q {
+        i32::MIN..=-1 => 32,
+        0 => 48,
+        1 => 64,
+        2 => 80,
+        3 => 96,
+        4 => 112,
+        5 => 128,
+        6 => 160,
+        7 => 192,
+        8 => 224,
+        9 => 256,
+        _ => 320,
+    }
+}
+
 /// Build codec-specific args (encoder, bitrate/quality, sample_fmt, channels,
 /// and any format-specific extras) for the given `opts`.
 ///
@@ -29,40 +47,34 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
             }
         }
         "ogg" => {
-            args.extend(["-c:a".to_string(), "libvorbis".to_string()]);
+            // libvorbis is not available in standard homebrew FFmpeg builds.
+            // libopus in an OGG container produces valid .ogg files and is
+            // universally supported. Quality slider (-1..10) maps to kbps.
+            args.extend(["-c:a".to_string(), "libopus".to_string()]);
             match opts.ogg_bitrate_mode.as_deref() {
-                Some("vbr") => {
+                Some("vbr") | None => {
                     suppress_base_bitrate = true;
+                    args.extend(["-vbr".to_string(), "on".to_string()]);
                     let q = opts.ogg_vbr_quality.unwrap_or(5);
-                    args.extend(["-q:a".to_string(), q.to_string()]);
+                    let br = ogg_quality_to_opus_kbps(q);
+                    args.extend(["-b:a".to_string(), format!("{}k", br)]);
                 }
                 Some("cbr") => {
-                    // keep base -b:a, plus min/max rate pinning
-                    if let Some(br) = opts.bitrate {
-                        let v = format!("{}k", br);
-                        args.extend(["-minrate".to_string(), v.clone()]);
-                        args.extend(["-maxrate".to_string(), v]);
-                    }
+                    args.extend(["-vbr".to_string(), "off".to_string()]);
+                    // base -b:a emitted by caller
                 }
-                Some("abr") | None => {
-                    // just -b:a (base behavior)
+                Some("abr") => {
+                    args.extend(["-vbr".to_string(), "constrained".to_string()]);
+                    // base -b:a emitted by caller
                 }
                 _ => {}
             }
         }
         "aac" => {
+            // Native FFmpeg `aac` encoder only supports LC (aac_low), which is
+            // also the default — no -profile:a flag needed. HE/HEv2 would require
+            // libfdk_aac (non-redistributable) and silently fail otherwise.
             args.extend(["-c:a".to_string(), "aac".to_string()]);
-            if let Some(profile) = opts.aac_profile.as_deref() {
-                let p = match profile {
-                    "lc" => Some("aac_low"),
-                    "he" => Some("aac_he"),
-                    "hev2" => Some("aac_he_v2"),
-                    _ => None,
-                };
-                if let Some(p) = p {
-                    args.extend(["-profile:a".to_string(), p.to_string()]);
-                }
-            }
         }
         "opus" => {
             args.extend(["-c:a".to_string(), "libopus".to_string()]);
@@ -100,8 +112,12 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
             }
         },
         "aiff" => {
-            // default PCM encoder; no explicit -c:a, no bitrate
             suppress_base_bitrate = true;
+            match opts.bit_depth {
+                Some(24) => args.extend(["-c:a".to_string(), "pcm_s24be".to_string()]),
+                Some(32) => args.extend(["-c:a".to_string(), "pcm_f32be".to_string()]),
+                _ => {}
+            }
         }
         "alac" => {
             args.extend(["-c:a".to_string(), "alac".to_string()]);
@@ -123,8 +139,12 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
             }
         }
         "wav" => {
-            // default PCM encoder; no bitrate
             suppress_base_bitrate = true;
+            match opts.bit_depth {
+                Some(24) => args.extend(["-c:a".to_string(), "pcm_s24le".to_string()]),
+                Some(32) => args.extend(["-c:a".to_string(), "pcm_f32le".to_string()]),
+                _ => {}
+            }
         }
         _ => {
             // unknown audio format — let ffmpeg's container defaults handle it
@@ -136,8 +156,7 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
         let sample_fmt = match fmt.as_str() {
             "wav" | "aiff" => match depth {
                 16 => Some("s16"),
-                24 => Some("s24"),
-                32 => Some("s32"),
+                // 24 and 32 handled by explicit codec in build_codec_args
                 _ => None,
             },
             "flac" => match depth {
@@ -146,15 +165,15 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
                 _ => None,
             },
             "alac" => match depth {
+                // ALAC encoder only supports s16p and s32p. 24-bit content
+                // is stored as s32p (upper 24 bits carry the audio).
                 16 => Some("s16p"),
-                24 => Some("s24p"),
-                32 => Some("s32p"),
+                24 | 32 => Some("s32p"),
                 _ => None,
             },
             "m4a" if opts.m4a_subcodec.as_deref() == Some("alac") => match depth {
                 16 => Some("s16p"),
-                24 => Some("s24p"),
-                32 => Some("s32p"),
+                24 | 32 => Some("s32p"),
                 _ => None,
             },
             _ => None,
@@ -216,7 +235,15 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
             args.extend(["-b:a".to_string(), format!("{}k", br)]);
         }
     }
-    if let Some(sr) = opts.sample_rate {
+    // libopus only accepts 8000/12000/16000/24000/48000 Hz. Always force 48000
+    // so 44.1/96/192 kHz inputs don't produce "sample rate not supported" errors.
+    let is_opus = opts.output_format.to_lowercase() == "opus";
+    let sample_rate = if is_opus {
+        Some(48000u32)
+    } else {
+        opts.sample_rate
+    };
+    if let Some(sr) = sample_rate {
         args.extend(["-ar".to_string(), sr.to_string()]);
     }
 
@@ -254,8 +281,10 @@ pub fn build_ffmpeg_audio_args(input: &str, output: &str, opts: &ConvertOptions)
         // width_pct: −100 (mono) … 0 (no change) … +100 (wide)
         // extrastereo expects a multiplier: m = 1 + pct/100
         let m = 1.0 + width_pct / 100.0;
-        if m.abs() > 0.01 {
-            filters.push(format!("extrastereo=m={m:.3}"));
+        if (m - 1.0).abs() > 0.01 {
+            // aformat ensures stereo before extrastereo — mono input (L=R) passes through
+            // unchanged since extrastereo's side signal (L-R) is zero.
+            filters.push(format!("aformat=channel_layouts=stereo,extrastereo=m={m:.3}"));
         }
     }
     if opts.normalize_loudness == Some(true) {

@@ -2940,34 +2940,76 @@ mod tests {
     }
 
     #[test]
-    fn audio_args_aac_profile_hev2() {
+    fn audio_args_opus_forces_48k_regardless_of_sample_rate() {
+        // libopus rejects 44100/96000/192000 Hz; Rust must override to 48000.
+        for sr in [44100u32, 96000, 192000, 48000] {
+            let opts = ConvertOptions {
+                output_format: "opus".to_string(),
+                sample_rate: Some(sr),
+                ..Default::default()
+            };
+            let args = build_ffmpeg_audio_args("in.wav", "out.opus", &opts);
+            let ar_idx = args.iter().position(|a| a == "-ar").expect("-ar missing");
+            assert_eq!(args[ar_idx + 1], "48000", "sample_rate {sr} should be forced to 48000");
+        }
+    }
+
+    #[test]
+    fn audio_args_opus_inserts_48k_when_no_sample_rate() {
+        let opts = ConvertOptions {
+            output_format: "opus".to_string(),
+            sample_rate: None,
+            ..Default::default()
+        };
+        let args = build_ffmpeg_audio_args("in.wav", "out.opus", &opts);
+        let ar_idx = args.iter().position(|a| a == "-ar").expect("-ar missing");
+        assert_eq!(args[ar_idx + 1], "48000");
+    }
+
+    #[test]
+    fn audio_args_aac_no_profile_flag() {
+        // Native `aac` encoder only supports LC (default); we never emit -profile:a.
         let opts = ConvertOptions {
             output_format: "aac".to_string(),
-            aac_profile: Some("hev2".to_string()),
+            aac_profile: Some("hev2".to_string()), // ignored — UI no longer offers it
             ..Default::default()
         };
         let args = build_ffmpeg_audio_args("in.wav", "out.aac", &opts);
-        let p_idx = args
-            .iter()
-            .position(|a| a == "-profile:a")
-            .expect("-profile:a missing");
-        assert_eq!(args[p_idx + 1], "aac_he_v2");
+        assert!(args.windows(2).any(|w| w[0] == "-c:a" && w[1] == "aac"));
+        assert!(!args.contains(&"-profile:a".to_string()));
     }
 
     #[test]
     fn audio_args_wav_bit_depth_sample_fmt() {
-        let opts = ConvertOptions {
+        // 24-bit WAV: explicit pcm_s24le codec (s24 is not a valid sample_fmt)
+        let opts24 = ConvertOptions {
             output_format: "wav".to_string(),
             bit_depth: Some(24),
             ..Default::default()
         };
-        let args = build_ffmpeg_audio_args("in.wav", "out.wav", &opts);
-        let sf_idx = args
-            .iter()
-            .position(|a| a == "-sample_fmt")
-            .expect("-sample_fmt missing");
-        assert_eq!(args[sf_idx + 1], "s24");
-        assert!(!args.contains(&"-b:a".to_string()));
+        let args24 = build_ffmpeg_audio_args("in.wav", "out.wav", &opts24);
+        assert!(args24.windows(2).any(|w| w[0] == "-c:a" && w[1] == "pcm_s24le"));
+        assert!(!args24.contains(&"-sample_fmt".to_string()));
+        assert!(!args24.contains(&"-b:a".to_string()));
+
+        // 32-bit float WAV: explicit pcm_f32le codec
+        let opts32 = ConvertOptions {
+            output_format: "wav".to_string(),
+            bit_depth: Some(32),
+            ..Default::default()
+        };
+        let args32 = build_ffmpeg_audio_args("in.wav", "out.wav", &opts32);
+        assert!(args32.windows(2).any(|w| w[0] == "-c:a" && w[1] == "pcm_f32le"));
+        assert!(!args32.contains(&"-sample_fmt".to_string()));
+
+        // 16-bit WAV: -sample_fmt s16 (no explicit codec needed)
+        let opts16 = ConvertOptions {
+            output_format: "wav".to_string(),
+            bit_depth: Some(16),
+            ..Default::default()
+        };
+        let args16 = build_ffmpeg_audio_args("in.wav", "out.wav", &opts16);
+        assert!(args16.windows(2).any(|w| w[0] == "-sample_fmt" && w[1] == "s16"));
     }
 
     #[test]
@@ -2990,7 +3032,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_args_ogg_cbr_minmax() {
+    fn audio_args_ogg_cbr() {
         let opts = ConvertOptions {
             output_format: "ogg".to_string(),
             bitrate: Some(192),
@@ -2998,18 +3040,27 @@ mod tests {
             ..Default::default()
         };
         let args = build_ffmpeg_audio_args("i", "o.ogg", &opts);
+        assert!(args.windows(2).any(|w| w[0] == "-c:a" && w[1] == "libopus"));
+        assert!(args.windows(2).any(|w| w[0] == "-vbr" && w[1] == "off"));
         let br_idx = args.iter().position(|a| a == "-b:a").expect("-b:a missing");
         assert_eq!(args[br_idx + 1], "192k");
-        let min_idx = args
-            .iter()
-            .position(|a| a == "-minrate")
-            .expect("minrate missing");
-        assert_eq!(args[min_idx + 1], "192k");
-        let max_idx = args
-            .iter()
-            .position(|a| a == "-maxrate")
-            .expect("maxrate missing");
-        assert_eq!(args[max_idx + 1], "192k");
+        assert!(!args.contains(&"-minrate".to_string()));
+        assert!(!args.contains(&"-maxrate".to_string()));
+    }
+
+    #[test]
+    fn audio_args_ogg_vbr_quality_to_bitrate() {
+        let opts = ConvertOptions {
+            output_format: "ogg".to_string(),
+            ogg_bitrate_mode: Some("vbr".to_string()),
+            ogg_vbr_quality: Some(5),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_audio_args("i", "o.ogg", &opts);
+        assert!(args.windows(2).any(|w| w[0] == "-c:a" && w[1] == "libopus"));
+        assert!(args.windows(2).any(|w| w[0] == "-vbr" && w[1] == "on"));
+        let br_idx = args.iter().position(|a| a == "-b:a").expect("-b:a missing");
+        assert_eq!(args[br_idx + 1], "128k"); // q=5 → 128 kbps
     }
 
     #[test]
@@ -3028,7 +3079,23 @@ mod tests {
             .iter()
             .position(|a| a == "-sample_fmt")
             .expect("-sample_fmt missing");
-        assert_eq!(args[sf_idx + 1], "s24p");
+        // ALAC 24-bit content must be stored as s32p (alac rejects s24p).
+        assert_eq!(args[sf_idx + 1], "s32p");
+    }
+
+    #[test]
+    fn audio_args_alac_24bit_uses_s32p() {
+        let opts = ConvertOptions {
+            output_format: "alac".to_string(),
+            bit_depth: Some(24),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_audio_args("i", "o.m4a", &opts);
+        let sf_idx = args
+            .iter()
+            .position(|a| a == "-sample_fmt")
+            .expect("-sample_fmt missing");
+        assert_eq!(args[sf_idx + 1], "s32p");
     }
 
     #[test]

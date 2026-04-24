@@ -192,6 +192,183 @@ fn audio_wav_to_mp3() {
     );
 }
 
+/// WAV → AAC with defaults. Guards against silent HE/HEv2 profile failures
+/// (native `aac` encoder only supports LC).
+#[test]
+fn audio_wav_to_aac() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("test.wav");
+    let output = dir.path().join("test.aac");
+
+    run_cmd(
+        "ffmpeg",
+        &[
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            input.to_str().expect("valid path"),
+        ],
+    );
+
+    let opts = ConvertOptions {
+        output_format: "aac".to_string(),
+        bitrate: Some(192),
+        ..ConvertOptions::default()
+    };
+    let args = build_ffmpeg_audio_args(
+        input.to_str().expect("valid path"),
+        output.to_str().expect("valid path"),
+        &opts,
+    );
+
+    run_cmd(
+        "ffmpeg",
+        &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+    );
+
+    assert!(output.exists(), "output not found: {:?}", output);
+    assert!(output.metadata().expect("metadata").len() > 0);
+}
+
+/// WAV → M4A with ALAC 24-bit. Guards against the `s24p` regression
+/// (ALAC rejects s24p; 24-bit audio must be stored as s32p).
+#[test]
+fn audio_wav_to_m4a_alac_24bit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("test.wav");
+    let output = dir.path().join("test.m4a");
+
+    run_cmd(
+        "ffmpeg",
+        &[
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            input.to_str().expect("valid path"),
+        ],
+    );
+
+    let opts = ConvertOptions {
+        output_format: "m4a".to_string(),
+        m4a_subcodec: Some("alac".to_string()),
+        bit_depth: Some(24),
+        ..ConvertOptions::default()
+    };
+    let args = build_ffmpeg_audio_args(
+        input.to_str().expect("valid path"),
+        output.to_str().expect("valid path"),
+        &opts,
+    );
+
+    run_cmd(
+        "ffmpeg",
+        &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+    );
+
+    assert!(output.exists(), "output not found: {:?}", output);
+    assert!(output.metadata().expect("metadata").len() > 0);
+}
+
+/// Generate a 1-second 440 Hz sine WAV (44100 Hz) with ffmpeg, convert to native .opus.
+/// The 44100 Hz input must be resampled to 48000 Hz automatically by the arg builder.
+#[test]
+fn audio_wav_to_opus() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("test.wav");
+    let output = dir.path().join("test.opus");
+
+    run_cmd(
+        "ffmpeg",
+        &[
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            input.to_str().expect("valid path"),
+        ],
+    );
+
+    assert!(input.exists(), "fixture not created: {:?}", input);
+
+    let opts = ConvertOptions {
+        output_format: "opus".to_string(),
+        sample_rate: Some(44100), // intentionally invalid — arg builder must override to 48000
+        opus_application: Some("audio".to_string()),
+        opus_vbr: Some(true),
+        bitrate: Some(128),
+        ..ConvertOptions::default()
+    };
+    let args = build_ffmpeg_audio_args(
+        input.to_str().expect("valid path"),
+        output.to_str().expect("valid path"),
+        &opts,
+    );
+
+    run_cmd(
+        "ffmpeg",
+        &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+    );
+
+    assert!(output.exists(), "output not found: {:?}", output);
+    assert!(
+        output.metadata().expect("metadata").len() > 0,
+        "output is empty: {:?}",
+        output
+    );
+}
+
+/// Generate a 1-second 440 Hz sine WAV with ffmpeg, convert to OGG (Opus-in-OGG)
+/// using Fade's `build_ffmpeg_audio_args`, assert the output exists and is non-empty.
+#[test]
+fn audio_wav_to_ogg() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("test.wav");
+    let output = dir.path().join("test.ogg");
+
+    run_cmd(
+        "ffmpeg",
+        &[
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            input.to_str().expect("valid path"),
+        ],
+    );
+
+    assert!(input.exists(), "fixture not created: {:?}", input);
+
+    let opts = ConvertOptions {
+        output_format: "ogg".to_string(),
+        ogg_bitrate_mode: Some("vbr".to_string()),
+        ogg_vbr_quality: Some(5),
+        ..ConvertOptions::default()
+    };
+    let args = build_ffmpeg_audio_args(
+        input.to_str().expect("valid path"),
+        output.to_str().expect("valid path"),
+        &opts,
+    );
+
+    run_cmd(
+        "ffmpeg",
+        &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+    );
+
+    assert!(output.exists(), "output not found: {:?}", output);
+    assert!(
+        output.metadata().expect("metadata").len() > 0,
+        "output is empty: {:?}",
+        output
+    );
+}
+
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 /// Write a small CSV to a temp file, convert to JSON using Fade's pure-Rust
