@@ -15,9 +15,17 @@
   let frontVal = $derived(+posToSecs(frontPos).toFixed(2));
   let endVal   = $derived(+posToSecs(endPos).toFixed(2));
 
-  // Commit to options
-  $effect(() => { padFront = frontVal > 0.05 ? frontVal : null; });
-  $effect(() => { padEnd   = endVal   > 0.05 ? endVal   : null; });
+  // Commit to options — guard treats undefined and null as equivalent so the
+  // initial mount (where options.pad_front is undefined) doesn't trigger a
+  // spurious reactive cascade that collapses the parent {#if} block.
+  $effect(() => {
+    const next = frontVal > 0.05 ? frontVal : null;
+    if ((padFront ?? null) !== next) padFront = next;
+  });
+  $effect(() => {
+    const next = endVal > 0.05 ? endVal : null;
+    if ((padEnd ?? null) !== next) padEnd = next;
+  });
 
   // External reset
   $effect(() => { if (padFront == null && frontPos !== 0) frontPos = 0; });
