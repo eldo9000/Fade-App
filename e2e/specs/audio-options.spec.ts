@@ -83,6 +83,7 @@ test('AudioOptions trim inputs accessible after expanding Length', async ({ moun
   const component = await mount(AudioOptionsWrapper, {
     props: { initialOptions: { ...baseOpts } },
   })
+  await component.getByRole('button', { name: 'Processing' }).click()
   const lengthBtn = component.getByRole('button', { name: 'Length' })
   await lengthBtn.click()
   await expect(component.locator('#aud-trim-start')).toBeVisible()
@@ -93,6 +94,7 @@ test('AudioOptions trim start input accepts a value and reformats it', async ({ 
   const component = await mount(AudioOptionsWrapper, {
     props: { initialOptions: { ...baseOpts } },
   })
+  await component.getByRole('button', { name: 'Processing' }).click()
   await component.getByRole('button', { name: 'Length' }).click()
   const trimStart = component.locator('#aud-trim-start')
   await trimStart.fill('5')
@@ -104,6 +106,7 @@ test('AudioOptions trim end input accepts a value and reformats it', async ({ mo
   const component = await mount(AudioOptionsWrapper, {
     props: { initialOptions: { ...baseOpts } },
   })
+  await component.getByRole('button', { name: 'Processing' }).click()
   await component.getByRole('button', { name: 'Length' }).click()
   const trimEnd = component.locator('#aud-trim-end')
   await trimEnd.fill('30')
