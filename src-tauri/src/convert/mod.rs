@@ -16,10 +16,13 @@ pub mod image;
 pub mod model;
 pub mod model_blender;
 pub mod notebook;
+pub mod progress;
 pub mod subtitle;
 pub mod timeline;
 pub mod tracker;
 pub mod video;
+
+pub use progress::{noop_progress, ProgressEvent, ProgressFn};
 
 pub use archive::run as run_archive_convert;
 pub use audio::run as run_audio_convert;
