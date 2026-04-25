@@ -7,6 +7,7 @@
 //! Subtitle files are tiny and instant — no progress parsing, just
 //! 0% then 100%.
 
+use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::operations::run_ffmpeg as op_run_ffmpeg;
 use crate::{ConvertOptions, JobProgress};
 use parking_lot::Mutex;
@@ -116,58 +117,64 @@ pub fn sbv_to_srt(sbv: &str) -> String {
     out
 }
 
-/// Build the ffmpeg arg list and delegate to the canonical `run_ffmpeg`
-/// helper. Subtitle conversions don't pass `-progress pipe:1`, so the
-/// canonical's per-line emit path stays silent — start/done events come
-/// from `run` below.
-fn run_ffmpeg(
-    window: &Window,
-    job_id: &str,
-    input: &str,
-    output: &str,
-    processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
-    let args = vec![
-        "-y".to_string(),
-        "-i".to_string(),
-        input.to_string(),
-        output.to_string(),
-    ];
-    op_run_ffmpeg(window, job_id, &args, None, processes, cancelled)
+/// Trait abstracting the ffmpeg shell-out so `convert()` does not need a
+/// `&Window`. The Tauri wrapper supplies a real implementation backed by
+/// `operations::run_ffmpeg`; tests that exercise only pure-Rust paths can
+/// pass a no-op implementation that errors if invoked.
+pub trait FfmpegRunner {
+    fn run(
+        &mut self,
+        input: &str,
+        output: &str,
+        processes: Arc<Mutex<HashMap<String, Child>>>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String>;
 }
 
-pub fn run(
-    window: &Window,
-    job_id: &str,
+/// FfmpegRunner that always errors — for tests that don't exercise
+/// ffmpeg-backed paths.
+pub struct UnavailableFfmpeg;
+impl FfmpegRunner for UnavailableFfmpeg {
+    fn run(
+        &mut self,
+        _input: &str,
+        _output: &str,
+        _processes: Arc<Mutex<HashMap<String, Child>>>,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        Err("ffmpeg runner not available in this context".to_string())
+    }
+}
+
+/// Pure conversion. Used directly by tests and any future non-Tauri caller.
+/// `ffmpeg_runner` is invoked for any conversion path that needs ffmpeg
+/// (srt/vtt/ass/ssa/ttml interchange). Pure-Rust paths (srt ↔ sbv) never
+/// touch it.
+#[allow(clippy::too_many_arguments)]
+pub fn convert(
     input: &str,
     output: &str,
     _opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    ffmpeg_runner: &mut dyn FfmpegRunner,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
+    job_id: &str,
 ) -> Result<(), String> {
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 0.0,
-            message: "Converting subtitle…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Started);
 
     let in_ext = ext_of(input);
     let out_ext = ext_of(output);
 
     let result = match (in_ext.as_str(), out_ext.as_str()) {
         // Both sides ffmpeg-native — one-shot.
-        ("srt" | "vtt" | "ass" | "ssa", "srt" | "vtt" | "ass" | "ssa" | "ttml") => run_ffmpeg(
-            window,
-            job_id,
-            input,
-            output,
-            Arc::clone(&processes),
-            Arc::clone(&cancelled),
-        ),
+        ("srt" | "vtt" | "ass" | "ssa", "srt" | "vtt" | "ass" | "ssa" | "ttml") => ffmpeg_runner
+            .run(
+                input,
+                output,
+                Arc::clone(&processes),
+                Arc::clone(&cancelled),
+            ),
 
         // SBV → SBV — trivial copy, but keep behaviour consistent.
         ("sbv", "sbv") => fs::copy(input, output)
@@ -194,9 +201,7 @@ pub fn run(
             let srt = sbv_to_srt(&sbv);
             let tmp = std::env::temp_dir().join(format!("fade-{job_id}.srt"));
             fs::write(&tmp, srt).map_err(|e| e.to_string())?;
-            let res = run_ffmpeg(
-                window,
-                job_id,
+            let res = ffmpeg_runner.run(
                 &tmp.to_string_lossy(),
                 output,
                 Arc::clone(&processes),
@@ -209,9 +214,7 @@ pub fn run(
         // other → SBV — bridge through a temp SRT.
         (_, "sbv") => {
             let tmp = std::env::temp_dir().join(format!("fade-{job_id}.srt"));
-            let res = run_ffmpeg(
-                window,
-                job_id,
+            let res = ffmpeg_runner.run(
                 input,
                 &tmp.to_string_lossy(),
                 Arc::clone(&processes),
@@ -229,9 +232,7 @@ pub fn run(
         }
 
         // Fallback — let ffmpeg try. Covers ttml/vtt/ass/ssa on either side.
-        _ => run_ffmpeg(
-            window,
-            job_id,
+        _ => ffmpeg_runner.run(
             input,
             output,
             Arc::clone(&processes),
@@ -241,13 +242,84 @@ pub fn run(
 
     result?;
 
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 100.0,
-            message: "Done".to_string(),
-        },
-    );
+    progress(ProgressEvent::Done);
     Ok(())
+}
+
+/// FfmpegRunner backed by the canonical `operations::run_ffmpeg`. Lives
+/// in `run()` only — anything that touches a `&Window` stays inside the
+/// wrapper.
+struct WindowFfmpegRunner<'a> {
+    window: &'a Window,
+    job_id: String,
+}
+
+impl FfmpegRunner for WindowFfmpegRunner<'_> {
+    fn run(
+        &mut self,
+        input: &str,
+        output: &str,
+        processes: Arc<Mutex<HashMap<String, Child>>>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let args = vec![
+            "-y".to_string(),
+            "-i".to_string(),
+            input.to_string(),
+            output.to_string(),
+        ];
+        op_run_ffmpeg(self.window, &self.job_id, &args, None, processes, cancelled)
+    }
+}
+
+pub fn run(
+    window: &Window,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    opts: &ConvertOptions,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let job_id_owned = job_id.to_string();
+    let win = window.clone();
+    let mut emit = move |ev: ProgressEvent| {
+        let payload = match ev {
+            ProgressEvent::Started => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: "Converting subtitle…".to_string(),
+            },
+            ProgressEvent::Phase(msg) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: msg,
+            },
+            ProgressEvent::Percent(p) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: (p * 100.0).clamp(0.0, 100.0),
+                message: String::new(),
+            },
+            ProgressEvent::Done => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 100.0,
+                message: "Done".to_string(),
+            },
+        };
+        let _ = win.emit("job-progress", payload);
+    };
+    let mut runner = WindowFfmpegRunner {
+        window,
+        job_id: job_id.to_string(),
+    };
+    convert(
+        input,
+        output,
+        opts,
+        &mut emit,
+        &mut runner,
+        processes,
+        cancelled,
+        job_id,
+    )
 }

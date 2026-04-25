@@ -45,3 +45,16 @@ pub type ProgressFn<'a> = &'a mut dyn FnMut(ProgressEvent);
 pub fn noop_progress() -> impl FnMut(ProgressEvent) {
     |_event: ProgressEvent| {}
 }
+
+// Convention for refactored `convert(...)` signatures (TASK-2 onward):
+//
+//   - Pure-Rust modules accept `(input, output, opts, progress, &cancelled)`.
+//   - Modules that spawn external processes additionally accept the shared
+//     `processes: Arc<Mutex<HashMap<String, Child>>>` map. These are
+//     `std` types (no `tauri::*`), so tests can construct them with
+//     `Arc::new(Mutex::new(HashMap::new()))`.
+//   - When a shell-out helper requires a `&Window` (e.g. `operations::run_ffmpeg`),
+//     the Tauri-coupled call is hidden behind a small trait object passed
+//     into `convert()`. The Tauri wrapper supplies the real implementation;
+//     tests can pass a no-op trait impl when they only exercise pure paths.
+//     See `convert::subtitle::FfmpegRunner` for the established pattern.

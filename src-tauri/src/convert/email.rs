@@ -5,25 +5,25 @@
 //! eml ↔ mbox. `.msg` (Outlook binary) is deferred and returns a clear
 //! error if requested as output.
 
+use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{ConvertOptions, JobProgress};
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tauri::{Emitter, Window};
 
-pub fn run(
-    window: &Window,
-    job_id: &str,
+/// Pure conversion. Used directly by tests and any future non-Tauri caller.
+/// The `cancelled` flag is accepted for signature parity with other modules
+/// but is not consulted — email conversions are instant and have no
+/// long-running step to interrupt.
+pub fn convert(
     input_path: &str,
     output_path: &str,
     opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    _cancelled: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 0.0,
-            message: "Converting email…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Started);
 
     let in_ext = Path::new(input_path)
         .extension()
@@ -46,15 +46,46 @@ pub fn run(
 
     std::fs::write(output_path, output).map_err(|e| e.to_string())?;
 
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 100.0,
-            message: "Done".to_string(),
-        },
-    );
+    progress(ProgressEvent::Done);
     Ok(())
+}
+
+pub fn run(
+    window: &Window,
+    job_id: &str,
+    input_path: &str,
+    output_path: &str,
+    opts: &ConvertOptions,
+) -> Result<(), String> {
+    let job_id_owned = job_id.to_string();
+    let win = window.clone();
+    let mut emit = move |ev: ProgressEvent| {
+        let payload = match ev {
+            ProgressEvent::Started => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: "Converting email…".to_string(),
+            },
+            ProgressEvent::Phase(msg) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: msg,
+            },
+            ProgressEvent::Percent(p) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: (p * 100.0).clamp(0.0, 100.0),
+                message: String::new(),
+            },
+            ProgressEvent::Done => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 100.0,
+                message: "Done".to_string(),
+            },
+        };
+        let _ = win.emit("job-progress", payload);
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    convert(input_path, output_path, opts, &mut emit, &cancelled)
 }
 
 pub fn eml_to_mbox(raw: &str) -> String {
