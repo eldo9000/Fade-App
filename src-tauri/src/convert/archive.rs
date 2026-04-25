@@ -395,6 +395,17 @@ fn repack_archive(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
+    if output_path.ends_with(".tar.gz") || output_path.ends_with(".tar.xz") {
+        return repack_tar_compressed(
+            progress,
+            job_id,
+            src_dir,
+            output_path,
+            opts,
+            processes,
+            cancelled,
+        );
+    }
     match out_ext {
         "iso" => repack_iso(progress, job_id, src_dir, output_path, processes, cancelled),
         "dmg" => repack_dmg(progress, job_id, src_dir, output_path, processes, cancelled),
@@ -408,6 +419,177 @@ fn repack_archive(
             cancelled,
         ),
     }
+}
+
+/// Two-step repack for `.tar.gz` and `.tar.xz` outputs.
+///
+/// Modern 7zz rejects single-step creation of compressed tars with
+/// `E_INVALIDARG`. The workaround is:
+///   Step 1: `7zz a /tmp/fade_tar_stage_<job_id>.tar <src_dir>/*`
+///   Step 2: `7zz a <output_path> /tmp/fade_tar_stage_<job_id>.tar`
+///
+/// Compression level (`-mx=N`) is applied to step 2 only; step 1 creates
+/// an uncompressed tar. The intermediate file is always deleted after step 2.
+#[allow(clippy::too_many_arguments)]
+fn repack_tar_compressed(
+    progress: ProgressFn<'_>,
+    job_id: &str,
+    src_dir: &str,
+    output_path: &str,
+    opts: &ConvertOptions,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: &Arc<AtomicBool>,
+) -> ConvertResult {
+    let tmp_tar = format!("/tmp/fade_tar_stage_{}.tar", job_id);
+
+    // ── Step 1: create uncompressed .tar ─────────────────────────────────────
+    let step1_args: Vec<String> = vec!["a".to_string(), tmp_tar.clone(), format!("{}/*", src_dir)];
+    let mut child = match Command::new(seven_zip_bin())
+        .args(&step1_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return ConvertResult::Error(format!("7z not found: {e}")),
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    {
+        let mut map = processes.lock();
+        map.insert(job_id.to_string(), child);
+    }
+
+    let stderr_thread = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        if let Some(s) = stderr {
+            let reader = BufReader::new(s);
+            for line in reader.lines().map_while(Result::ok) {
+                lines.push(line);
+            }
+        }
+        lines.join("\n")
+    });
+
+    if let Some(stdout) = stdout {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+            if let Some(pct) = parse_7z_percent(&line) {
+                // Step 1 occupies 0–50 % of the overall job.
+                progress(ProgressEvent::Percent(pct / 2.0));
+                progress(ProgressEvent::Phase(format!("Packing tar {}%", pct as u32)));
+            }
+        }
+    }
+
+    let error_output = stderr_thread.join().unwrap_or_default();
+    let child_opt = {
+        let mut map = processes.lock();
+        map.remove(job_id)
+    };
+    let success = match child_opt {
+        Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+        None => false,
+    };
+
+    if cancelled.load(Ordering::SeqCst) {
+        let _ = std::fs::remove_file(&tmp_tar);
+        return ConvertResult::Cancelled;
+    }
+    if !success {
+        let _ = std::fs::remove_file(&tmp_tar);
+        return ConvertResult::Error(if error_output.trim().is_empty() {
+            "7z tar creation failed".to_string()
+        } else {
+            truncate_stderr(&error_output)
+        });
+    }
+
+    // ── Between steps: check cancellation ────────────────────────────────────
+    if cancelled.load(Ordering::SeqCst) {
+        let _ = std::fs::remove_file(&tmp_tar);
+        return ConvertResult::Cancelled;
+    }
+
+    // ── Step 2: compress the .tar into the final output ───────────────────────
+    let mut step2_args: Vec<String> =
+        vec!["a".to_string(), output_path.to_string(), tmp_tar.clone()];
+    if let Some(level) = opts.archive_compression {
+        step2_args.push(format!("-mx={}", level.min(9)));
+    }
+    let mut child2 = match Command::new(seven_zip_bin())
+        .args(&step2_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_tar);
+            return ConvertResult::Error(format!("7z not found: {e}"));
+        }
+    };
+
+    let stdout2 = child2.stdout.take();
+    let stderr2 = child2.stderr.take();
+    {
+        let mut map = processes.lock();
+        map.insert(job_id.to_string(), child2);
+    }
+
+    let stderr_thread2 = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        if let Some(s) = stderr2 {
+            let reader = BufReader::new(s);
+            for line in reader.lines().map_while(Result::ok) {
+                lines.push(line);
+            }
+        }
+        lines.join("\n")
+    });
+
+    if let Some(stdout2) = stdout2 {
+        let reader = BufReader::new(stdout2);
+        for line in reader.lines().map_while(Result::ok) {
+            if cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+            if let Some(pct) = parse_7z_percent(&line) {
+                // Step 2 occupies 50–100 % of the overall job.
+                progress(ProgressEvent::Percent(50.0 + pct / 2.0));
+                progress(ProgressEvent::Phase(format!("Compressing {}%", pct as u32)));
+            }
+        }
+    }
+
+    let error_output2 = stderr_thread2.join().unwrap_or_default();
+    let child_opt2 = {
+        let mut map = processes.lock();
+        map.remove(job_id)
+    };
+    let success2 = match child_opt2 {
+        Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+        None => false,
+    };
+
+    // Always clean up the intermediate tar.
+    let _ = std::fs::remove_file(&tmp_tar);
+
+    if cancelled.load(Ordering::SeqCst) {
+        return ConvertResult::Cancelled;
+    }
+    if !success2 {
+        return ConvertResult::Error(if error_output2.trim().is_empty() {
+            "7z tar compression failed".to_string()
+        } else {
+            truncate_stderr(&error_output2)
+        });
+    }
+    ConvertResult::Done
 }
 
 fn repack_with_7z(
