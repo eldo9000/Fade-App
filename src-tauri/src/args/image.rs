@@ -175,7 +175,7 @@ fn format_specific_args(opts: &ConvertOptions) -> Vec<String> {
         "avif" => {
             if let Some(s) = opts.avif_speed {
                 args.push("-define".to_string());
-                args.push(format!("heic:speed={}", s));
+                args.push(format!("heic:speed={}", s.min(9)));
             }
             if let Some(chroma) = opts.avif_chroma.as_deref() {
                 if let Some(sf) = sampling_factor(chroma) {
@@ -355,6 +355,17 @@ mod tests {
         let args = build_image_magick_args("in.png", "out.avif", &opts);
         assert!(find_pair(&args, "-define", "heic:speed=6"));
         assert!(find_pair(&args, "-sampling-factor", "4:2:2"));
+    }
+
+    #[test]
+    fn image_args_avif_speed_clamp_at_9() {
+        let opts = ConvertOptions {
+            avif_speed: Some(10),
+            ..opts_for("avif")
+        };
+        let args = build_image_magick_args("in.png", "out.avif", &opts);
+        assert!(find_pair(&args, "-define", "heic:speed=9"));
+        assert!(!find_pair(&args, "-define", "heic:speed=10"));
     }
 
     #[test]

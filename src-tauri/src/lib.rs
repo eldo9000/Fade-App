@@ -266,7 +266,7 @@ pub struct ConvertOptions {
     pub tiff_color_mode: Option<String>,  // "rgb" | "cmyk" | "gray"
     pub webp_lossless: Option<bool>,
     pub webp_method: Option<u32>,    // 0-6
-    pub avif_speed: Option<u32>,     // 0-10
+    pub avif_speed: Option<u32>,     // 0–9; clamped at 9 (libheif limit)
     pub avif_chroma: Option<String>, // "420" | "422" | "444"
     pub bmp_bit_depth: Option<u32>,  // 8 | 16 | 24 | 32
 

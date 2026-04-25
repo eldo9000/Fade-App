@@ -235,13 +235,13 @@
     </fieldset>
 
   {:else if options.output_format === 'avif'}
-    <fieldset data-tooltip="0 slowest / best · 10 fastest / worst">
+    <fieldset data-tooltip="0 slowest / best · 9 fastest / worst">
       <legend class="fade-label">Speed — {options.avif_speed}</legend>
-      <input type="range" min="0" max="10" step="1"
+      <input type="range" min="0" max="9" step="1"
         bind:value={options.avif_speed}
         class="fade-range"
-        style="--fade-range-pct:{(options.avif_speed-0)/(10-0)*100}%" />
-      <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>10 fastest</span></div>
+        style="--fade-range-pct:{(options.avif_speed-0)/(9-0)*100}%" />
+      <div class="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1"><span>0 best</span><span>9 fastest</span></div>
     </fieldset>
     <fieldset data-tooltip="4:2:0 smallest file · 4:2:2 broadcast quality · 4:4:4 full chroma for text / graphics">
       <legend class="fade-label">Chroma</legend>
