@@ -575,6 +575,32 @@ fn video_matrix() {
                 ..Default::default()
             },
         },
+        Spec {
+            name: "mp4_h264_yuv422p_high",
+            ext: "mp4",
+            opts: || ConvertOptions {
+                output_format: "mp4".into(),
+                codec: Some("h264".into()),
+                crf: Some(28),
+                preset: Some("ultrafast".into()),
+                pix_fmt: Some("yuv422p".into()),
+                h264_profile: Some("high".into()),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_h264_yuv444p_high",
+            ext: "mp4",
+            opts: || ConvertOptions {
+                output_format: "mp4".into(),
+                codec: Some("h264".into()),
+                crf: Some(28),
+                preset: Some("ultrafast".into()),
+                pix_fmt: Some("yuv444p".into()),
+                h264_profile: Some("high".into()),
+                ..Default::default()
+            },
+        },
     ];
 
     let mut cases = Vec::new();

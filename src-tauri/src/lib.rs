@@ -230,21 +230,21 @@ pub struct ConvertOptions {
     // ── Format-specific video controls ──
     pub crf: Option<u32>,                  // 0-51
     pub preset: Option<String>,            // "ultrafast" | "fast" | "medium" | "slow" | "veryslow"
-    pub h264_profile: Option<String>,      // "baseline" | "main" | "high"
-    pub pix_fmt: Option<String>,           // "yuv420p" | "yuv422p" | "yuv444p"
-    pub tune: Option<String>,              // "none" | "film" | "animation" | "grain"
-    pub frame_rate: Option<String>,        // "original" | "24" | "25" | "30" | "60"
+    pub h264_profile: Option<String>, // "baseline" | "main" | "high". Auto-promoted to high422/high444 when pix_fmt is yuv422p/yuv444p.
+    pub pix_fmt: Option<String>,      // "yuv420p" | "yuv422p" | "yuv444p"
+    pub tune: Option<String>,         // "none" | "film" | "animation" | "grain"
+    pub frame_rate: Option<String>,   // "original" | "24" | "25" | "30" | "60"
     pub webm_bitrate_mode: Option<String>, // "crf" | "cbr" | "cvbr"
-    pub webm_video_bitrate: Option<u32>,   // kbps, cbr/cvbr only
-    pub vp9_speed: Option<u32>,            // 0-5
-    pub av1_speed: Option<u32>,            // 0-10
-    pub mkv_subtitle: Option<String>,      // "none" | "copy" | "burn"
-    pub avi_video_bitrate: Option<u32>,    // kbps
-    pub gif_width: Option<String>,         // "original" | "320" | "480" | "640"
-    pub gif_fps: Option<String>,           // "original" | "5" | "10" | "15"
-    pub gif_loop: Option<String>,          // "infinite" | "once" | "none"
-    pub gif_palette_size: Option<u32>,     // 32 | 64 | 128 | 256
-    pub gif_dither: Option<String>,        // "none" | "bayer" | "floyd"
+    pub webm_video_bitrate: Option<u32>, // kbps, cbr/cvbr only
+    pub vp9_speed: Option<u32>,       // 0-5
+    pub av1_speed: Option<u32>,       // 0-10
+    pub mkv_subtitle: Option<String>, // "none" | "copy" | "burn"
+    pub avi_video_bitrate: Option<u32>, // kbps
+    pub gif_width: Option<String>,    // "original" | "320" | "480" | "640"
+    pub gif_fps: Option<String>,      // "original" | "5" | "10" | "15"
+    pub gif_loop: Option<String>,     // "infinite" | "once" | "none"
+    pub gif_palette_size: Option<u32>, // 32 | 64 | 128 | 256
+    pub gif_dither: Option<String>,   // "none" | "bayer" | "floyd"
 
     // ── Professional video codec controls ──
     pub hap_format: Option<String>, // "hap" | "hap_alpha" | "hap_q" | "hap_q_alpha"

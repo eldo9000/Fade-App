@@ -254,6 +254,27 @@ pub fn ffmpeg_video_codec_args(codec: &str) -> Vec<String> {
     }
 }
 
+/// Map a user-selected H.264 profile to the effective ffmpeg profile string,
+/// auto-promoting when the chosen pix_fmt requires a higher-chroma profile.
+///
+/// - `yuv422p` requires `high422`; any user profile is silently promoted.
+/// - `yuv444p` requires `high444`; any user profile is silently promoted.
+/// - `yuv420p` (or unset) passes the user's profile through unchanged.
+///
+/// The user's `ConvertOptions::h264_profile` value is never mutated — only
+/// the emitted ffmpeg arg differs.
+fn h264_effective_profile<'a>(profile: Option<&str>, pix_fmt: Option<&str>) -> &'a str {
+    match pix_fmt {
+        Some("yuv422p") => "high422",
+        Some("yuv444p") => "high444",
+        _ => match profile {
+            Some("baseline") => "baseline",
+            Some("main") => "main",
+            _ => "high",
+        },
+    }
+}
+
 /// Emit codec-specific quality / preset / profile / tune / pix_fmt flags
 /// based on user options. Skips everything for `copy`.
 fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
@@ -287,8 +308,10 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             }
             let preset = opts.preset.as_deref().unwrap_or("medium");
             out.extend(["-preset".to_string(), preset.to_string()]);
-            if let Some(p) = opts.h264_profile.as_deref() {
-                out.extend(["-profile:v".to_string(), p.to_string()]);
+            if opts.h264_profile.is_some() || opts.pix_fmt.is_some() {
+                let effective =
+                    h264_effective_profile(opts.h264_profile.as_deref(), opts.pix_fmt.as_deref());
+                out.extend(["-profile:v".to_string(), effective.to_string()]);
             }
             if let Some(t) = opts.tune.as_deref() {
                 if t != "none" {
@@ -1111,5 +1134,67 @@ mod tests {
                 fmt
             );
         }
+    }
+
+    // ── H.264 profile auto-promotion ────────────────────────────────────────
+
+    #[test]
+    fn h264_profile_promotes_to_high422_for_yuv422p() {
+        // baseline profile + yuv422p → emitted profile:v must be high422
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            h264_profile: Some("baseline".into()),
+            pix_fmt: Some("yuv422p".into()),
+            crf: Some(28),
+            preset: Some("ultrafast".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(
+            find_pair(&args, "-profile:v", "high422"),
+            "expected -profile:v high422 but got: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn h264_profile_promotes_to_high444_for_yuv444p() {
+        // main profile + yuv444p → emitted profile:v must be high444
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            h264_profile: Some("main".into()),
+            pix_fmt: Some("yuv444p".into()),
+            crf: Some(28),
+            preset: Some("ultrafast".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(
+            find_pair(&args, "-profile:v", "high444"),
+            "expected -profile:v high444 but got: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn h264_profile_passthrough_for_yuv420p() {
+        // high profile + yuv420p → no promotion, emitted as high
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h264".into()),
+            h264_profile: Some("high".into()),
+            pix_fmt: Some("yuv420p".into()),
+            crf: Some(28),
+            preset: Some("ultrafast".into()),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
+        assert!(
+            find_pair(&args, "-profile:v", "high"),
+            "expected -profile:v high but got: {:?}",
+            args
+        );
     }
 }
