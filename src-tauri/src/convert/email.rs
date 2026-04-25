@@ -57,7 +57,7 @@ pub fn run(
     Ok(())
 }
 
-fn eml_to_mbox(raw: &str) -> String {
+pub fn eml_to_mbox(raw: &str) -> String {
     // Mbox format uses `From <sender> <date>` postmark lines. We emit a
     // minimal, parseable one; downstream mbox readers only require the
     // `From ` prefix + a date-ish trailer.
@@ -84,7 +84,7 @@ fn eml_to_mbox(raw: &str) -> String {
     out
 }
 
-fn mbox_to_eml(raw: &str) -> Result<String, String> {
+pub fn mbox_to_eml(raw: &str) -> Result<String, String> {
     let mut first: Option<Vec<&str>> = None;
     let mut current: Vec<&str> = Vec::new();
     let mut started = false;

@@ -48,13 +48,60 @@ Mounts each Svelte options panel in real Chromium and exercises every major cont
 cargo test --manifest-path src-tauri/Cargo.toml --test conversions -- --include-ignored
 ```
 
-Generates small fixture files on the fly, runs real conversions through the Rust backend, asserts output files exist. 4 tests, ~5–20 seconds depending on video encoding speed.
+Generates small fixture files on the fly, runs real conversions through the Rust backend, asserts output files exist. ~8 tests, ~5–20 seconds depending on video encoding speed.
 
 **What's covered:**
 - Image: PNG → WebP (via ImageMagick)
 - Video: MP4 → WebM (via ffmpeg, marked `#[ignore]` to keep default `cargo test` fast)
-- Audio: WAV → MP3 (via ffmpeg)
+- Audio: WAV → MP3, AAC, M4A (ALAC 24-bit), Opus, OGG (via ffmpeg)
 - Data: CSV → JSON (pure Rust, no external tool)
+
+### Conversion matrix sweep
+
+```bash
+# Image + audio + data (fast)
+cargo test --manifest-path src-tauri/Cargo.toml --test matrix -- --nocapture
+
+# Plus video (slower, real ffmpeg encodes)
+cargo test --manifest-path src-tauri/Cargo.toml --test matrix \
+  -- --include-ignored --nocapture
+```
+
+Sweeps every live output format (and key settings variants per format) through Fade's real arg builders, writes outputs to `test-results/conversion-matrix/<category>/`, and prints a pass/fail table per category. Soft-fails — collects every failure and reports them all at the end rather than stopping on the first.
+
+**Inspecting results:** open `test-results/conversion-matrix/` after a run. Every successful conversion produces a named output file (`png_to_webp_lossless.webp`, `wav_to_mp3_vbr_q2.mp3`, etc.). A missing file means a failed conversion — investigate manually.
+
+**What's covered:**
+- Image (`image_matrix`) — PNG fixture → JPEG (default, q25, q95), PNG, WebP (default, lossless), TIFF, BMP, AVIF
+- Audio (`audio_matrix`) — WAV fixture → MP3 (default, CBR 192, VBR q2), WAV, FLAC (default, max compression), OGG VBR q5, AAC 192, Opus VBR 128, M4A (AAC, ALAC 24-bit)
+- Data (`data_matrix`) — CSV fixture → JSON, YAML, XML, TSV, CSV
+- Video (`video_matrix`, `#[ignore]`) — MP4 fixture → MP4 H.264, MP4 H.265, WebM VP9, MKV FFV1, MOV ProRes, MOV MJPEG, AVI Xvid, GIF
+
+The output folder for each category is wiped at the start of its test so stale files from previous runs cannot mask a new failure. `test-results/` is gitignored.
+
+### Full permutation sweep (diagnostic)
+
+```bash
+# Everything (slow — hundreds of cases, mostly video)
+cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+  -- --include-ignored --nocapture
+
+# One category at a time
+cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+  image_full -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+  audio_full -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+  data_full  -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+  video_full -- --ignored --nocapture
+```
+
+**Difference from `matrix`:** the matrix is a smoke test — every case must pass. The full sweep is a *diagnostic* — it Cartesian-products every option per format, expects some combinations to be invalid by design, and never fails the test runner. Read the printed table to find which combinations broke. Outputs land in `test-results/full-sweep/<category>/`.
+
+**Approximate case counts:** image ~140, audio ~110, data ~40, video ~400 (H.264 alone is 225 cases — full preset × profile × pix_fmt × tune Cartesian). Continuous ranges (quality 0–100, CRF 0–51, bitrate kbps) are sampled at three points; enums and small integer ranges get full coverage.
+
+Use this before a release to spot-check that no encoder option is silently broken.
 
 ### All tests (vitest unit tests + Playwright CT)
 

@@ -61,7 +61,7 @@ pub fn run(
     Ok(())
 }
 
-fn strip_md(raw: &str) -> String {
+pub fn strip_md(raw: &str) -> String {
     let mut txt = raw.to_string();
     // Code fences
     let mut result = String::new();
@@ -162,7 +162,7 @@ fn strip_md(raw: &str) -> String {
     txt.trim().to_string()
 }
 
-fn html_to_text(html: &str) -> String {
+pub fn html_to_text(html: &str) -> String {
     let mut out = String::new();
     let mut in_tag = false;
     for ch in html.chars() {
@@ -193,7 +193,7 @@ fn html_to_text(html: &str) -> String {
     lines.join("\n")
 }
 
-fn html_to_md(html: &str) -> String {
+pub fn html_to_md(html: &str) -> String {
     let mut out = html.to_string();
     // Headings
     for n in (1u8..=6).rev() {

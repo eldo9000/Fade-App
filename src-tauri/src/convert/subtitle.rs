@@ -38,7 +38,7 @@ fn ext_of(path: &str) -> String {
 /// Same cue in SBV:
 ///   0:00:01.200,0:00:03.400
 ///   Hello world
-fn srt_to_sbv(srt: &str) -> String {
+pub fn srt_to_sbv(srt: &str) -> String {
     let mut out = String::new();
     for line in srt.lines() {
         let trimmed = line.trim();
@@ -68,7 +68,7 @@ fn srt_to_sbv(srt: &str) -> String {
 }
 
 /// Hand-rolled SBV → SRT. Inverse of the above; we invent sequence numbers.
-fn sbv_to_srt(sbv: &str) -> String {
+pub fn sbv_to_srt(sbv: &str) -> String {
     let mut out = String::new();
     let mut seq = 1u32;
     // Split into blank-line-separated blocks.

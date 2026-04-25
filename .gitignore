@@ -5,3 +5,6 @@ src-tauri/target/
 *.log
 .cargo/
 .claude/
+test-results/
+playwright-report/
+playwright/.cache/
