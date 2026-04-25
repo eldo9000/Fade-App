@@ -731,44 +731,44 @@ fn dnxhr_cases() -> Vec<Case> {
 }
 
 fn other_video_cases() -> Vec<Case> {
-    let mut v = Vec::new();
-
-    v.push(Case {
-        name: "ffv1_default".into(),
-        ext: "mkv",
-        opts: ConvertOptions {
-            output_format: "mkv".into(),
-            codec: Some("ffv1".into()),
-            ..Default::default()
+    let mut v = vec![
+        Case {
+            name: "ffv1_default".into(),
+            ext: "mkv",
+            opts: ConvertOptions {
+                output_format: "mkv".into(),
+                codec: Some("ffv1".into()),
+                ..Default::default()
+            },
         },
-    });
-    v.push(Case {
-        name: "mjpeg_default".into(),
-        ext: "mov",
-        opts: ConvertOptions {
-            output_format: "mov".into(),
-            codec: Some("mjpeg".into()),
-            ..Default::default()
+        Case {
+            name: "mjpeg_default".into(),
+            ext: "mov",
+            opts: ConvertOptions {
+                output_format: "mov".into(),
+                codec: Some("mjpeg".into()),
+                ..Default::default()
+            },
         },
-    });
-    v.push(Case {
-        name: "rawvideo_default".into(),
-        ext: "mov",
-        opts: ConvertOptions {
-            output_format: "mov".into(),
-            codec: Some("rawvideo".into()),
-            ..Default::default()
+        Case {
+            name: "rawvideo_default".into(),
+            ext: "mov",
+            opts: ConvertOptions {
+                output_format: "mov".into(),
+                codec: Some("rawvideo".into()),
+                ..Default::default()
+            },
         },
-    });
-    v.push(Case {
-        name: "qtrle_default".into(),
-        ext: "mov",
-        opts: ConvertOptions {
-            output_format: "mov".into(),
-            codec: Some("qtrle".into()),
-            ..Default::default()
+        Case {
+            name: "qtrle_default".into(),
+            ext: "mov",
+            opts: ConvertOptions {
+                output_format: "mov".into(),
+                codec: Some("qtrle".into()),
+                ..Default::default()
+            },
         },
-    });
+    ];
 
     for fmt in ["hap", "hap_alpha", "hap_q", "hap_q_alpha"] {
         v.push(Case {
