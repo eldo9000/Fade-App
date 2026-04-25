@@ -1,3 +1,4 @@
+use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobDone, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -45,6 +46,128 @@ fn ext_of(path: &str) -> String {
         .to_lowercase()
 }
 
+/// Resolve the extract destination folder used by archive `extract` mode.
+/// Public so the Tauri wrapper can compute it and emit `job-done` with the
+/// real folder path after `convert()` succeeds.
+pub fn resolve_extract_folder(input_path: &str, opts: &ConvertOptions) -> String {
+    let p = Path::new(input_path);
+    let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+    let parent = p
+        .parent()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    let out_dir = opts.output_dir.as_deref().unwrap_or(&parent);
+    format!("{}/{}_extracted", out_dir, stem)
+}
+
+/// Pure conversion. Used directly by tests and any future non-Tauri caller.
+///
+/// For `archive_operation == "extract"`, `output_path` is treated as the
+/// destination directory for extraction. For repack ("convert") mode it is
+/// the output archive file path. The caller is responsible for resolving
+/// the extract folder via [`resolve_extract_folder`] when applicable.
+///
+/// `job_id` is used to register the spawned external process(es) in
+/// `processes` so cancellation can reach them.
+#[allow(clippy::too_many_arguments)]
+pub fn convert(
+    input_path: &str,
+    output_path: &str,
+    opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    job_id: &str,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let operation = opts.archive_operation.as_deref().unwrap_or("convert");
+    let in_ext = ext_of(input_path);
+    let out_ext = ext_of(output_path);
+
+    // Repack guards: some formats are extract-only or platform-locked.
+    if operation != "extract" {
+        if out_ext == "rar" {
+            return Err("RAR creation is not supported (proprietary) — try 7z or zip".to_string());
+        }
+        if out_ext == "dmg" && !cfg!(target_os = "macos") {
+            return Err("DMG creation is macOS-only".to_string());
+        }
+    }
+
+    progress(ProgressEvent::Started);
+
+    if operation == "extract" {
+        match extract_archive(
+            progress,
+            job_id,
+            input_path,
+            &in_ext,
+            output_path,
+            processes,
+            cancelled,
+            1.0,
+        ) {
+            ConvertResult::Done => {
+                progress(ProgressEvent::Done);
+                return Ok(());
+            }
+            ConvertResult::Cancelled => return Err("__cancelled__".to_string()),
+            ConvertResult::Error(msg) => return Err(msg),
+            other => return Err(format!("unexpected extract result: {other:?}")),
+        }
+    }
+
+    // Convert: extract to temp dir, repack to new format.
+    let tmp_dir = format!("/tmp/fade_archive_{}", job_id);
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+
+    let extract_res = extract_archive(
+        progress,
+        job_id,
+        input_path,
+        &in_ext,
+        &tmp_dir,
+        processes.clone(),
+        cancelled,
+        0.5,
+    );
+    match extract_res {
+        ConvertResult::Done => {}
+        ConvertResult::Cancelled => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err("__cancelled__".to_string());
+        }
+        ConvertResult::Error(msg) => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(msg);
+        }
+        other => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!("unexpected extract result: {other:?}"));
+        }
+    }
+
+    let repack_res = repack_archive(
+        progress,
+        job_id,
+        &tmp_dir,
+        output_path,
+        &out_ext,
+        opts,
+        processes,
+        cancelled,
+    );
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    match repack_res {
+        ConvertResult::Done => {
+            progress(ProgressEvent::Done);
+            Ok(())
+        }
+        ConvertResult::Cancelled => Err("__cancelled__".to_string()),
+        ConvertResult::Error(msg) => Err(msg),
+        other => Err(format!("unexpected repack result: {other:?}")),
+    }
+}
+
 pub fn run(
     window: &Window,
     job_id: &str,
@@ -54,118 +177,88 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> ConvertResult {
+    let job_id_owned = job_id.to_string();
+    let win = window.clone();
     let operation = opts.archive_operation.as_deref().unwrap_or("convert");
-    let in_ext = ext_of(input_path);
-    let out_ext = ext_of(output_path);
-
-    // Repack guards: some formats are extract-only or platform-locked.
-    if operation != "extract" {
-        if out_ext == "rar" {
-            return ConvertResult::Error(
-                "RAR creation is not supported (proprietary) — try 7z or zip".to_string(),
-            );
-        }
-        if out_ext == "dmg" && !cfg!(target_os = "macos") {
-            return ConvertResult::Error("DMG creation is macOS-only".to_string());
-        }
-    }
-
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 0.0,
-            message: if operation == "extract" {
-                "Extracting…".to_string()
-            } else {
-                "Repacking…".to_string()
+    let initial_message = if operation == "extract" {
+        "Extracting…".to_string()
+    } else {
+        "Repacking…".to_string()
+    };
+    let mut emit = move |ev: ProgressEvent| {
+        let payload = match ev {
+            ProgressEvent::Started => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: initial_message.clone(),
             },
-        },
-    );
-
-    if operation == "extract" {
-        let p = Path::new(input_path);
-        let stem = p.file_stem().unwrap_or_default().to_string_lossy();
-        let parent = p
-            .parent()
-            .map(|d| d.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
-        let out_dir = opts.output_dir.as_deref().unwrap_or(&parent);
-        let extract_folder = format!("{}/{}_extracted", out_dir, stem);
-
-        match extract_archive(
-            window,
-            job_id,
-            input_path,
-            &in_ext,
-            &extract_folder,
-            processes.clone(),
-            cancelled.clone(),
-            1.0,
-        ) {
-            ConvertResult::Done => {}
-            other => return other,
-        }
-
-        let _ = window.emit(
-            "job-done",
-            JobDone {
-                job_id: job_id.to_string(),
-                output_path: extract_folder,
+            ProgressEvent::Phase(msg) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: msg,
             },
-        );
-        return ConvertResult::DoneEmitted;
-    }
+            ProgressEvent::Percent(p) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: p.clamp(0.0, 100.0),
+                message: String::new(),
+            },
+            ProgressEvent::Done => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 100.0,
+                message: "Done".to_string(),
+            },
+        };
+        let _ = win.emit("job-progress", payload);
+    };
 
-    // Convert: extract to temp dir, repack to new format.
-    let tmp_dir = format!("/tmp/fade_archive_{}", job_id);
-    if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
-        return ConvertResult::Error(e.to_string());
-    }
+    let extract_target = if opts.archive_operation.as_deref() == Some("extract") {
+        Some(resolve_extract_folder(input_path, opts))
+    } else {
+        None
+    };
+    let effective_output = extract_target.as_deref().unwrap_or(output_path);
 
-    let extract_res = extract_archive(
-        window,
-        job_id,
+    let result = convert(
         input_path,
-        &in_ext,
-        &tmp_dir,
-        processes.clone(),
-        cancelled.clone(),
-        0.5,
-    );
-    match extract_res {
-        ConvertResult::Done => {}
-        other => {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-            return other;
-        }
-    }
-
-    let repack_res = repack_archive(
-        window,
-        job_id,
-        &tmp_dir,
-        output_path,
-        &out_ext,
+        effective_output,
         opts,
+        &mut emit,
+        job_id,
         processes,
-        cancelled.clone(),
+        &cancelled,
     );
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-    repack_res
+
+    match result {
+        Ok(()) => {
+            if let Some(folder) = extract_target {
+                let _ = window.emit(
+                    "job-done",
+                    JobDone {
+                        job_id: job_id.to_string(),
+                        output_path: folder,
+                    },
+                );
+                ConvertResult::DoneEmitted
+            } else {
+                ConvertResult::Done
+            }
+        }
+        Err(msg) if msg == "__cancelled__" => ConvertResult::Cancelled,
+        Err(msg) => ConvertResult::Error(msg),
+    }
 }
 
 /// Extract `input_path` into `dest_dir`. `progress_scale` is how much of the
 /// overall job this step represents (1.0 for extract-only, 0.5 for convert).
 #[allow(clippy::too_many_arguments)]
 fn extract_archive(
-    window: &Window,
+    progress: ProgressFn<'_>,
     job_id: &str,
     input_path: &str,
     in_ext: &str,
     dest_dir: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
     progress_scale: f32,
 ) -> ConvertResult {
     // For rar/cbr, prefer `unar` (libre, handles modern RAR5 reliably);
@@ -200,14 +293,8 @@ fn extract_archive(
             }
             lines.join("\n")
         });
-        let _ = window.emit(
-            "job-progress",
-            JobProgress {
-                job_id: job_id.to_string(),
-                percent: 25.0 * progress_scale,
-                message: "Extracting…".to_string(),
-            },
-        );
+        progress(ProgressEvent::Percent(25.0 * progress_scale));
+        progress(ProgressEvent::Phase("Extracting…".to_string()));
         let error_output = stderr_thread.join().unwrap_or_default();
         let child_opt = {
             let mut map = processes.lock();
@@ -269,14 +356,8 @@ fn extract_archive(
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
             if let Some(pct) = parse_7z_percent(&line) {
-                let _ = window.emit(
-                    "job-progress",
-                    JobProgress {
-                        job_id: job_id.to_string(),
-                        percent: pct * progress_scale,
-                        message: format!("Extracting {}%", pct as u32),
-                    },
-                );
+                progress(ProgressEvent::Percent(pct * progress_scale));
+                progress(ProgressEvent::Phase(format!("Extracting {}%", pct as u32)));
             }
         }
     }
@@ -305,20 +386,20 @@ fn extract_archive(
 
 #[allow(clippy::too_many_arguments)]
 fn repack_archive(
-    window: &Window,
+    progress: ProgressFn<'_>,
     job_id: &str,
     src_dir: &str,
     output_path: &str,
     out_ext: &str,
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
     match out_ext {
-        "iso" => repack_iso(window, job_id, src_dir, output_path, processes, cancelled),
-        "dmg" => repack_dmg(window, job_id, src_dir, output_path, processes, cancelled),
+        "iso" => repack_iso(progress, job_id, src_dir, output_path, processes, cancelled),
+        "dmg" => repack_dmg(progress, job_id, src_dir, output_path, processes, cancelled),
         _ => repack_with_7z(
-            window,
+            progress,
             job_id,
             src_dir,
             output_path,
@@ -330,13 +411,13 @@ fn repack_archive(
 }
 
 fn repack_with_7z(
-    window: &Window,
+    progress: ProgressFn<'_>,
     job_id: &str,
     src_dir: &str,
     output_path: &str,
     opts: &ConvertOptions,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
     let mut repack_args: Vec<String> = vec![
         "a".to_string(),
@@ -378,14 +459,8 @@ fn repack_with_7z(
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
             if let Some(pct) = parse_7z_percent(&line) {
-                let _ = window.emit(
-                    "job-progress",
-                    JobProgress {
-                        job_id: job_id.to_string(),
-                        percent: 50.0 + pct / 2.0,
-                        message: format!("Packing {}%", pct as u32),
-                    },
-                );
+                progress(ProgressEvent::Percent(50.0 + pct / 2.0));
+                progress(ProgressEvent::Phase(format!("Packing {}%", pct as u32)));
             }
         }
     }
@@ -413,24 +488,18 @@ fn repack_with_7z(
 }
 
 fn repack_iso(
-    window: &Window,
+    progress: ProgressFn<'_>,
     job_id: &str,
     src_dir: &str,
     output_path: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
     if !tool_in_path("xorriso") {
         return ConvertResult::Error("ISO creation requires `xorriso`.\n\nInstall with:\n  macOS:   brew install xorriso\n  Linux:   apt install xorriso  (or equivalent)".to_string());
     }
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 60.0,
-            message: "Building ISO…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Percent(60.0));
+    progress(ProgressEvent::Phase("Building ISO…".to_string()));
     let mut child = match Command::new("xorriso")
         .args([
             "-as",
@@ -487,25 +556,19 @@ fn repack_iso(
 }
 
 fn repack_dmg(
-    window: &Window,
+    progress: ProgressFn<'_>,
     job_id: &str,
     src_dir: &str,
     output_path: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
     // hdiutil is macOS-only; the caller has already gated on cfg(target_os).
     if !tool_in_path("hdiutil") {
         return ConvertResult::Error("DMG creation requires macOS `hdiutil`".to_string());
     }
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 60.0,
-            message: "Building DMG…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Percent(60.0));
+    progress(ProgressEvent::Phase("Building DMG…".to_string()));
     let mut child = match Command::new("hdiutil")
         .args([
             "create",
