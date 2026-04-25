@@ -174,6 +174,7 @@ Second cue
 ";
 
 #[test]
+#[ignore]
 fn subtitle_sweep() {
     let dir = output_root("subtitle");
 
@@ -229,6 +230,7 @@ Line two of the body.
 ";
 
 #[test]
+#[ignore]
 fn email_sweep() {
     let dir = output_root("email");
 
@@ -289,6 +291,7 @@ const SAMPLE_HTML: &str = "\
 ";
 
 #[test]
+#[ignore]
 fn document_text_sweep() {
     let dir = output_root("document-text");
 

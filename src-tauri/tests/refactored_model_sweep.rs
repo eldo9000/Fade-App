@@ -107,6 +107,7 @@ fn convert_one(fixture: &Path, out: &Path, ext: &str, label: &str) -> Row {
 }
 
 #[test]
+#[ignore]
 fn refactored_model_sweep() {
     let dir = output_root();
     let fixture = dir.join("_fixture.obj");

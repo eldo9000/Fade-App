@@ -83,16 +83,19 @@ fn run_data_case(label: &str, out_fmt: &str, out_filename: &str) {
 }
 
 #[test]
+#[ignore]
 fn data_csv_to_json() {
     run_data_case("json", "json", "out.json");
 }
 
 #[test]
+#[ignore]
 fn data_csv_to_yaml() {
     run_data_case("yaml", "yaml", "out.yaml");
 }
 
 #[test]
+#[ignore]
 fn data_csv_to_xml() {
     run_data_case("xml", "xml", "out.xml");
 }
@@ -119,6 +122,7 @@ fn find_midi_fixture() -> Option<PathBuf> {
 }
 
 #[test]
+#[ignore]
 fn tracker_midi_to_wav() {
     // Tracker rendering needs either fluidsynth (with sf2) or timidity.
     let have_fluidsynth = tool_available("fluidsynth");

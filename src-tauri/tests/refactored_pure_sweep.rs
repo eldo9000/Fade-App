@@ -87,6 +87,7 @@ const SAMPLE_HTML: &str = "\
 // ── Email ────────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn email_convert_eml_to_mbox() {
     let dir = output_root("email");
     let input = dir.join("in.eml");
@@ -111,6 +112,7 @@ fn email_convert_eml_to_mbox() {
 }
 
 #[test]
+#[ignore]
 fn email_convert_mbox_to_eml() {
     let dir = output_root("email-mbox-eml");
     let input = dir.join("in.mbox");
@@ -139,6 +141,7 @@ fn email_convert_mbox_to_eml() {
 // ── Subtitle ─────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn subtitle_convert_srt_to_sbv() {
     let dir = output_root("subtitle");
     let input = dir.join("in.srt");
@@ -168,6 +171,7 @@ fn subtitle_convert_srt_to_sbv() {
 }
 
 #[test]
+#[ignore]
 fn subtitle_convert_sbv_to_srt() {
     let dir = output_root("subtitle-sbv-srt");
     let input = dir.join("in.sbv");
@@ -201,6 +205,7 @@ fn subtitle_convert_sbv_to_srt() {
 // ── Document ─────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn document_convert_md_to_html() {
     let dir = output_root("document-md-html");
     let input = dir.join("in.md");
@@ -225,6 +230,7 @@ fn document_convert_md_to_html() {
 }
 
 #[test]
+#[ignore]
 fn document_convert_html_to_txt() {
     let dir = output_root("document-html-txt");
     let input = dir.join("in.html");

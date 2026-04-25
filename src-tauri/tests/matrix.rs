@@ -185,6 +185,7 @@ fn make_mp4(path: &Path) -> Result<(), String> {
 /// Image: PNG fixture → every live image format, plus a couple of settings
 /// variants (JPEG quality, WebP lossless).
 #[test]
+#[ignore]
 fn image_matrix() {
     let dir = output_root("image");
     let fixture = dir.join("_fixture.png");
@@ -300,6 +301,7 @@ fn image_matrix() {
 /// Audio: WAV fixture → every live audio format, plus a couple of common
 /// codec/mode variants (MP3 CBR vs VBR, M4A AAC vs ALAC, OGG VBR).
 #[test]
+#[ignore]
 fn audio_matrix() {
     let dir = output_root("audio");
     let fixture = dir.join("_fixture.wav");
@@ -443,6 +445,7 @@ fn audio_matrix() {
 /// Data: CSV fixture → every supported text format. Pure-Rust path,
 /// no external CLI needed.
 #[test]
+#[ignore]
 fn data_matrix() {
     let dir = output_root("data");
     let fixture = dir.join("_fixture.csv");

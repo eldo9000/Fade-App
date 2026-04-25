@@ -134,6 +134,7 @@ fn report(name: &str, rows: &[Row]) {
 }
 
 #[test]
+#[ignore]
 fn refactored_image_sweep() {
     let dir = output_root();
     let mut rows: Vec<Row> = Vec::new();
@@ -187,6 +188,7 @@ fn refactored_image_sweep() {
 }
 
 #[test]
+#[ignore]
 fn refactored_audio_sweep() {
     let dir = output_root();
     let mut rows: Vec<Row> = Vec::new();

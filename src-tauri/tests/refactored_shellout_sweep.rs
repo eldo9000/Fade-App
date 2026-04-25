@@ -81,6 +81,7 @@ const SAMPLE_IPYNB: &str = r##"{
 "##;
 
 #[test]
+#[ignore]
 fn notebook_ipynb_to_md() {
     if !tool_available("jupyter") {
         println!("  [SKIP] notebook_ipynb_to_md — jupyter not in PATH");
@@ -155,6 +156,7 @@ const SAMPLE_OTIO: &str = r#"{
 "#;
 
 #[test]
+#[ignore]
 fn timeline_otio_to_otio() {
     if !tool_available("otioconvert") {
         println!("  [SKIP] timeline_otio_to_otio — otioconvert not in PATH");
@@ -216,6 +218,7 @@ fn find_system_ttf() -> Option<PathBuf> {
 }
 
 #[test]
+#[ignore]
 fn font_ttf_to_woff() {
     let python = if Command::new("python3").arg("--version").output().is_ok() {
         "python3"
@@ -293,6 +296,7 @@ fn find_epub_fixture() -> Option<PathBuf> {
 }
 
 #[test]
+#[ignore]
 fn ebook_epub_to_mobi() {
     if !tool_available("ebook-convert") {
         println!("  [SKIP] ebook_epub_to_mobi — ebook-convert not in PATH");

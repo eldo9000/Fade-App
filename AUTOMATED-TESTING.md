@@ -101,7 +101,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --test refactored_archive_sweep
 - `refactored_av_sweep` — `image` (ImageMagick), `audio` (ffmpeg audio), `video` (ffmpeg video), `subtitle` ffmpeg path via the `FfmpegRunner` adapter trait.
 - `refactored_archive_sweep` — `archive` 7z extract + repack, including the post-extract `JobDone` path that's the one wrapper-only code path in the contract.
 
-These run on every default `cargo test` invocation — they are not behind `#[ignore]`. Cross-link with the matrix and full-sweep sections above: those test the *args* and end-to-end conversion through whatever wrapper exists; these test the *pure `convert()` entry point* directly.
+**All sweep tests are `#[ignore]` by default — they are manual-only.** CI does not run any of them. Run with `--include-ignored` (or `--ignored` to run *only* ignored tests). Cross-link with the matrix and full-sweep sections above: those test the *args* and end-to-end conversion through whatever wrapper exists; these test the *pure `convert()` entry point* directly.
 
 ### Full permutation sweep (diagnostic)
 

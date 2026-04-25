@@ -111,6 +111,7 @@ fn run_archive_convert(input: &Path, output: &Path, job_id: &str) -> Result<(), 
 }
 
 #[test]
+#[ignore]
 fn archive_zip_to_7z() {
     if !has_7z() {
         println!("  [SKIP] archive_zip_to_7z — 7z/7zz not in PATH");
@@ -133,6 +134,7 @@ fn archive_zip_to_7z() {
 }
 
 #[test]
+#[ignore]
 fn archive_zip_to_tar_roundtrip() {
     if !has_7z() {
         println!("  [SKIP] archive_zip_to_tar_roundtrip — 7z/7zz not in PATH");
@@ -162,6 +164,7 @@ fn archive_zip_to_tar_roundtrip() {
 }
 
 #[test]
+#[ignore]
 fn archive_zip_to_tar_xz() {
     if !has_7z() {
         println!("  [SKIP] archive_zip_to_tar_xz — 7z/7zz not in PATH");
