@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-25
+Last updated: 2026-04-25 (updated post-sprint)
 
 ---
 
@@ -16,12 +16,7 @@ CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
 
-Arc complete. All 5 tasks in this arc (TASK-1 through TASK-5) landed; CI green. No specific arc in flight — ready for new feature work or another diagnostic sweep.
-
-Three carried-forward diagnostic findings are candidates for the next triage cycle:
-- AVIF speed cap: UI exposes 0–10 but libheif cap is 9 (`ConvertOptions::avif_speed` doc is wrong)
-- DNxHR minimum resolution: fails on small fixtures (64×64); Fade does not validate or auto-upscale
-- 7zz tar.gz/tar.xz: `archive::repack_with_7z` single-step `a out.tar.gz` rejected by modern 7zz (`E_INVALIDARG`); needs two-step tar-then-compress
+Second arc complete (3 tasks, all CI-green, 2026-04-25). No specific arc in flight — ready for new feature work or another diagnostic sweep.
 
 ## Audit outcome summary
 
@@ -44,10 +39,10 @@ Three carried-forward diagnostic findings are candidates for the next triage cyc
 **full_sweep.rs diagnostic findings (2026-04-25):**
 - **H.264 profile/pix_fmt impossible combos — CLOSED (TASK-1 + TASK-2 this arc).** `full_sweep` surfaced 660 failing H.264 combos; fixed by arg-builder auto-promotion (`723cbff`) + UI disable of unreachable profile buttons (`50c89cb`).
 - **Missing `1px.jpg` fixture — CLOSED (TASK-4 this arc).** Pre-existing ignored test in `lib.rs` referenced a non-existent fixture; fixture restored (`8b61613`).
-- **AVIF speed cap discrepancy — CARRIED FORWARD.** UI shows 0–10; libheif cap is 9. Not yet fixed.
-- **DNxHR minimum resolution unvalidated — CARRIED FORWARD.** Fails on 64×64 fixture across all 5 profiles. Not yet fixed.
-- **7zz single-step tar.gz/tar.xz repack — CARRIED FORWARD.** `archive::repack_with_7z` needs two-step workaround. Not yet fixed.
+- **AVIF speed cap — CLOSED (`457d22c`).** Clamped to 9 in arg builder + UI slider capped at 9.
+- **DNxHR minimum resolution — CLOSED (`0d1c045`).** Guard in `convert/video.rs` returns clear error for sub-1280×720 resolution.
+- **7zz tar.gz/tar.xz repack — CLOSED (`8e8298e`).** `repack_tar_compressed` two-step function added to `convert/archive.rs`.
 
 ## Mode
 
-Active development. Test infrastructure + `&Window` decoupling arc complete 2026-04-25. Diagnostic-driven cleanup arc closed 2026-04-25. No arc in flight.
+Active development. Two diagnostic-driven cleanup arcs closed 2026-04-25 (8 tasks total). No arc in flight.
