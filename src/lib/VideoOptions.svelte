@@ -10,6 +10,21 @@
 
   const isSeq = $derived(options.output_format?.startsWith('seq_'));
 
+  // H.264 profile auto-promotion: yuv422p → high422, yuv444p → high444.
+  // When pix_fmt forces a profile upgrade, disable baseline/main and annotate high.
+  const h264ProfileLocked = $derived(
+    options.codec === 'h264' && options.pix_fmt === 'yuv422p' ? 'yuv422p'
+    : options.codec === 'h264' && options.pix_fmt === 'yuv444p' ? 'yuv444p'
+    : null
+  );
+
+  // Force h264_profile to 'high' when baseline/main are no longer reachable.
+  $effect(() => {
+    if (h264ProfileLocked && (options.h264_profile === 'baseline' || options.h264_profile === 'main')) {
+      options.h264_profile = 'high';
+    }
+  });
+
   const allCodecs = [
     { value: 'copy', label: 'Copy — stream passthrough' },
 
@@ -508,11 +523,24 @@
               </div>
             </fieldset>
 
-            <fieldset data-tooltip="baseline — max compatibility · main — consumer · high — streaming / archival">
+            <fieldset data-tooltip="baseline — max compatibility · main — consumer · high — streaming / archival · yuv422p/yuv444p forces High 4:2:2 or High 4:4:4">
               <legend class="fade-label">Profile</legend>
               <div class="grid" style="grid-template-columns:repeat(3,1fr)">
                 {#each ['baseline','main','high'] as p, i}
-                  <button onclick={() => options.h264_profile = p} class={seg(options.h264_profile === p, i, 3)}>{p}</button>
+                  {@const locked = h264ProfileLocked !== null && (p === 'baseline' || p === 'main')}
+                  <button
+                    onclick={() => !locked && (options.h264_profile = p)}
+                    disabled={locked}
+                    class="{seg(options.h264_profile === p, i, 3)} {locked ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}"
+                  >
+                    {#if p === 'high' && h264ProfileLocked === 'yuv422p'}
+                      high<span class="text-xs opacity-60"> (→ High 4:2:2)</span>
+                    {:else if p === 'high' && h264ProfileLocked === 'yuv444p'}
+                      high<span class="text-xs opacity-60"> (→ High 4:4:4)</span>
+                    {:else}
+                      {p}
+                    {/if}
+                  </button>
                 {/each}
               </div>
             </fieldset>

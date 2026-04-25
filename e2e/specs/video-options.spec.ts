@@ -148,3 +148,51 @@ test('VideoOptions clicking 24 frame rate makes it active', async ({ mount }) =>
   await btn24.click()
   await expect(btn24).toHaveClass(/seg-active/)
 })
+
+test('H264 profile: baseline and main are disabled when pix_fmt is yuv422p', async ({ mount }) => {
+  const component = await mount(VideoOptionsWrapper, {
+    props: { initialOptions: { ...baseOpts, pix_fmt: 'yuv422p', h264_profile: 'high' } },
+  })
+  await component.getByRole('button', { name: 'Advanced' }).click()
+
+  const profileFieldset = component.locator('fieldset').filter({ hasText: 'Profile' }).first()
+  const baselineBtn = profileFieldset.getByRole('button', { name: 'baseline', exact: true })
+  const mainBtn = profileFieldset.getByRole('button', { name: 'main', exact: true })
+
+  await expect(baselineBtn).toBeDisabled()
+  await expect(mainBtn).toBeDisabled()
+})
+
+test('H264 profile: high button shows 4:2:2 suffix when pix_fmt is yuv422p', async ({ mount }) => {
+  const component = await mount(VideoOptionsWrapper, {
+    props: { initialOptions: { ...baseOpts, pix_fmt: 'yuv422p', h264_profile: 'high' } },
+  })
+  await component.getByRole('button', { name: 'Advanced' }).click()
+
+  const profileFieldset = component.locator('fieldset').filter({ hasText: 'Profile' }).first()
+  await expect(profileFieldset.locator('button').filter({ hasText: '4:2:2' })).toBeVisible()
+})
+
+test('H264 profile: baseline and main are disabled when pix_fmt is yuv444p', async ({ mount }) => {
+  const component = await mount(VideoOptionsWrapper, {
+    props: { initialOptions: { ...baseOpts, pix_fmt: 'yuv444p', h264_profile: 'high' } },
+  })
+  await component.getByRole('button', { name: 'Advanced' }).click()
+
+  const profileFieldset = component.locator('fieldset').filter({ hasText: 'Profile' }).first()
+  const baselineBtn = profileFieldset.getByRole('button', { name: 'baseline', exact: true })
+  const mainBtn = profileFieldset.getByRole('button', { name: 'main', exact: true })
+
+  await expect(baselineBtn).toBeDisabled()
+  await expect(mainBtn).toBeDisabled()
+})
+
+test('H264 profile: high button shows 4:4:4 suffix when pix_fmt is yuv444p', async ({ mount }) => {
+  const component = await mount(VideoOptionsWrapper, {
+    props: { initialOptions: { ...baseOpts, pix_fmt: 'yuv444p', h264_profile: 'high' } },
+  })
+  await component.getByRole('button', { name: 'Advanced' }).click()
+
+  const profileFieldset = component.locator('fieldset').filter({ hasText: 'Profile' }).first()
+  await expect(profileFieldset.locator('button').filter({ hasText: '4:4:4' })).toBeVisible()
+})
