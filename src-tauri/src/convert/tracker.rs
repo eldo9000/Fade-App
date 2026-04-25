@@ -17,6 +17,7 @@
 //! Not convertible: `.sf2` is a soundfont container, not an audio stream.
 //! Kept as `todo: true` in FORMAT_GROUPS with an explanatory comment.
 
+use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{tool_available, truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -26,6 +27,38 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Window};
+
+/// Trait abstracting the WAV → final-format transcode so `convert()` does
+/// not need a `&Window`. The Tauri wrapper supplies a real implementation
+/// that delegates to `convert::audio::run`; tests that only exercise the
+/// pure render path (or that target WAV directly) can pass a no-op
+/// implementation that errors if invoked.
+pub trait AudioTranscoder {
+    fn transcode(
+        &mut self,
+        input_wav: &str,
+        output: &str,
+        opts: &ConvertOptions,
+        processes: Arc<Mutex<HashMap<String, Child>>>,
+        cancelled: Arc<AtomicBool>,
+    ) -> ConvertResult;
+}
+
+/// AudioTranscoder that always errors — for tests that don't exercise the
+/// final-encode path (e.g. tracker tests that target WAV).
+pub struct UnavailableAudio;
+impl AudioTranscoder for UnavailableAudio {
+    fn transcode(
+        &mut self,
+        _input_wav: &str,
+        _output: &str,
+        _opts: &ConvertOptions,
+        _processes: Arc<Mutex<HashMap<String, Child>>>,
+        _cancelled: Arc<AtomicBool>,
+    ) -> ConvertResult {
+        ConvertResult::Error("audio transcoder not available in this context".to_string())
+    }
+}
 
 /// Resolve a usable SoundFont path, or return an install-hint error.
 fn locate_soundfont() -> Result<PathBuf, String> {
@@ -130,25 +163,21 @@ fn run_renderer(
     Ok((success, stderr_content))
 }
 
-/// Render MIDI/module-tracker input to the requested audio format.
+/// Pure conversion. Used directly by tests and any future non-Tauri caller.
+/// `audio_transcoder` is invoked when the requested output is a non-WAV
+/// audio format and the rendered intermediate WAV needs final encoding.
 #[allow(clippy::too_many_arguments)]
-pub fn run(
-    window: &Window,
-    job_id: &str,
+pub fn convert(
     input: &str,
     output: &str,
     opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    audio_transcoder: &mut dyn AudioTranscoder,
+    job_id: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 0.0,
-            message: "Rendering tracker…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Started);
 
     let in_ext = Path::new(input)
         .extension()
@@ -222,37 +251,22 @@ pub fn run(
 
     // WAV target: nothing more to do.
     if out_ext == "wav" {
-        let _ = window.emit(
-            "job-progress",
-            JobProgress {
-                job_id: job_id.to_string(),
-                percent: 100.0,
-                message: "Done".to_string(),
-            },
-        );
+        progress(ProgressEvent::Done);
         return ConvertResult::Done;
     }
 
     // Transcode WAV → target via the existing audio pipeline. We re-invoke
     // the audio converter rather than inlining ffmpeg args so format-specific
     // options (bitrate, vbr, etc.) flow through unchanged.
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 60.0,
-            message: "Encoding…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Phase("Encoding…".to_string()));
+    progress(ProgressEvent::Percent(0.6));
 
-    let audio_result = crate::convert::audio::run(
-        window,
-        job_id,
+    let audio_result = audio_transcoder.transcode(
         &tmp_wav,
         output,
         opts,
         Arc::clone(&processes),
-        Arc::clone(&cancelled),
+        Arc::clone(cancelled),
     );
 
     // Best-effort cleanup of the intermediate WAV regardless of outcome.
@@ -260,18 +274,93 @@ pub fn run(
 
     match audio_result {
         ConvertResult::Done => {
-            let _ = window.emit(
-                "job-progress",
-                JobProgress {
-                    job_id: job_id.to_string(),
-                    percent: 100.0,
-                    message: "Done".to_string(),
-                },
-            );
+            progress(ProgressEvent::Done);
             ConvertResult::Done
         }
         other => other,
     }
+}
+
+/// AudioTranscoder backed by `convert::audio::run`. Lives in `run()` only —
+/// anything that touches a `&Window` stays inside the wrapper.
+struct WindowAudioTranscoder<'a> {
+    window: &'a Window,
+    job_id: String,
+}
+
+impl AudioTranscoder for WindowAudioTranscoder<'_> {
+    fn transcode(
+        &mut self,
+        input_wav: &str,
+        output: &str,
+        opts: &ConvertOptions,
+        processes: Arc<Mutex<HashMap<String, Child>>>,
+        cancelled: Arc<AtomicBool>,
+    ) -> ConvertResult {
+        crate::convert::audio::run(
+            self.window,
+            &self.job_id,
+            input_wav,
+            output,
+            opts,
+            processes,
+            cancelled,
+        )
+    }
+}
+
+/// Render MIDI/module-tracker input to the requested audio format.
+#[allow(clippy::too_many_arguments)]
+pub fn run(
+    window: &Window,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    opts: &ConvertOptions,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: Arc<AtomicBool>,
+) -> ConvertResult {
+    let job_id_owned = job_id.to_string();
+    let win = window.clone();
+    let mut emit = move |ev: ProgressEvent| {
+        let payload = match ev {
+            ProgressEvent::Started => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: "Rendering tracker…".to_string(),
+            },
+            ProgressEvent::Phase(msg) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: msg,
+            },
+            ProgressEvent::Percent(p) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: (p * 100.0).clamp(0.0, 100.0),
+                message: String::new(),
+            },
+            ProgressEvent::Done => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 100.0,
+                message: "Done".to_string(),
+            },
+        };
+        let _ = win.emit("job-progress", payload);
+    };
+    let mut transcoder = WindowAudioTranscoder {
+        window,
+        job_id: job_id.to_string(),
+    };
+    convert(
+        input,
+        output,
+        opts,
+        &mut emit,
+        &mut transcoder,
+        job_id,
+        processes,
+        &cancelled,
+    )
 }
 
 fn render_midi(
