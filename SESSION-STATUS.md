@@ -1,23 +1,27 @@
 # Fade — Session Status
 
-Last updated: 2026-04-23
+Last updated: 2026-04-25
 
 ---
 
 ## Current Focus
 
-Four arcs landed since the B1–B18 audit closed:
+Two full sessions of substantial work landed 2026-04-25.
 
-1. **UI polish sweep** — canonical `seg-active`, `fade-check`, `fade-range`, `--surface-hint`, `space-y-3`, `py-[5px]` patterns propagated across AudioOptions, ImageOptions, ArchiveOptions, DataOptions, FormatPicker. Shared `src/lib/segStyles.js` replaces per-file `seg`/`segV` duplicates.
-2. **VideoOptions overhaul** — collapsible Advanced fold; categorized codec dropdown (Common/Professional/Broadcast/Archival/Legacy); CRF/VBR/CBR mode switcher; inverted quality slider (Worst→Lossless); ProRes profile picker exposed; image sequence export (`seq_png`, `seq_jpg`, `seq_tiff`); AudioOptions Length accordion (Trim + Silence Padding). `overlay.svelte.js` portal-style dropdown store added, renders at App root to escape overflow/stacking context.
-3. **Blender headless backend** — USD/USDZ/Alembic/Blend conversion via headless Blender + bundled `blender_convert.py`. STEP/IGES explicitly deferred.
-4. **B16 phase 2 — async IPC migration (7 tasks, CI-green)** — all 14 analysis/probe/preview IPC commands converted to non-blocking. Key deliverables: `ConvertResult` typed enum replaced string sentinels across 14 converter modules (TASK-2); 6 fast probe commands (`get_file_info`, `get_streams`, `subtitle_probe`, `diff_images`, `lint_video`, `get_image_quality`) migrated to async via `tokio::task::spawn_blocking` (TASK-3); 8 long-running commands migrated to full job-based lifecycle with cancellation and `analysis-result:{job_id}` events (TASKs 4–5); `createLimiter.run()` gained optional `timeoutMs` parameter with guaranteed slot release in `finally` (TASK-6); 16 unit tests added to `args/video.rs` covering VBR/CBR paths and image sequence arg builder (TASK-7).
+**Session A — test sweep infrastructure (`46c37db`):** Three new test files added to `src-tauri/tests/`: `matrix.rs` (33-case smoke matrix; pre-release sanity gate), `full_sweep.rs` (~700-case Cartesian diagnostic; surfaces broken combos), `extra_sweep.rs` (cheap-to-test categories: 3D models, subtitle pure-Rust, email, document text). Seven helper functions made `pub` across `email.rs`, `subtitle.rs`, `document.rs` to support direct test calls. All sweep tests subsequently marked `#[ignore]` (manual-only; CI runs `--lib` and `--include-ignored` only on the conversions integration suite).
 
-CI green on `main`.
+**Session B — `&Window` decoupling refactor arc (8 tasks, all CI-green):** All 15 conversion modules (`email`, `subtitle`, `document`, `notebook`, `timeline`, `font`, `ebook`, `data`, `tracker`, `model`, `model_blender`, `image`, `audio`, `video`, `archive`) split into a pure `pub fn convert(...)` + thin `pub fn run(...)` wrapper. Established `convert::progress::{ProgressEvent, ProgressFn, noop_progress}` contract for Window-free invocation. Added 6 new `refactored_*_sweep.rs` test files (one per module group), each calling `convert()` directly with `noop_progress()`. All tests `#[ignore]`. 309 tests passing (`--include-ignored`). Conversion pipeline contract documented in `ARCHITECTURE.md`.
+
+CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
 
-**E2E test suite landed (2026-04-23).** Playwright CT harness added: 55 component tests across FormatPicker, ImageOptions, VideoOptions, AudioOptions, DataOptions, ArchiveOptions — every major control exercised. Rust integration tests added: 4 smoke conversions (image PNG→WebP, video MP4→WebM, audio WAV→MP3, data CSV→JSON). All CI green. Next: feature work or observer sync.
+Arc complete. All 5 tasks in this arc (TASK-1 through TASK-5) landed; CI green. No specific arc in flight — ready for new feature work or another diagnostic sweep.
+
+Three carried-forward diagnostic findings are candidates for the next triage cycle:
+- AVIF speed cap: UI exposes 0–10 but libheif cap is 9 (`ConvertOptions::avif_speed` doc is wrong)
+- DNxHR minimum resolution: fails on small fixtures (64×64); Fade does not validate or auto-upscale
+- 7zz tar.gz/tar.xz: `archive::repack_with_7z` single-step `a out.tar.gz` rejected by modern 7zz (`E_INVALIDARG`); needs two-step tar-then-compress
 
 ## Audit outcome summary
 
@@ -31,25 +35,19 @@ CI green on `main`.
 - validate_output_name umbrella covering all 29 `OperationPayload` variants (B15)
 - parking_lot::Mutex across 32 files, return-shape drift normalized (B18)
 
-**6 deferred items** promoted to followup list (see `audits/04-attack-plan.md §7`):
-- B16.2 / B19: async lifecycle for 14 analysis/probe/preview commands
-- AudioOffset.offset_ms i64→i32 precision drift (ts-rs)
-- Windows non-C: drive preview (assetProtocol runtime allow_file)
-- Slot-leak watchdog for createLimiter
-- librewin_common superset-vs-authoritative strategy
-- GHA shell injection hardening (release.yml inputs.tag)
-
-**Verify pass:** cargo-audit RUSTSEC-2025-0067/0068 (serde_yml/libyml) confirmed absent. All other advisories unchanged (Linux-only transitive). Semgrep: 20 INFO-only findings, all temp-dir, all uuid-namespaced.
-
 ## Known Risks
 
 - **`$bindable` chain verified correct** — all mutation paths use `$bindable()` + `bind:` explicitly.
 - **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** Binary discovery and script path construction are not hardened for all deployment contexts. (BC-003/BC-004 code bugs resolved; runtime path fragility is a separate concern.)
-- **analysis-result one-shot listener race.** The one-shot event listener introduced in TASKs 4–5 is set up before the invoke call; if the event fires before `unlisten` is registered on a very fast completion, the result may be missed. Structurally possible, not yet observed.
+- **analysis-result one-shot listener race.** The one-shot event listener introduced in async IPC migration is set up before the invoke call; if the event fires before `unlisten` is registered on a very fast completion, the result may be missed. Structurally possible, not yet observed.
 
-**Lower-urgency known gaps (deferred):**
-- None. All post-audit deferred items resolved as of 2026-04-23.
+**full_sweep.rs diagnostic findings (2026-04-25):**
+- **H.264 profile/pix_fmt impossible combos — CLOSED (TASK-1 + TASK-2 this arc).** `full_sweep` surfaced 660 failing H.264 combos; fixed by arg-builder auto-promotion (`723cbff`) + UI disable of unreachable profile buttons (`50c89cb`).
+- **Missing `1px.jpg` fixture — CLOSED (TASK-4 this arc).** Pre-existing ignored test in `lib.rs` referenced a non-existent fixture; fixture restored (`8b61613`).
+- **AVIF speed cap discrepancy — CARRIED FORWARD.** UI shows 0–10; libheif cap is 9. Not yet fixed.
+- **DNxHR minimum resolution unvalidated — CARRIED FORWARD.** Fails on 64×64 fixture across all 5 profiles. Not yet fixed.
+- **7zz single-step tar.gz/tar.xz repack — CARRIED FORWARD.** `archive::repack_with_7z` needs two-step workaround. Not yet fixed.
 
 ## Mode
 
-Active development. Post-audit hygiene sprint complete (2026-04-23). All 6 deferred items closed. Ready for new feature work or audit cycle.
+Active development. Test infrastructure + `&Window` decoupling arc complete 2026-04-25. Diagnostic-driven cleanup arc closed 2026-04-25. No arc in flight.
