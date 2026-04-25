@@ -81,6 +81,65 @@ fs_commands.rs      scan_dir, file_exists
 main.rs             6 LOC — calls fade_lib::run()
 ```
 
+## Conversion pipeline contract
+
+Every module under `src-tauri/src/convert/` (15 modules: `archive`, `audio`, `data`, `document`, `ebook`, `email`, `font`, `image`, `model`, `model_blender`, `notebook`, `subtitle`, `timeline`, `tracker`, `video`) follows the same two-function shape:
+
+```rust
+// Pure conversion — no Tauri runtime needed. Callable from tests, CLIs,
+// alternative frontends, anything. Reports progress through ProgressFn.
+pub fn convert(
+    input: &str,
+    output: &str,
+    opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    // …optional adapter trait + processes/cancelled per module
+) -> Result<(), String>;
+
+// Thin Tauri wrapper — clones `&Window`, builds a `ProgressFn` closure that
+// translates `ProgressEvent` into a `JobProgress` payload and `window.emit`s
+// it, then calls `convert()`. Currently 32–50 lines per module (archive is
+// 78 because it also handles the post-extract `JobDone` emission for the
+// "extract folder" special case).
+pub fn run(
+    window: &Window,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    opts: &ConvertOptions,
+    // …processes/cancelled per module
+) -> ConvertResult;  // or Result<(), String> for the pure-Rust modules
+```
+
+### Why the split exists
+
+Before TASKs 1–7 (the `&Window` decoupling arc), every conversion routine took `&Window` directly and emitted progress inline via `window.emit(...)`. That coupled the entire conversion pipeline to the Tauri runtime: tests had to construct a fake `Window`, reuse from a CLI was impossible, and the conversion logic was inseparable from the IPC layer.
+
+The split fixes both. `convert()` is portable Rust — no `tauri::*` imports inside its body. `run()` is the Tauri-only adapter: it constructs a `ProgressFn` closure and calls `convert()`. The closure is the *only* place a `&Window` is referenced; `convert()` never sees it.
+
+### Where to add code
+
+**Almost always `convert()`.** The wrapper `run()` is boilerplate — it exists only to translate `ProgressEvent` into a `JobProgress` payload for the frontend. Adding a new format, fixing a conversion bug, adding a new option, refining progress reporting — all of it lives in `convert()`. Touch `run()` only when changing the progress payload itself.
+
+### `ProgressFn` and `noop_progress()`
+
+`ProgressFn` (defined in `convert/progress.rs`) is `&mut dyn FnMut(ProgressEvent)`. The conversion module calls it with `ProgressEvent::Started`, `::Phase(msg)`, `::Percent(p)`, or `::Done`. The wrapper translates each variant into a `JobProgress` payload — the closure body is the per-module recipe for "what does this conversion's progress mean to the UI".
+
+`noop_progress()` returns a `ProgressFn` that throws away every event. Tests use it when they care about the conversion result, not the progress timeline. It keeps test setup short (`convert(..., noop_progress(), ...)`).
+
+### Adapter-trait variation
+
+Two modules can't be entirely pure because the underlying conversion needs to spawn ffmpeg, and `operations::run_ffmpeg` is itself `&Window`-bound:
+
+- `subtitle::convert` takes a `&mut dyn FfmpegRunner`. The wrapper plugs in `WindowFfmpegRunner`, which is the live ffmpeg-spawning impl. Tests plug in an in-memory or stub impl.
+- `tracker::convert` takes a `&mut dyn AudioTranscoder` for the same reason — tracker → audio sometimes bridges through a temp WAV, which needs ffmpeg.
+
+The pattern: anything that touches `&Window` lives in the wrapper as a trait impl; the trait itself is `&Window`-free so `convert()` can stay portable.
+
+### Future direction (not in scope here)
+
+The wrapper bodies are now near-identical boilerplate — clone the window, build the `ProgressFn` closure, build a `JobProgress` payload from `ProgressEvent`, call `convert()`, classify the result. A future arc could collapse all 15 wrappers into a single generic `run<F>(...)` in `convert::mod` parameterized over the `convert()` call. The `lib.rs` dispatcher (around line 853 today) could then call `convert()` directly via a per-category match without going through per-module wrappers. Tracked as a future arc; not done here.
+
 ## Frontend — `src/`
 
 ```

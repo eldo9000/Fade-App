@@ -79,6 +79,30 @@ Sweeps every live output format (and key settings variants per format) through F
 
 The output folder for each category is wiped at the start of its test so stale files from previous runs cannot mask a new failure. `test-results/` is gitignored.
 
+### Refactored conversion sweeps
+
+Six test files added during the `&Window` decoupling arc (TASKs 1–7). Each file calls the per-module `convert()` directly with `noop_progress()` — they exercise the pure conversion path without the Tauri runtime, which is now possible because `convert()` no longer takes `&Window`. See `ARCHITECTURE.md` § Conversion pipeline contract.
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml --test refactored_pure_sweep
+cargo test --manifest-path src-tauri/Cargo.toml --test refactored_shellout_sweep
+cargo test --manifest-path src-tauri/Cargo.toml --test refactored_data_tracker_sweep
+cargo test --manifest-path src-tauri/Cargo.toml --test refactored_model_sweep
+cargo test --manifest-path src-tauri/Cargo.toml --test refactored_av_sweep
+cargo test --manifest-path src-tauri/Cargo.toml --test refactored_archive_sweep
+```
+
+**What each covers:**
+
+- `refactored_pure_sweep` — pure-Rust modules with no shell-out: `email` (eml↔mbox), `subtitle` (srt↔sbv hand-roll path), `document` (md↔html, html↔txt).
+- `refactored_shellout_sweep` — modules that shell out to a single tool: `notebook` (nbconvert), `timeline` (otio), `font` (fontforge), `ebook` (Calibre).
+- `refactored_data_tracker_sweep` — `data` (CSV/JSON/YAML/TOML/XML cross-product) and `tracker` (OpenMPT) via the `AudioTranscoder` adapter trait.
+- `refactored_model_sweep` — `model` (assimp) and `model_blender` (Blender Python script driver).
+- `refactored_av_sweep` — `image` (ImageMagick), `audio` (ffmpeg audio), `video` (ffmpeg video), `subtitle` ffmpeg path via the `FfmpegRunner` adapter trait.
+- `refactored_archive_sweep` — `archive` 7z extract + repack, including the post-extract `JobDone` path that's the one wrapper-only code path in the contract.
+
+These run on every default `cargo test` invocation — they are not behind `#[ignore]`. Cross-link with the matrix and full-sweep sections above: those test the *args* and end-to-end conversion through whatever wrapper exists; these test the *pure `convert()` entry point* directly.
+
 ### Full permutation sweep (diagnostic)
 
 ```bash
@@ -138,7 +162,16 @@ e2e/
     ArchiveOptionsWrapper.svelte
 src-tauri/
   tests/
-    conversions.rs               # Rust integration tests
+    conversions.rs                  # Rust integration tests
+    matrix.rs                       # Conversion matrix smoke test
+    full_sweep.rs                   # Full permutation diagnostic sweep
+    extra_sweep.rs                  # Additional matrix coverage
+    refactored_pure_sweep.rs        # Pure-Rust modules — pure convert() path
+    refactored_shellout_sweep.rs    # Single-tool shellout modules
+    refactored_data_tracker_sweep.rs # data + tracker (AudioTranscoder adapter)
+    refactored_model_sweep.rs       # model + model_blender
+    refactored_av_sweep.rs          # image/audio/video + subtitle (FfmpegRunner)
+    refactored_archive_sweep.rs    # 7z extract + repack incl. JobDone path
 ```
 
 ---
