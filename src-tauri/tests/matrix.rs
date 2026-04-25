@@ -79,19 +79,23 @@ struct CaseResult {
 
 impl CaseResult {
     fn ok(name: String, output: PathBuf) -> Self {
-        Self { name, output, error: None }
+        Self {
+            name,
+            output,
+            error: None,
+        }
     }
     fn err(name: String, output: PathBuf, error: String) -> Self {
-        Self { name, output, error: Some(error) }
+        Self {
+            name,
+            output,
+            error: Some(error),
+        }
     }
     fn passed(&self) -> bool {
         self.error.is_none()
             && self.output.exists()
-            && self
-                .output
-                .metadata()
-                .map(|m| m.len() > 0)
-                .unwrap_or(false)
+            && self.output.metadata().map(|m| m.len() > 0).unwrap_or(false)
     }
 }
 
@@ -101,16 +105,20 @@ fn report(category: &str, cases: Vec<CaseResult>) {
     let failed: Vec<&CaseResult> = cases.iter().filter(|c| !c.passed()).collect();
 
     println!();
-    println!("── {} matrix ─ {} cases, {} failed", category, total, failed.len());
+    println!(
+        "── {} matrix ─ {} cases, {} failed",
+        category,
+        total,
+        failed.len()
+    );
     for c in &cases {
         let status = if c.passed() { "PASS" } else { "FAIL" };
-        let size = c
-            .output
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = c.output.metadata().map(|m| m.len()).unwrap_or(0);
         let detail = c.error.as_deref().unwrap_or("");
-        println!("  [{}] {:<48} {:>10} bytes  {}", status, c.name, size, detail);
+        println!(
+            "  [{}] {:<48} {:>10} bytes  {}",
+            status, c.name, size, detail
+        );
     }
 
     if !failed.is_empty() {
@@ -191,15 +199,81 @@ fn image_matrix() {
     }
 
     let specs: &[Spec] = &[
-        Spec { name: "png_to_jpeg_default",    ext: "jpg",  opts: || ConvertOptions { output_format: "jpeg".into(), ..Default::default() } },
-        Spec { name: "png_to_jpeg_q25",        ext: "jpg",  opts: || ConvertOptions { output_format: "jpeg".into(), quality: Some(25), ..Default::default() } },
-        Spec { name: "png_to_jpeg_q95",        ext: "jpg",  opts: || ConvertOptions { output_format: "jpeg".into(), quality: Some(95), ..Default::default() } },
-        Spec { name: "png_to_png_default",     ext: "png",  opts: || ConvertOptions { output_format: "png".into(),  ..Default::default() } },
-        Spec { name: "png_to_webp_default",    ext: "webp", opts: || ConvertOptions { output_format: "webp".into(), ..Default::default() } },
-        Spec { name: "png_to_webp_lossless",   ext: "webp", opts: || ConvertOptions { output_format: "webp".into(), webp_lossless: Some(true), ..Default::default() } },
-        Spec { name: "png_to_tiff_default",    ext: "tiff", opts: || ConvertOptions { output_format: "tiff".into(), ..Default::default() } },
-        Spec { name: "png_to_bmp_default",     ext: "bmp",  opts: || ConvertOptions { output_format: "bmp".into(),  ..Default::default() } },
-        Spec { name: "png_to_avif_default",    ext: "avif", opts: || ConvertOptions { output_format: "avif".into(), ..Default::default() } },
+        Spec {
+            name: "png_to_jpeg_default",
+            ext: "jpg",
+            opts: || ConvertOptions {
+                output_format: "jpeg".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_jpeg_q25",
+            ext: "jpg",
+            opts: || ConvertOptions {
+                output_format: "jpeg".into(),
+                quality: Some(25),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_jpeg_q95",
+            ext: "jpg",
+            opts: || ConvertOptions {
+                output_format: "jpeg".into(),
+                quality: Some(95),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_png_default",
+            ext: "png",
+            opts: || ConvertOptions {
+                output_format: "png".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_webp_default",
+            ext: "webp",
+            opts: || ConvertOptions {
+                output_format: "webp".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_webp_lossless",
+            ext: "webp",
+            opts: || ConvertOptions {
+                output_format: "webp".into(),
+                webp_lossless: Some(true),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_tiff_default",
+            ext: "tiff",
+            opts: || ConvertOptions {
+                output_format: "tiff".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_bmp_default",
+            ext: "bmp",
+            opts: || ConvertOptions {
+                output_format: "bmp".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "png_to_avif_default",
+            ext: "avif",
+            opts: || ConvertOptions {
+                output_format: "avif".into(),
+                ..Default::default()
+            },
+        },
     ];
 
     let mut cases = Vec::new();
@@ -240,17 +314,109 @@ fn audio_matrix() {
     }
 
     let specs: &[Spec] = &[
-        Spec { name: "wav_to_mp3_default",     ext: "mp3",  opts: || ConvertOptions { output_format: "mp3".into(),  ..Default::default() } },
-        Spec { name: "wav_to_mp3_cbr_192",     ext: "mp3",  opts: || ConvertOptions { output_format: "mp3".into(), mp3_bitrate_mode: Some("cbr".into()), bitrate: Some(192), ..Default::default() } },
-        Spec { name: "wav_to_mp3_vbr_q2",      ext: "mp3",  opts: || ConvertOptions { output_format: "mp3".into(), mp3_bitrate_mode: Some("vbr".into()), mp3_vbr_quality: Some(2), ..Default::default() } },
-        Spec { name: "wav_to_wav_default",     ext: "wav",  opts: || ConvertOptions { output_format: "wav".into(),  ..Default::default() } },
-        Spec { name: "wav_to_flac_default",    ext: "flac", opts: || ConvertOptions { output_format: "flac".into(), ..Default::default() } },
-        Spec { name: "wav_to_flac_max_compression", ext: "flac", opts: || ConvertOptions { output_format: "flac".into(), flac_compression: Some(8), ..Default::default() } },
-        Spec { name: "wav_to_ogg_vbr_q5",      ext: "ogg",  opts: || ConvertOptions { output_format: "ogg".into(), ogg_bitrate_mode: Some("vbr".into()), ogg_vbr_quality: Some(5), ..Default::default() } },
-        Spec { name: "wav_to_aac_192",         ext: "aac",  opts: || ConvertOptions { output_format: "aac".into(), bitrate: Some(192), ..Default::default() } },
-        Spec { name: "wav_to_opus_vbr_128",    ext: "opus", opts: || ConvertOptions { output_format: "opus".into(), opus_application: Some("audio".into()), opus_vbr: Some(true), bitrate: Some(128), ..Default::default() } },
-        Spec { name: "wav_to_m4a_aac",         ext: "m4a",  opts: || ConvertOptions { output_format: "m4a".into(), m4a_subcodec: Some("aac".into()), bitrate: Some(192), ..Default::default() } },
-        Spec { name: "wav_to_m4a_alac_24bit",  ext: "m4a",  opts: || ConvertOptions { output_format: "m4a".into(), m4a_subcodec: Some("alac".into()), bit_depth: Some(24), ..Default::default() } },
+        Spec {
+            name: "wav_to_mp3_default",
+            ext: "mp3",
+            opts: || ConvertOptions {
+                output_format: "mp3".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_mp3_cbr_192",
+            ext: "mp3",
+            opts: || ConvertOptions {
+                output_format: "mp3".into(),
+                mp3_bitrate_mode: Some("cbr".into()),
+                bitrate: Some(192),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_mp3_vbr_q2",
+            ext: "mp3",
+            opts: || ConvertOptions {
+                output_format: "mp3".into(),
+                mp3_bitrate_mode: Some("vbr".into()),
+                mp3_vbr_quality: Some(2),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_wav_default",
+            ext: "wav",
+            opts: || ConvertOptions {
+                output_format: "wav".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_flac_default",
+            ext: "flac",
+            opts: || ConvertOptions {
+                output_format: "flac".into(),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_flac_max_compression",
+            ext: "flac",
+            opts: || ConvertOptions {
+                output_format: "flac".into(),
+                flac_compression: Some(8),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_ogg_vbr_q5",
+            ext: "ogg",
+            opts: || ConvertOptions {
+                output_format: "ogg".into(),
+                ogg_bitrate_mode: Some("vbr".into()),
+                ogg_vbr_quality: Some(5),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_aac_192",
+            ext: "aac",
+            opts: || ConvertOptions {
+                output_format: "aac".into(),
+                bitrate: Some(192),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_opus_vbr_128",
+            ext: "opus",
+            opts: || ConvertOptions {
+                output_format: "opus".into(),
+                opus_application: Some("audio".into()),
+                opus_vbr: Some(true),
+                bitrate: Some(128),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_m4a_aac",
+            ext: "m4a",
+            opts: || ConvertOptions {
+                output_format: "m4a".into(),
+                m4a_subcodec: Some("aac".into()),
+                bitrate: Some(192),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "wav_to_m4a_alac_24bit",
+            ext: "m4a",
+            opts: || ConvertOptions {
+                output_format: "m4a".into(),
+                m4a_subcodec: Some("alac".into()),
+                bit_depth: Some(24),
+                ..Default::default()
+            },
+        },
     ];
 
     let mut cases = Vec::new();
@@ -286,11 +452,11 @@ fn data_matrix() {
     let value = parse_input("csv", &raw).expect("parse csv");
 
     let targets: &[(&str, &str)] = &[
-        ("csv_to_json",  "json"),
-        ("csv_to_yaml",  "yaml"),
-        ("csv_to_xml",   "xml"),
-        ("csv_to_tsv",   "tsv"),
-        ("csv_to_csv",   "csv"),
+        ("csv_to_json", "json"),
+        ("csv_to_yaml", "yaml"),
+        ("csv_to_xml", "xml"),
+        ("csv_to_tsv", "tsv"),
+        ("csv_to_csv", "csv"),
     ];
 
     let mut cases = Vec::new();
@@ -327,14 +493,85 @@ fn video_matrix() {
     }
 
     let specs: &[Spec] = &[
-        Spec { name: "mp4_to_mp4_h264",    ext: "mp4",  opts: || ConvertOptions { output_format: "mp4".into(),  codec: Some("h264".into()), crf: Some(28), preset: Some("ultrafast".into()), ..Default::default() } },
-        Spec { name: "mp4_to_mp4_h265",    ext: "mp4",  opts: || ConvertOptions { output_format: "mp4".into(),  codec: Some("h265".into()), crf: Some(30), preset: Some("ultrafast".into()), ..Default::default() } },
-        Spec { name: "mp4_to_webm_vp9",    ext: "webm", opts: || ConvertOptions { output_format: "webm".into(), codec: Some("vp9".into()),  webm_bitrate_mode: Some("crf".into()), crf: Some(40), vp9_speed: Some(8), ..Default::default() } },
-        Spec { name: "mp4_to_mkv_ffv1",    ext: "mkv",  opts: || ConvertOptions { output_format: "mkv".into(),  codec: Some("ffv1".into()), ..Default::default() } },
-        Spec { name: "mp4_to_mov_prores",  ext: "mov",  opts: || ConvertOptions { output_format: "mov".into(),  codec: Some("prores".into()), prores_profile: Some(0), ..Default::default() } },
-        Spec { name: "mp4_to_mov_mjpeg",   ext: "mov",  opts: || ConvertOptions { output_format: "mov".into(),  codec: Some("mjpeg".into()), ..Default::default() } },
-        Spec { name: "mp4_to_avi_xvid",    ext: "avi",  opts: || ConvertOptions { output_format: "avi".into(),  codec: Some("mpeg4".into()), ..Default::default() } },
-        Spec { name: "mp4_to_gif_default", ext: "gif",  opts: || ConvertOptions { output_format: "gif".into(),  ..Default::default() } },
+        Spec {
+            name: "mp4_to_mp4_h264",
+            ext: "mp4",
+            opts: || ConvertOptions {
+                output_format: "mp4".into(),
+                codec: Some("h264".into()),
+                crf: Some(28),
+                preset: Some("ultrafast".into()),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_mp4_h265",
+            ext: "mp4",
+            opts: || ConvertOptions {
+                output_format: "mp4".into(),
+                codec: Some("h265".into()),
+                crf: Some(30),
+                preset: Some("ultrafast".into()),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_webm_vp9",
+            ext: "webm",
+            opts: || ConvertOptions {
+                output_format: "webm".into(),
+                codec: Some("vp9".into()),
+                webm_bitrate_mode: Some("crf".into()),
+                crf: Some(40),
+                vp9_speed: Some(8),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_mkv_ffv1",
+            ext: "mkv",
+            opts: || ConvertOptions {
+                output_format: "mkv".into(),
+                codec: Some("ffv1".into()),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_mov_prores",
+            ext: "mov",
+            opts: || ConvertOptions {
+                output_format: "mov".into(),
+                codec: Some("prores".into()),
+                prores_profile: Some(0),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_mov_mjpeg",
+            ext: "mov",
+            opts: || ConvertOptions {
+                output_format: "mov".into(),
+                codec: Some("mjpeg".into()),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_avi_xvid",
+            ext: "avi",
+            opts: || ConvertOptions {
+                output_format: "avi".into(),
+                codec: Some("mpeg4".into()),
+                ..Default::default()
+            },
+        },
+        Spec {
+            name: "mp4_to_gif_default",
+            ext: "gif",
+            opts: || ConvertOptions {
+                output_format: "gif".into(),
+                ..Default::default()
+            },
+        },
     ];
 
     let mut cases = Vec::new();

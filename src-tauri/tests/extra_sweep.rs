@@ -202,8 +202,7 @@ fn subtitle_sweep() {
     let srt_back = subtitle::sbv_to_srt(&sbv);
     let out_roundtrip = dir.join("srt_roundtrip.srt");
     std::fs::write(&out_roundtrip, &srt_back).expect("write roundtrip");
-    let preserved =
-        srt_back.contains("Hello world") && srt_back.contains("Second cue");
+    let preserved = srt_back.contains("Hello world") && srt_back.contains("Second cue");
     outcomes.push(Outcome {
         name: "srt_roundtrip_preserves_text".into(),
         output: out_roundtrip,

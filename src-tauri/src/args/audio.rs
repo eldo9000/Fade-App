@@ -187,8 +187,14 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
     let mut channels_set = false;
     if let Some(ch) = opts.channels.as_deref() {
         match ch {
-            "mono" => { args.extend(["-ac".to_string(), "1".to_string()]); channels_set = true; }
-            "stereo" => { args.extend(["-ac".to_string(), "2".to_string()]); channels_set = true; }
+            "mono" => {
+                args.extend(["-ac".to_string(), "1".to_string()]);
+                channels_set = true;
+            }
+            "stereo" => {
+                args.extend(["-ac".to_string(), "2".to_string()]);
+                channels_set = true;
+            }
             "joint" => {
                 args.extend(["-ac".to_string(), "2".to_string()]);
                 channels_set = true;
@@ -196,7 +202,10 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
                     args.extend(["-joint_stereo".to_string(), "1".to_string()]);
                 }
             }
-            "5.1" => { args.extend(["-ac".to_string(), "6".to_string()]); channels_set = true; }
+            "5.1" => {
+                args.extend(["-ac".to_string(), "6".to_string()]);
+                channels_set = true;
+            }
             _ => {} // "source" or unknown → omit
         }
     }

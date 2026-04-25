@@ -170,7 +170,11 @@ fn run_image_cases(dir: &Path, fixture: &Path, cases: Vec<Case>) -> Vec<Outcome>
             );
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             let err = run_cmd("magick", &arg_refs).err();
-            Outcome { name: c.name, output: out, error: err }
+            Outcome {
+                name: c.name,
+                output: out,
+                error: err,
+            }
         })
         .collect()
 }
@@ -187,7 +191,11 @@ fn run_audio_cases(dir: &Path, fixture: &Path, cases: Vec<Case>) -> Vec<Outcome>
             );
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             let err = run_cmd("ffmpeg", &arg_refs).err();
-            Outcome { name: c.name, output: out, error: err }
+            Outcome {
+                name: c.name,
+                output: out,
+                error: err,
+            }
         })
         .collect()
 }
@@ -204,7 +212,11 @@ fn run_video_cases(dir: &Path, fixture: &Path, cases: Vec<Case>) -> Vec<Outcome>
             );
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             let err = run_cmd("ffmpeg", &arg_refs).err();
-            Outcome { name: c.name, output: out, error: err }
+            Outcome {
+                name: c.name,
+                output: out,
+                error: err,
+            }
         })
         .collect()
 }
@@ -599,9 +611,7 @@ fn h264_cases() -> Vec<Case> {
                 for pix_fmt in ["yuv420p", "yuv422p", "yuv444p"] {
                     for tune in ["none", "film", "animation", "grain"] {
                         v.push(Case {
-                            name: format!(
-                                "h264_crf{crf}_{preset}_{profile}_{pix_fmt}_{tune}"
-                            ),
+                            name: format!("h264_crf{crf}_{preset}_{profile}_{pix_fmt}_{tune}"),
                             ext: "mp4",
                             opts: ConvertOptions {
                                 output_format: "mp4".into(),
@@ -832,9 +842,7 @@ fn gif_cases() -> Vec<Case> {
                 for dither in ["none", "bayer", "floyd"] {
                     for loop_mode in ["infinite", "once", "none"] {
                         v.push(Case {
-                            name: format!(
-                                "gif_w{width}_f{fps}_p{palette}_{dither}_{loop_mode}"
-                            ),
+                            name: format!("gif_w{width}_f{fps}_p{palette}_{dither}_{loop_mode}"),
                             ext: "gif",
                             opts: ConvertOptions {
                                 output_format: "gif".into(),
