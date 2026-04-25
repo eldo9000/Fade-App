@@ -4,11 +4,12 @@
 //! capture stderr for failure diagnosis.
 //!
 //! Formats that assimp cannot handle (USD, USDZ, Alembic, Blender native)
-//! are delegated to `model_blender::run` via `needs_blender`.
+//! are delegated to `model_blender::convert` via `needs_blender`.
 
 use crate::args::build_assimp_args;
 use crate::args::model_blender::needs_blender;
 use crate::convert::model_blender;
+use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -18,14 +19,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Window};
 
-pub fn run(
-    window: &Window,
-    job_id: &str,
+/// Pure conversion. Used directly by tests and any future non-Tauri caller.
+/// Dispatches to `model_blender::convert` for formats assimp cannot handle.
+pub fn convert(
     input: &str,
     output: &str,
     opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    job_id: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
     let input_ext = std::path::Path::new(input)
         .extension()
@@ -34,17 +37,10 @@ pub fn run(
     let output_ext = opts.output_format.as_str();
 
     if needs_blender(input_ext, output_ext) {
-        return model_blender::run(window, job_id, input, output, opts, processes, cancelled);
+        return model_blender::convert(input, output, opts, progress, job_id, processes, cancelled);
     }
 
-    let _ = window.emit(
-        "job-progress",
-        JobProgress {
-            job_id: job_id.to_string(),
-            percent: 0.0,
-            message: "Converting 3D model…".to_string(),
-        },
-    );
+    progress(ProgressEvent::Started);
 
     let args = build_assimp_args(input, output, opts);
 
@@ -111,14 +107,7 @@ pub fn run(
     }
 
     if success {
-        let _ = window.emit(
-            "job-progress",
-            JobProgress {
-                job_id: job_id.to_string(),
-                percent: 100.0,
-                message: "Done".to_string(),
-            },
-        );
+        progress(ProgressEvent::Done);
         ConvertResult::Done
     } else {
         ConvertResult::Error(if stderr_content.trim().is_empty() {
@@ -127,4 +116,45 @@ pub fn run(
             truncate_stderr(&stderr_content)
         })
     }
+}
+
+pub fn run(
+    window: &Window,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    opts: &ConvertOptions,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: Arc<AtomicBool>,
+) -> ConvertResult {
+    let job_id_owned = job_id.to_string();
+    let win = window.clone();
+    let mut emit = move |ev: ProgressEvent| {
+        let payload = match ev {
+            ProgressEvent::Started => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: "Converting 3D model…".to_string(),
+            },
+            ProgressEvent::Phase(msg) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: msg,
+            },
+            ProgressEvent::Percent(p) => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: (p * 100.0).clamp(0.0, 100.0),
+                message: String::new(),
+            },
+            ProgressEvent::Done => JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 100.0,
+                message: "Done".to_string(),
+            },
+        };
+        let _ = win.emit("job-progress", payload);
+    };
+    convert(
+        input, output, opts, &mut emit, job_id, processes, &cancelled,
+    )
 }
