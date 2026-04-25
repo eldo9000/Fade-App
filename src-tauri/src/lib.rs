@@ -248,12 +248,13 @@ pub struct ConvertOptions {
 
     // ── Professional video codec controls ──
     pub hap_format: Option<String>, // "hap" | "hap_alpha" | "hap_q" | "hap_q_alpha"
+    /// Requires output resolution ≥ 1280×720; returns error if opts.resolution is set below this.
     pub dnxhr_profile: Option<String>, // "dnxhr_lb" | "dnxhr_sq" | "dnxhr_hq" | "dnxhr_hqx" | "dnxhr_444"
-    pub dnxhd_bitrate: Option<u32>,    // Mbps: 36 | 115 | 120 | 145 | 175 | 185 | 220
-    pub dv_standard: Option<String>,   // "ntsc" | "pal"
+    pub dnxhd_bitrate: Option<u32>, // Mbps: 36 | 115 | 120 | 145 | 175 | 185 | 220
+    pub dv_standard: Option<String>, // "ntsc" | "pal"
     pub video_bitrate_mode: Option<String>, // "crf" | "vbr" | "cbr"
-    pub video_bitrate: Option<u32>,    // kbps — used when mode is "vbr" or "cbr"
-    pub prores_profile: Option<u32>,   // 0=Proxy 1=LT 2=422 3=HQ 4=4444 5=4444XQ
+    pub video_bitrate: Option<u32>, // kbps — used when mode is "vbr" or "cbr"
+    pub prores_profile: Option<u32>, // 0=Proxy 1=LT 2=422 3=HQ 4=4444 5=4444XQ
 
     // ── Format-specific image controls ──
     pub jpeg_chroma: Option<String>, // "420" | "422" | "444"
