@@ -1,4 +1,5 @@
 use crate::args::build_ffmpeg_video_args;
+use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{
     parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult, JobProgress,
 };
@@ -10,14 +11,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Window};
 
-pub fn run(
-    window: &Window,
-    job_id: &str,
+/// Pure conversion. Used directly by tests and any future non-Tauri caller.
+///
+/// Progress emission for ffmpeg-driven encodes uses a paired
+/// `Phase(<elapsed-message>)` + `Percent(<fraction>)` cadence: the wrapper
+/// coalesces a Phase immediately followed by a Percent into the single
+/// `{percent, message}` payload the frontend expects.
+pub fn convert(
     input: &str,
     output: &str,
     opts: &ConvertOptions,
+    progress: ProgressFn<'_>,
+    job_id: &str,
     processes: Arc<Mutex<HashMap<String, Child>>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
     let duration = probe_duration(input);
     let args = build_ffmpeg_video_args(input, output, opts);
@@ -55,19 +62,13 @@ pub fn run(
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
             if let Some(elapsed) = parse_out_time_ms(&line) {
-                let percent = if let Some(dur) = duration {
-                    ((elapsed / dur) * 100.0).min(99.0) as f32
+                let fraction = if let Some(dur) = duration {
+                    (elapsed / dur).min(0.99) as f32
                 } else {
                     0.0
                 };
-                let _ = window.emit(
-                    "job-progress",
-                    JobProgress {
-                        job_id: job_id.to_string(),
-                        percent,
-                        message: format!("{:.0}s elapsed", elapsed),
-                    },
-                );
+                progress(ProgressEvent::Phase(format!("{:.0}s elapsed", elapsed)));
+                progress(ProgressEvent::Percent(fraction));
             }
         }
     }
@@ -98,4 +99,38 @@ pub fn run(
             truncate_stderr(&error_output)
         })
     }
+}
+
+pub fn run(
+    window: &Window,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    opts: &ConvertOptions,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: Arc<AtomicBool>,
+) -> ConvertResult {
+    let job_id_owned = job_id.to_string();
+    let win = window.clone();
+    let mut pending_phase: Option<String> = None;
+    let mut emit = move |ev: ProgressEvent| match ev {
+        ProgressEvent::Phase(msg) => {
+            pending_phase = Some(msg);
+        }
+        ProgressEvent::Percent(p) => {
+            let message = pending_phase.take().unwrap_or_default();
+            let _ = win.emit(
+                "job-progress",
+                JobProgress {
+                    job_id: job_id_owned.clone(),
+                    percent: (p * 100.0).clamp(0.0, 100.0),
+                    message,
+                },
+            );
+        }
+        ProgressEvent::Started | ProgressEvent::Done => {}
+    };
+    convert(
+        input, output, opts, &mut emit, job_id, processes, &cancelled,
+    )
 }
