@@ -34,8 +34,6 @@ Third arc complete (3 tasks, all CI-green, 2026-04-25): `window_progress_emitter
 
 - **`$bindable` chain verified correct** — all mutation paths use `$bindable()` + `bind:` explicitly.
 - **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** Binary discovery and script path construction are not hardened for all deployment contexts. (BC-003/BC-004 code bugs resolved; runtime path fragility is a separate concern.)
-- **analysis-result one-shot listener race.** The one-shot event listener introduced in async IPC migration is set up before the invoke call; if the event fires before `unlisten` is registered on a very fast completion, the result may be missed. Structurally possible, not yet observed.
-
 **full_sweep.rs diagnostic findings (2026-04-25):**
 - **H.264 profile/pix_fmt impossible combos — CLOSED (TASK-1 + TASK-2 this arc).** `full_sweep` surfaced 660 failing H.264 combos; fixed by arg-builder auto-promotion (`723cbff`) + UI disable of unreachable profile buttons (`50c89cb`).
 - **Missing `1px.jpg` fixture — CLOSED (TASK-4 this arc).** Pre-existing ignored test in `lib.rs` referenced a non-existent fixture; fixture restored (`8b61613`).
