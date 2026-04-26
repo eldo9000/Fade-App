@@ -730,6 +730,40 @@ fn dnxhr_cases() -> Vec<Case> {
         .collect()
 }
 
+fn dnxhd_cases() -> Vec<Case> {
+    // DNxHD is a fixed-bitrate codec: specific bitrates are only valid at exact
+    // resolution × frame-rate combinations. The sweep intentionally passes every
+    // documented bitrate through without guards — failures surface BC-005 violations.
+    [36u32, 115, 120, 145, 175, 185, 220]
+        .into_iter()
+        .map(|br| Case {
+            name: format!("dnxhd_br{br}"),
+            ext: "mov",
+            opts: ConvertOptions {
+                output_format: "mov".into(),
+                codec: Some("dnxhd".into()),
+                dnxhd_bitrate: Some(br),
+                ..Default::default()
+            },
+        })
+        .collect()
+}
+
+fn cineform_cases() -> Vec<Case> {
+    // cfhd quality scale: 0 = best (lossless), 12 = worst.
+    // ConvertOptions has no cineform_quality field — the arg builder hardcodes -q:v 3.
+    // A single default case confirms the codec path works end-to-end.
+    vec![Case {
+        name: "cineform_default".into(),
+        ext: "mov",
+        opts: ConvertOptions {
+            output_format: "mov".into(),
+            codec: Some("cineform".into()),
+            ..Default::default()
+        },
+    }]
+}
+
 fn other_video_cases() -> Vec<Case> {
     let mut v = vec![
         Case {
@@ -876,6 +910,8 @@ fn video_full() {
     cases.extend(vp9_cases());
     cases.extend(prores_cases());
     cases.extend(dnxhr_cases());
+    cases.extend(dnxhd_cases());
+    cases.extend(cineform_cases());
     cases.extend(other_video_cases());
     cases.extend(gif_cases());
 
