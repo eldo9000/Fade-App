@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-25 (updated post-sprint)
+Last updated: 2026-04-25 (updated post-sprint 3)
 
 ---
 
@@ -16,7 +16,7 @@ CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
 
-Second arc complete (3 tasks, all CI-green, 2026-04-25). No specific arc in flight — ready for new feature work or another diagnostic sweep.
+Third arc complete (3 tasks, all CI-green, 2026-04-25): `window_progress_emitter` helper extracted deduping 12 `run()` wrappers (`da6ca88`); Blender `locate_script()` hardened with macOS bundle + Linux FHS paths (`fc1d9d3`); analysis-result `invoke` moved inside `listen().then()` to close listener race (`ce5b37e`). No specific arc in flight — ready for new feature work or another diagnostic sweep.
 
 ## Audit outcome summary
 
@@ -45,4 +45,4 @@ Second arc complete (3 tasks, all CI-green, 2026-04-25). No specific arc in flig
 
 ## Mode
 
-Active development. Two diagnostic-driven cleanup arcs closed 2026-04-25 (8 tasks total). No arc in flight.
+Active development. Three arcs closed 2026-04-25 (11 tasks total). No arc in flight.
