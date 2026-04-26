@@ -11,22 +11,50 @@ use std::sync::Arc;
 use tauri::Window;
 
 fn locate_script() -> Result<PathBuf, String> {
-    // Try cwd-relative first (dev mode), then exe-relative (packaged app).
-    let rel = PathBuf::from("scripts/blender_convert.py");
-    if rel.exists() {
-        return Ok(rel);
-    }
+    // Build a list of candidate paths in priority order:
+    //   (a) cwd-relative — works in `tauri dev`
+    //   (b) <exe_parent>/scripts/... — works when binary is next to scripts dir
+    //   (c) <exe_parent>/../Resources/scripts/... — macOS app bundle layout
+    //   (d) <exe_parent>/../share/fade/scripts/... — Linux FHS layout
+    let script = "scripts/blender_convert.py";
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
+    // (a) CWD-relative
+    candidates.push(PathBuf::from(script));
+
+    // (b), (c), (d) exe-relative
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join("scripts/blender_convert.py");
-            if candidate.exists() {
-                return Ok(candidate);
+            // (b) sibling of binary
+            candidates.push(dir.join(script));
+            if let Some(parent) = dir.parent() {
+                // (c) macOS app bundle: Contents/MacOS/../Resources/scripts/...
+                candidates.push(parent.join("Resources").join(script));
+                // (d) Linux FHS: bin/../share/fade/scripts/...
+                candidates.push(parent.join("share/fade").join(script));
             }
         }
     }
 
-    Err("blender_convert.py not found — expected at scripts/blender_convert.py relative to the working directory or executable".to_string())
+    for c in &candidates {
+        if c.exists() {
+            return Ok(c.clone());
+        }
+    }
+
+    // None found — build a diagnostic message listing all tried absolute paths.
+    let tried: Vec<String> = candidates
+        .iter()
+        .map(|p| {
+            std::fs::canonicalize(p)
+                .map(|abs| abs.display().to_string())
+                .unwrap_or_else(|_| p.display().to_string())
+        })
+        .collect();
+    Err(format!(
+        "blender_convert.py not found. Tried:\n  {}",
+        tried.join("\n  ")
+    ))
 }
 
 /// Pure conversion. Used directly by tests and any future non-Tauri caller.
