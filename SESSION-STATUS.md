@@ -16,7 +16,9 @@ CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
 
-Third arc complete (3 tasks, all CI-green, 2026-04-25): `window_progress_emitter` helper extracted deduping 12 `run()` wrappers (`da6ca88`); Blender `locate_script()` hardened with macOS bundle + Linux FHS paths (`fc1d9d3`); analysis-result `invoke` moved inside `listen().then()` to close listener race (`ce5b37e`). No specific arc in flight — ready for new feature work or another diagnostic sweep.
+Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known Risks race entry removed (`71f5d93`); DNxHD bitrate + CineForm sweep cases added to `full_sweep.rs` (`1dbf064`); `window_progress_emitter_batched` helper added, `video.rs`/`audio.rs` run() wrappers migrated (`af0c7b6`, `263d7d2`). `archive.rs` remains inline — 0–100 percent scale mismatch with helper, TODO left in code. No arc in flight.
+
+Previous: Third arc complete (3 tasks, all CI-green, 2026-04-25): `window_progress_emitter` helper extracted deduping 12 `run()` wrappers (`da6ca88`); Blender `locate_script()` hardened with macOS bundle + Linux FHS paths (`fc1d9d3`); analysis-result `invoke` moved inside `listen().then()` to close listener race (`ce5b37e`).
 
 ## Audit outcome summary
 
