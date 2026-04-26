@@ -490,17 +490,16 @@
         }).then((fn) => {
           if (settled) { fn(); return; }
           unlistenFn = fn;
-        }).catch((err) => settle(reject, err));
-
-        invoke('preview_diff', {
-          jobId,
-          path: selectedItem.path,
-          codec: videoOptions.codec ?? 'h264',
-          resolution: videoOptions.resolution ?? 'original',
-          atSecs: at,
-          durationSecs: 1.0,
-          handleSecs: diffHandleSecs,
-          amplify: 8.0,
+          invoke('preview_diff', {
+            jobId,
+            path: selectedItem.path,
+            codec: videoOptions.codec ?? 'h264',
+            resolution: videoOptions.resolution ?? 'original',
+            atSecs: at,
+            durationSecs: 1.0,
+            handleSecs: diffHandleSecs,
+            amplify: 8.0,
+          }).catch((err) => settle(reject, err));
         }).catch((err) => settle(reject, err));
       });
       if (gen !== _diffPreviewGen) return;  // stale — newer diff request in flight

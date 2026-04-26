@@ -105,9 +105,8 @@
       }).then((fn) => {
         if (settled) { fn(); return; }
         unlistenFn = fn;
+        invoke(command, { jobId, ...params }).catch((err) => settle(reject, err));
       }).catch((err) => settle(reject, err));
-
-      invoke(command, { jobId, ...params }).catch((err) => settle(reject, err));
     });
   }
 
