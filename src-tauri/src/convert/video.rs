@@ -1,8 +1,6 @@
 use crate::args::build_ffmpeg_video_args;
 use crate::convert::progress::{ProgressEvent, ProgressFn};
-use crate::{
-    parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult,
-};
+use crate::{parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
