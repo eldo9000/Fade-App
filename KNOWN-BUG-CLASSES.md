@@ -30,3 +30,67 @@
 **Description:** `bpy.ops.wm.usd_import` can return `{'FINISHED'}` and exit 0 while having imported nothing into the scene (e.g. unsupported schema, missing textures causing early abort). Without an explicit check the script proceeds to export an empty file. Always verify `len(bpy.data.objects) > 0` after a USD import before proceeding to export.
 **Pattern:** Any Blender import operator that can return `FINISHED` without populating the scene — add an object-count check after import before export.
 **Resolved:** Fixed in commit `9b13f41` (Blender headless backend). `len(bpy.data.objects) == 0` check present at line 44, raising `RuntimeError` with a clear message before export proceeds.
+
+
+## BC-005: Encoder-constraint — UI presents invalid encoder-option combinations
+**First observed:** 2026-04-24 (recognized as a class)
+**Files:**
+- `src-tauri/src/args/video.rs` — H.264 profile/pix_fmt auto-promotion (`h264_effective_profile`, lines 257–276)
+- `src-tauri/src/args/image.rs` — AVIF libheif speed clamp (line 178)
+- `src-tauri/src/convert/video.rs` — DNxHR minimum-resolution guard (lines 29–47)
+
+**Description:** Fade's UI presented encoder-option combinations that the underlying encoder (FFmpeg or ImageMagick/libheif) either silently rejects or produces broken output for. Each instance was fixed independently before the class was recognized. Three confirmed instances:
+
+1. **H.264 profile/pix_fmt impossible combos** — `yuv422p` and `yuv444p` pixel formats are incompatible with `baseline`, `main`, and `high` H.264 profiles; only `high422`/`high444` support them. Fade's UI allowed selecting any profile regardless of pix_fmt. Fix: `h264_effective_profile()` in `src-tauri/src/args/video.rs` auto-promotes the emitted ffmpeg profile arg when pix_fmt forces a higher-chroma profile, and the UI disables unreachable profile buttons. Commits: `723cbff` (arg fix), `50c89cb` (UI disable).
+   > Authoritative source — `src-tauri/src/args/video.rs:266-276`:
+   > ```rust
+   > fn h264_effective_profile<'a>(profile: Option<&str>, pix_fmt: Option<&str>) -> &'a str {
+   >     match pix_fmt {
+   >         Some("yuv422p") => "high422",
+   >         Some("yuv444p") => "high444",
+   >         _ => match profile {
+   >             Some("baseline") => "baseline",
+   >             Some("main") => "main",
+   >             _ => "high",
+   >         },
+   >     }
+   > }
+   > ```
+
+2. **AVIF libheif speed cap** — ImageMagick's `heic:speed` define is backed by libheif, which accepts values 0–9 only; values above 9 are silently clamped or produce encoder errors. Fade's UI allowed speed values up to 10. Fix: `.min(9)` clamp in `src-tauri/src/args/image.rs`. Commit: `457d22c`.
+   > Authoritative source — `src-tauri/src/args/image.rs:175-179`:
+   > ```rust
+   > "avif" => {
+   >     if let Some(s) = opts.avif_speed {
+   >         args.push("-define".to_string());
+   >         args.push(format!("heic:speed={}", s.min(9)));
+   >     }
+   > ```
+
+3. **DNxHR minimum-resolution guard** — The FFmpeg `dnxhd` encoder (which handles DNxHR profiles) requires a minimum output resolution of 1280×720; sub-HD resolutions produce an encoder error. Fade's UI allowed setting arbitrary resolutions with DNxHR selected. Fix: pre-flight resolution check in `src-tauri/src/convert/video.rs` returns a clear error before spawning FFmpeg. Commit: `0d1c045`.
+   > Authoritative source — `src-tauri/src/convert/video.rs:29-43`:
+   > ```rust
+   > // ── DNxHR minimum-resolution guard ──────────────────────────────────
+   > // The dnxhd encoder (which handles DNxHR) requires at least 1280×720.
+   > // If the caller has explicitly set a resolution we can check it now and
+   > // return a clear error before spawning ffmpeg.
+   > if opts.codec.as_deref() == Some("dnxhr") {
+   >     if let Some(res) = &opts.resolution {
+   >         if let Some((w_str, h_str)) = res.split_once('x') {
+   >             if let (Ok(w), Ok(h)) = (w_str.parse::<u32>(), h_str.parse::<u32>()) {
+   >                 if w < 1280 || h < 720 {
+   >                     return ConvertResult::Error(
+   >                         "DNxHR requires a minimum output resolution of 1280×720. \
+   >                          Set a higher resolution or leave unscaled."
+   >                             .to_string(),
+   >                     );
+   >                 }
+   >             }
+   >         }
+   >     }
+   > }
+   > ```
+
+**Pattern:** When the UI exposes encoder options (codec, pixel format, profile, speed, resolution) as independent controls, any combination that the underlying encoder rejects will only surface as a cryptic CLI error at runtime. Before adding a new encoder-option control, explicitly document which combinations are invalid and add a pre-flight guard in the arg builder (clamp, auto-promote, or early error). Do not rely on the encoder to produce a useful error message.
+
+**Resolved:** All three instances fixed. `723cbff`/`50c89cb` (H.264), `457d22c` (AVIF), `0d1c045` (DNxHR). No open instances known as of 2026-04-25.
