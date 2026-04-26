@@ -1,0 +1,5 @@
+case_id,enabled,lane,mission,command,expected_report,severity,owner,notes
+M-A-001,true,prompt,MP4 basic conversion obedience,./codex/scripts/mission-a.sh,codex/reports/mission-a-latest.md,P1,codex,Core MP4 conversion flow sanity
+M-B-001,true,prompt,MP4 codec stress,./codex/scripts/mission-b.sh,codex/reports/mission-b-latest.md,P1,codex,Codec/state regression sweep
+M-C-001,true,prompt,MP4 resolution/fps persistence,./codex/scripts/mission-c.sh,codex/reports/mission-c-latest.md,P1,codex,Resolution/FPS persistence checks
+M-D-001,true,prompt,Error-surface quality,./codex/scripts/mission-d.sh,codex/reports/mission-d-latest.md,P1,codex,Validation and error classification checks

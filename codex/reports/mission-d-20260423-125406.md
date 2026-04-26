@@ -1,0 +1,21 @@
+# Mission D Report
+
+- Mission: Error-Surface Quality
+- Date: 2026-04-23 19:54:11 UTC
+- Overall: PASS
+
+## Checks
+1. UI operations error-path coverage
+- Command: npm test -- src/tests/OperationsPanel.test.js
+- Status: PASS
+- Log: codex/logs/mission-d-ui-20260423-125406.log
+
+2. Backend validation/error classification checks
+- Command 1: cargo test --manifest-path src-tauri/Cargo.toml validate_output_name_
+- Command 2: cargo test --manifest-path src-tauri/Cargo.toml validate_output_dir_
+- Command 3: cargo test --manifest-path src-tauri/Cargo.toml op_result_arbitrary_error_produces_error_variant
+- Status: PASS
+- Log: codex/logs/mission-d-backend-20260423-125406.log
+
+## Notes
+- This mission validates invalid output path handling and error-result classification behavior.
