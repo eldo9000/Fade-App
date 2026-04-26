@@ -38,3 +38,50 @@ pub use subtitle::run as run_subtitle_convert;
 pub use timeline::run as run_timeline_convert;
 pub use tracker::run as run_tracker_convert;
 pub use video::run as run_video_convert;
+
+/// Build a standard `job-progress` emitter closure for `run()` wrappers that
+/// follow the canonical `ProgressEvent → JobProgress → window.emit` pattern.
+///
+/// The returned closure maps:
+/// - `Started`     → `{percent: 0.0, message: starting_msg}`
+/// - `Phase(msg)`  → `{percent: 0.0, message: msg}`
+/// - `Percent(p)`  → `{percent: p*100 clamped 0–100, message: ""}`
+/// - `Done`        → `{percent: 100.0, message: "Done"}`
+///
+/// Callers that batch Phase+Percent (e.g. `video::run`, `audio::run`) must
+/// NOT use this helper — their closure logic cannot be expressed here.
+pub fn window_progress_emitter(
+    window: &tauri::Window,
+    job_id: &str,
+    starting_msg: &str,
+) -> impl FnMut(ProgressEvent) {
+    use tauri::Emitter as _;
+    let win = window.clone();
+    let job_id_owned = job_id.to_string();
+    let starting_msg_owned = starting_msg.to_string();
+    move |ev: ProgressEvent| {
+        let payload = match ev {
+            ProgressEvent::Started => crate::JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: starting_msg_owned.clone(),
+            },
+            ProgressEvent::Phase(msg) => crate::JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 0.0,
+                message: msg,
+            },
+            ProgressEvent::Percent(p) => crate::JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: (p * 100.0).clamp(0.0, 100.0),
+                message: String::new(),
+            },
+            ProgressEvent::Done => crate::JobProgress {
+                job_id: job_id_owned.clone(),
+                percent: 100.0,
+                message: "Done".to_string(),
+            },
+        };
+        let _ = win.emit("job-progress", payload);
+    }
+}

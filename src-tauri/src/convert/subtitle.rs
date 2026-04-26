@@ -9,7 +9,7 @@
 
 use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::operations::run_ffmpeg as op_run_ffmpeg;
-use crate::{ConvertOptions, JobProgress};
+use crate::ConvertOptions;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs;
@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tauri::{Emitter, Window};
+use tauri::Window;
 
 fn ext_of(path: &str) -> String {
     Path::new(path)
@@ -281,33 +281,7 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let job_id_owned = job_id.to_string();
-    let win = window.clone();
-    let mut emit = move |ev: ProgressEvent| {
-        let payload = match ev {
-            ProgressEvent::Started => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: "Converting subtitle…".to_string(),
-            },
-            ProgressEvent::Phase(msg) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: msg,
-            },
-            ProgressEvent::Percent(p) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: (p * 100.0).clamp(0.0, 100.0),
-                message: String::new(),
-            },
-            ProgressEvent::Done => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 100.0,
-                message: "Done".to_string(),
-            },
-        };
-        let _ = win.emit("job-progress", payload);
-    };
+    let mut emit = crate::convert::window_progress_emitter(window, job_id, "Converting subtitle…");
     let mut runner = WindowFfmpegRunner {
         window,
         job_id: job_id.to_string(),

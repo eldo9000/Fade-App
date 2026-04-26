@@ -9,7 +9,7 @@
 //! extension) and pass the parent dir via `--output-dir`.
 
 use crate::convert::progress::{ProgressEvent, ProgressFn};
-use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobProgress};
+use crate::{truncate_stderr, ConvertOptions, ConvertResult};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Window};
+use tauri::Window;
 
 /// Pure conversion. Used directly by tests and any future non-Tauri caller.
 pub fn convert(
@@ -142,33 +142,7 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> ConvertResult {
-    let job_id_owned = job_id.to_string();
-    let win = window.clone();
-    let mut emit = move |ev: ProgressEvent| {
-        let payload = match ev {
-            ProgressEvent::Started => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: "Converting notebook…".to_string(),
-            },
-            ProgressEvent::Phase(msg) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: msg,
-            },
-            ProgressEvent::Percent(p) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: (p * 100.0).clamp(0.0, 100.0),
-                message: String::new(),
-            },
-            ProgressEvent::Done => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 100.0,
-                message: "Done".to_string(),
-            },
-        };
-        let _ = win.emit("job-progress", payload);
-    };
+    let mut emit = crate::convert::window_progress_emitter(window, job_id, "Converting notebook…");
     convert(
         input, output, opts, &mut emit, job_id, processes, &cancelled,
     )

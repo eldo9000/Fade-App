@@ -1,10 +1,10 @@
 use crate::convert::progress::{ProgressEvent, ProgressFn};
-use crate::{tool_available, truncate_stderr, ConvertOptions, JobProgress};
+use crate::{tool_available, truncate_stderr, ConvertOptions};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tauri::{Emitter, Window};
+use tauri::Window;
 
 /// Pure conversion. Used directly by tests and any future non-Tauri caller.
 /// The dispatcher matches on the input extension first to handle binary
@@ -61,33 +61,7 @@ pub fn run(
     output_path: &str,
     opts: &ConvertOptions,
 ) -> Result<(), String> {
-    let job_id_owned = job_id.to_string();
-    let win = window.clone();
-    let mut emit = move |ev: ProgressEvent| {
-        let payload = match ev {
-            ProgressEvent::Started => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: "Converting data…".to_string(),
-            },
-            ProgressEvent::Phase(msg) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: msg,
-            },
-            ProgressEvent::Percent(p) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: (p * 100.0).clamp(0.0, 100.0),
-                message: String::new(),
-            },
-            ProgressEvent::Done => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 100.0,
-                message: "Done".to_string(),
-            },
-        };
-        let _ = win.emit("job-progress", payload);
-    };
+    let mut emit = crate::convert::window_progress_emitter(window, job_id, "Converting data…");
     let cancelled = Arc::new(AtomicBool::new(false));
     convert(input_path, output_path, opts, &mut emit, &cancelled)
 }
