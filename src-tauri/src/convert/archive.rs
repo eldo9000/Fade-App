@@ -185,6 +185,10 @@ pub fn run(
     } else {
         "Repacking…".to_string()
     };
+    // TODO(batch-scale): archive::convert() emits Percent in 0–100 range
+    // (not 0.0–1.0), so window_progress_emitter() cannot be used here without
+    // a scale change — that would alter archive conversion behaviour which is
+    // out of scope. Left inline until archive percent scale is normalised.
     let mut emit = move |ev: ProgressEvent| {
         let payload = match ev {
             ProgressEvent::Started => JobProgress {

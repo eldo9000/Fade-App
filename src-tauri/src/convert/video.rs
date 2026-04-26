@@ -1,7 +1,7 @@
 use crate::args::build_ffmpeg_video_args;
 use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{
-    parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult, JobProgress,
+    parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult,
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Window};
+use tauri::Window;
 
 /// Pure conversion. Used directly by tests and any future non-Tauri caller.
 ///
@@ -130,26 +130,7 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> ConvertResult {
-    let job_id_owned = job_id.to_string();
-    let win = window.clone();
-    let mut pending_phase: Option<String> = None;
-    let mut emit = move |ev: ProgressEvent| match ev {
-        ProgressEvent::Phase(msg) => {
-            pending_phase = Some(msg);
-        }
-        ProgressEvent::Percent(p) => {
-            let message = pending_phase.take().unwrap_or_default();
-            let _ = win.emit(
-                "job-progress",
-                JobProgress {
-                    job_id: job_id_owned.clone(),
-                    percent: (p * 100.0).clamp(0.0, 100.0),
-                    message,
-                },
-            );
-        }
-        ProgressEvent::Started | ProgressEvent::Done => {}
-    };
+    let mut emit = crate::convert::window_progress_emitter_batched(window, job_id);
     convert(
         input, output, opts, &mut emit, job_id, processes, &cancelled,
     )

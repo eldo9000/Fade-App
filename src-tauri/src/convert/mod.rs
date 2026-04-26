@@ -48,8 +48,12 @@ pub use video::run as run_video_convert;
 /// - `Percent(p)`  → `{percent: p*100 clamped 0–100, message: ""}`
 /// - `Done`        → `{percent: 100.0, message: "Done"}`
 ///
-/// Callers that batch Phase+Percent (e.g. `video::run`, `audio::run`) must
-/// NOT use this helper — their closure logic cannot be expressed here.
+/// For callers that batch Phase+Percent (e.g. `video::run`, `audio::run`),
+/// use [`window_progress_emitter_batched`] instead.
+///
+/// Note: `archive::run` emits `Percent` in the 0–100 range (not 0.0–1.0),
+/// which is incompatible with this helper's `p * 100.0` scaling. Archive
+/// remains inline with its own closure.
 pub fn window_progress_emitter(
     window: &tauri::Window,
     job_id: &str,
@@ -83,5 +87,44 @@ pub fn window_progress_emitter(
             },
         };
         let _ = win.emit("job-progress", payload);
+    }
+}
+
+/// Build a batched `job-progress` emitter for `run()` wrappers whose
+/// `convert()` emits paired `Phase(msg)` + `Percent(p)` events (e.g.
+/// `video::convert` and `audio::convert`).
+///
+/// The returned closure buffers a `Phase` message and flushes it together
+/// with the next `Percent` as a single `{percent, message}` payload. This
+/// lets the frontend display both the elapsed label and the progress value
+/// in one update rather than two.
+///
+/// - `Started` and `Done` are silently ignored (these modules do not emit
+///   a visible "Starting…" or "Done" phase — the shell handles job lifecycle).
+/// - `Percent(p)` expects a 0.0–1.0 fraction; it is scaled to 0–100.
+pub fn window_progress_emitter_batched(
+    window: &tauri::Window,
+    job_id: &str,
+) -> impl FnMut(ProgressEvent) {
+    use tauri::Emitter as _;
+    let win = window.clone();
+    let job_id_owned = job_id.to_string();
+    let mut pending_phase: Option<String> = None;
+    move |ev: ProgressEvent| match ev {
+        ProgressEvent::Phase(msg) => {
+            pending_phase = Some(msg);
+        }
+        ProgressEvent::Percent(p) => {
+            let message = pending_phase.take().unwrap_or_default();
+            let _ = win.emit(
+                "job-progress",
+                crate::JobProgress {
+                    job_id: job_id_owned.clone(),
+                    percent: (p * 100.0).clamp(0.0, 100.0),
+                    message,
+                },
+            );
+        }
+        ProgressEvent::Started | ProgressEvent::Done => {}
     }
 }
