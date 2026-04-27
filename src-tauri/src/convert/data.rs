@@ -177,6 +177,23 @@ fn sqlite_value_to_json(v: rusqlite::types::Value) -> serde_json::Value {
     }
 }
 
+/// Reject any path containing characters that could break out of a duckdb
+/// SQL single-quoted string literal. The single-quote escape (doubling) is
+/// the surface defence; this validator is the inner layer so we don't rely
+/// on escape correctness alone. Called before SQL interpolation in any
+/// duckdb-CLI codepath.
+fn validate_path_safe_for_sql(path: &str) -> Result<(), String> {
+    const REJECTED: &[char] = &['\'', '\\', ';', '\n', '\r', '\0'];
+    if let Some(c) = path.chars().find(|c| REJECTED.contains(c)) {
+        return Err(format!(
+            "Path contains character '{}' which is not safe for SQL interpolation: {}",
+            c.escape_default(),
+            path
+        ));
+    }
+    Ok(())
+}
+
 /// Parquet → CSV / JSON via the duckdb CLI. We prefer the CLI over a Rust
 /// parquet crate to keep the binary lean — parquet pulls in arrow which is
 /// tens of MB. duckdb's `COPY ... TO ... (FORMAT ...)` hits the disk directly.
@@ -207,6 +224,12 @@ fn run_parquet(input_path: &str, output_path: &str, out_fmt: &str) -> Result<(),
             ));
         }
     };
+
+    // Defence-in-depth: reject paths containing characters that could break
+    // out of duckdb's SQL string literal even after the escape below. TASK-2
+    // already validates paths at the IPC boundary; this is the inner layer.
+    validate_path_safe_for_sql(input_path)?;
+    validate_path_safe_for_sql(output_path)?;
 
     // duckdb escapes single quotes by doubling them in SQL string literals.
     let sql_in = input_path.replace('\'', "''");
@@ -432,7 +455,45 @@ fn value_to_xml(key: &str, val: &serde_json::Value, out: &mut String, indent: &s
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_input, write_output};
+    use super::{parse_input, validate_path_safe_for_sql, write_output};
+
+    #[test]
+    fn validate_path_safe_for_sql_accepts_normal_path() {
+        assert!(validate_path_safe_for_sql("/tmp/data/input.parquet").is_ok());
+        assert!(validate_path_safe_for_sql("/Users/eldo/Some Folder/file.csv").is_ok());
+    }
+
+    #[test]
+    fn validate_path_safe_for_sql_rejects_single_quote() {
+        let err = validate_path_safe_for_sql("/tmp/it's.parquet").expect_err("must reject");
+        assert!(err.contains('\''), "error should name the bad char: {err}");
+    }
+
+    #[test]
+    fn validate_path_safe_for_sql_rejects_backslash() {
+        let err = validate_path_safe_for_sql("/tmp/back\\slash.parquet").expect_err("must reject");
+        assert!(
+            err.contains("\\\\"),
+            "error should name the bad char: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_path_safe_for_sql_rejects_semicolon() {
+        let err =
+            validate_path_safe_for_sql("/tmp/foo.parquet'; DROP TABLE").expect_err("must reject");
+        // The single quote is hit first in this string, so just confirm rejection.
+        assert!(!err.is_empty());
+        // Pure-semicolon case to confirm the semicolon path also rejects.
+        let err2 = validate_path_safe_for_sql("/tmp/foo;.parquet").expect_err("must reject");
+        assert!(err2.contains(';'), "error should name the bad char: {err2}");
+    }
+
+    #[test]
+    fn validate_path_safe_for_sql_rejects_newline() {
+        let err = validate_path_safe_for_sql("/tmp/foo\n.parquet").expect_err("must reject");
+        assert!(err.contains("\\n"), "error should name the bad char: {err}");
+    }
 
     #[test]
     fn yaml_roundtrip_preserves_structure() {
