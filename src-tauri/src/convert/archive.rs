@@ -117,7 +117,10 @@ pub fn convert(
     }
 
     // Convert: extract to temp dir, repack to new format.
-    let tmp_dir = format!("/tmp/fade_archive_{}", job_id);
+    let tmp_dir = std::env::temp_dir()
+        .join(format!("fade_archive_{}", job_id))
+        .to_string_lossy()
+        .into_owned();
     std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
 
     let extract_res = extract_archive(
@@ -489,7 +492,10 @@ fn repack_tar_compressed(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: &Arc<AtomicBool>,
 ) -> ConvertResult {
-    let tmp_tar = format!("/tmp/fade_tar_stage_{}.tar", job_id);
+    let tmp_tar = std::env::temp_dir()
+        .join(format!("fade_tar_stage_{}.tar", job_id))
+        .to_string_lossy()
+        .into_owned();
 
     // ── Step 1: create uncompressed .tar ─────────────────────────────────────
     let step1_args: Vec<String> = vec!["a".to_string(), tmp_tar.clone(), format!("{}/*", src_dir)];
