@@ -2761,7 +2761,7 @@ mod tests {
         };
         let args = build_ffmpeg_video_args("in.mkv", "out.mkv", &opts);
         assert!(vf_contains(&args, "1280:720"));
-        assert!(vf_contains(&args, "subtitles=in.mkv"));
+        assert!(vf_contains(&args, "subtitles='in.mkv'"));
     }
 
     #[test]
@@ -2773,7 +2773,7 @@ mod tests {
             ..Default::default()
         };
         let args = build_ffmpeg_video_args("in.mkv", "out.mkv", &opts);
-        assert!(vf_contains(&args, "subtitles=in.mkv"));
+        assert!(vf_contains(&args, "subtitles='in.mkv'"));
     }
 
     #[test]
