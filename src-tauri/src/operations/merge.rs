@@ -103,6 +103,11 @@ pub fn run(
         true
     };
 
+    // Cleanup deferred until after `run_ffmpeg` returns so the temp file is
+    // guaranteed to exist when ffmpeg opens it (no sleep-based race window,
+    // works on Windows where open files cannot be deleted).
+    let mut list_path_to_cleanup: Option<String> = None;
+
     let args = if streams_match() && has_audio.iter().all(|&a| a) {
         // Fast path: concat demuxer (stream-copy)
         let list_path = write_temp_concat_list(input_paths)?;
@@ -122,12 +127,7 @@ pub fn run(
             "pipe:1".to_string(),
             output_path.to_string(),
         ];
-        // Schedule cleanup; errors are non-fatal
-        std::thread::spawn(move || {
-            // Wait a moment for FFmpeg to open the file before deleting
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let _ = std::fs::remove_file(&list_path);
-        });
+        list_path_to_cleanup = Some(list_path);
         args
     } else {
         // Slow path: concat filter (re-encode)
@@ -189,5 +189,14 @@ pub fn run(
         args
     };
 
-    run_ffmpeg(window, job_id, &args, total_duration, processes, cancelled)
+    let result = run_ffmpeg(window, job_id, &args, total_duration, processes, cancelled);
+
+    // Deterministic cleanup: runs on both success and failure, after ffmpeg
+    // has fully exited and released any handle to the file. Errors are
+    // non-fatal — a leaked temp file is preferable to masking the real error.
+    if let Some(p) = list_path_to_cleanup {
+        let _ = std::fs::remove_file(&p);
+    }
+
+    result
 }
