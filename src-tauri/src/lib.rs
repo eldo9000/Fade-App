@@ -534,6 +534,36 @@ pub(crate) fn validate_no_traversal(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate the trio of paths the `convert_file` IPC entry assembles before
+/// touching the IO layer:
+/// - `input_path`: must not contain `..`
+/// - `output_dir` (if specified): must be inside an allowed root and free of `..`
+/// - `output_path`: file-name component must be a safe stem
+///
+/// `convert_file` itself runs these checks inline at the call sites where each
+/// value becomes available (the seq-dir branch validates its base name before
+/// `create_dir_all`, etc.) — this helper exists so unit tests can pin the
+/// CLAUDE.md "validate before any CLI arg interpolation" contract for the
+/// conversion path without needing a Tauri runtime.
+#[cfg(test)]
+pub(crate) fn validate_convert_inputs(
+    input_path: &str,
+    output_dir: Option<&str>,
+    output_path: &str,
+) -> Result<(), String> {
+    validate_no_traversal(input_path)?;
+    if let Some(dir) = output_dir {
+        validate_output_dir(dir)?;
+    }
+    if let Some(name) = std::path::Path::new(output_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+    {
+        validate_output_name(name)?;
+    }
+    Ok(())
+}
+
 /// Parse out_time_ms line from ffmpeg -progress output to get elapsed seconds.
 pub(crate) fn parse_out_time_ms(line: &str) -> Option<f64> {
     let val = line.strip_prefix("out_time_ms=")?;
@@ -677,6 +707,7 @@ fn convert_file(
             input_path
         ));
     }
+    validate_no_traversal(&input_path)?;
 
     // When extracting audio from video, output extension comes from audio_format, not output_format
     let ext = if options.extract_audio == Some(true) {
@@ -750,6 +781,9 @@ fn convert_file(
     validate_suffix(suffix)?;
     let separator = options.output_separator.as_deref().unwrap_or("_");
     validate_separator(separator)?;
+    if let Some(dir) = options.output_dir.as_deref() {
+        validate_output_dir(dir)?;
+    }
 
     let output_path = if let Some(real_ext) = ext.strip_prefix("seq_") {
         // Image sequences go to a directory of frames rather than a single file.
@@ -772,6 +806,14 @@ fn convert_file(
         } else {
             format!("{dir_base}/{stem}{separator}{suffix}_{real_ext}_frames")
         };
+        // Validate the directory's base name before creating it on disk —
+        // create_dir_all is the IO sink the CLAUDE.md rule guards against.
+        if let Some(name) = std::path::Path::new(&seq_dir)
+            .file_name()
+            .and_then(|n| n.to_str())
+        {
+            validate_output_name(name)?;
+        }
         std::fs::create_dir_all(&seq_dir)
             .map_err(|e| format!("Cannot create sequence output directory: {e}"))?;
         seq_dir
@@ -784,6 +826,17 @@ fn convert_file(
             separator,
         )
     };
+
+    // Validate the assembled output file/directory base name. The seq branch
+    // produces a directory whose base name (`{stem}{sep}{suffix}_{ext}_frames`)
+    // still needs the same character-set check as a normal output filename —
+    // it lands in `std::fs::create_dir_all` upstream of any CLI invocation.
+    if let Some(name) = std::path::Path::new(&output_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+    {
+        validate_output_name(name)?;
+    }
 
     // Register cancellation flag before spawning the thread
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -3461,5 +3514,54 @@ mod tests {
             output_path: "/out/joined.mp4".to_string(),
         };
         assert_eq!(op.primary_input(), "");
+    }
+
+    // ── convert_file input/output validation ─────────────────────────────────
+    // `convert_file` itself takes a Window + State and can't be invoked from a
+    // unit test without a Tauri runtime. The `validate_convert_inputs` helper
+    // is the same validator chain that `convert_file` runs inline before any
+    // IO sink (create_dir_all, ffmpeg arg interpolation, etc.) — exercising
+    // it here pins the CLAUDE.md "validate before any CLI arg interpolation"
+    // contract for the conversion path.
+
+    #[test]
+    fn convert_file_rejects_traversal_in_input_path() {
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        let out = format!("{tmp}/out.mp4");
+        assert!(validate_convert_inputs("../../../etc/passwd", Some(&tmp), &out).is_err());
+        assert!(validate_convert_inputs("/Users/foo/../../etc/passwd", Some(&tmp), &out).is_err());
+    }
+
+    #[test]
+    fn convert_file_rejects_output_dir_outside_allowed_roots() {
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        let in_path = format!("{tmp}/input.mp4");
+        let out = "/etc/output.mp4".to_string();
+        assert!(validate_convert_inputs(&in_path, Some("/etc"), &out).is_err());
+        assert!(validate_convert_inputs(&in_path, Some("/usr/bin"), &out).is_err());
+        assert!(validate_convert_inputs(&in_path, Some("/System/Library"), &out).is_err());
+    }
+
+    #[test]
+    fn convert_file_rejects_output_dir_with_parent_component() {
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        let in_path = format!("{tmp}/input.mp4");
+        let out = format!("{tmp}/out.mp4");
+        assert!(validate_convert_inputs(&in_path, Some("/home/user/../../../etc"), &out).is_err());
+        assert!(validate_convert_inputs(&in_path, Some("../relative"), &out).is_err());
+    }
+
+    #[test]
+    fn convert_file_accepts_safe_paths() {
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        let in_path = format!("{tmp}/input.mp4");
+        let out = format!("{tmp}/output_converted.mp4");
+        assert!(validate_convert_inputs(&in_path, Some(&tmp), &out).is_ok());
+        // None output_dir is also fine — convert_file allows the source
+        // directory as the implicit destination.
+        assert!(validate_convert_inputs(&in_path, None, &out).is_ok());
+        // Sequence-style directory base names (no extension) are accepted.
+        let seq = format!("{tmp}/clip_converted_png_frames");
+        assert!(validate_convert_inputs(&in_path, Some(&tmp), &seq).is_ok());
     }
 }
