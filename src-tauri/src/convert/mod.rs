@@ -50,10 +50,6 @@ pub use video::run as run_video_convert;
 ///
 /// For callers that batch Phase+Percent (e.g. `video::run`, `audio::run`),
 /// use [`window_progress_emitter_batched`] instead.
-///
-/// Note: `archive::run` emits `Percent` in the 0–100 range (not 0.0–1.0),
-/// which is incompatible with this helper's `p * 100.0` scaling. Archive
-/// remains inline with its own closure.
 pub fn window_progress_emitter(
     window: &tauri::Window,
     job_id: &str,

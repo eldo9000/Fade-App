@@ -1,5 +1,6 @@
 use crate::convert::progress::{ProgressEvent, ProgressFn};
-use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobDone, JobProgress};
+use crate::convert::window_progress_emitter;
+use crate::{truncate_stderr, ConvertOptions, ConvertResult, JobDone};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -180,43 +181,13 @@ pub fn run(
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
 ) -> ConvertResult {
-    let job_id_owned = job_id.to_string();
-    let win = window.clone();
     let operation = opts.archive_operation.as_deref().unwrap_or("convert");
     let initial_message = if operation == "extract" {
-        "Extracting…".to_string()
+        "Extracting…"
     } else {
-        "Repacking…".to_string()
+        "Repacking…"
     };
-    // TODO(batch-scale): archive::convert() emits Percent in 0–100 range
-    // (not 0.0–1.0), so window_progress_emitter() cannot be used here without
-    // a scale change — that would alter archive conversion behaviour which is
-    // out of scope. Left inline until archive percent scale is normalised.
-    let mut emit = move |ev: ProgressEvent| {
-        let payload = match ev {
-            ProgressEvent::Started => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: initial_message.clone(),
-            },
-            ProgressEvent::Phase(msg) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 0.0,
-                message: msg,
-            },
-            ProgressEvent::Percent(p) => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: p.clamp(0.0, 100.0),
-                message: String::new(),
-            },
-            ProgressEvent::Done => JobProgress {
-                job_id: job_id_owned.clone(),
-                percent: 100.0,
-                message: "Done".to_string(),
-            },
-        };
-        let _ = win.emit("job-progress", payload);
-    };
+    let mut emit = window_progress_emitter(window, job_id, initial_message);
 
     let extract_target = if opts.archive_operation.as_deref() == Some("extract") {
         Some(resolve_extract_folder(input_path, opts))
@@ -300,7 +271,7 @@ fn extract_archive(
             }
             lines.join("\n")
         });
-        progress(ProgressEvent::Percent(25.0 * progress_scale));
+        progress(ProgressEvent::Percent(0.25 * progress_scale));
         progress(ProgressEvent::Phase("Extracting…".to_string()));
         let error_output = stderr_thread.join().unwrap_or_default();
         let child_opt = {
@@ -370,7 +341,10 @@ fn extract_archive(
         for line in reader.lines().map_while(Result::ok) {
             if let Some(pct) = parse_7z_percent(&line) {
                 progress(ProgressEvent::Percent(pct * progress_scale));
-                progress(ProgressEvent::Phase(format!("Extracting {}%", pct as u32)));
+                progress(ProgressEvent::Phase(format!(
+                    "Extracting {}%",
+                    (pct * 100.0) as u32
+                )));
             }
         }
     }
@@ -536,7 +510,10 @@ fn repack_tar_compressed(
             if let Some(pct) = parse_7z_percent(&line) {
                 // Step 1 occupies 0–50 % of the overall job.
                 progress(ProgressEvent::Percent(pct / 2.0));
-                progress(ProgressEvent::Phase(format!("Packing tar {}%", pct as u32)));
+                progress(ProgressEvent::Phase(format!(
+                    "Packing tar {}%",
+                    (pct * 100.0) as u32
+                )));
             }
         }
     }
@@ -615,8 +592,11 @@ fn repack_tar_compressed(
             }
             if let Some(pct) = parse_7z_percent(&line) {
                 // Step 2 occupies 50–100 % of the overall job.
-                progress(ProgressEvent::Percent(50.0 + pct / 2.0));
-                progress(ProgressEvent::Phase(format!("Compressing {}%", pct as u32)));
+                progress(ProgressEvent::Percent(0.5 + pct / 2.0));
+                progress(ProgressEvent::Phase(format!(
+                    "Compressing {}%",
+                    (pct * 100.0) as u32
+                )));
             }
         }
     }
@@ -696,8 +676,11 @@ fn repack_with_7z(
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
             if let Some(pct) = parse_7z_percent(&line) {
-                progress(ProgressEvent::Percent(50.0 + pct / 2.0));
-                progress(ProgressEvent::Phase(format!("Packing {}%", pct as u32)));
+                progress(ProgressEvent::Percent(0.5 + pct / 2.0));
+                progress(ProgressEvent::Phase(format!(
+                    "Packing {}%",
+                    (pct * 100.0) as u32
+                )));
             }
         }
     }
@@ -735,7 +718,7 @@ fn repack_iso(
     if !tool_in_path("xorriso") {
         return ConvertResult::Error("ISO creation requires `xorriso`.\n\nInstall with:\n  macOS:   brew install xorriso\n  Linux:   apt install xorriso  (or equivalent)".to_string());
     }
-    progress(ProgressEvent::Percent(60.0));
+    progress(ProgressEvent::Percent(0.6));
     progress(ProgressEvent::Phase("Building ISO…".to_string()));
     let mut child = match Command::new("xorriso")
         .args([
@@ -804,7 +787,7 @@ fn repack_dmg(
     if !tool_in_path("hdiutil") {
         return ConvertResult::Error("DMG creation requires macOS `hdiutil`".to_string());
     }
-    progress(ProgressEvent::Percent(60.0));
+    progress(ProgressEvent::Percent(0.6));
     progress(ProgressEvent::Phase("Building DMG…".to_string()));
     let mut child = match Command::new("hdiutil")
         .args([
@@ -864,16 +847,46 @@ fn repack_dmg(
 }
 
 /// Parse 7z progress lines like "  7% - filename.ext"
+///
+/// Returns the parsed percent normalised to the `0.0..=1.0` range (matching
+/// the `ProgressEvent::Percent` contract in `convert/progress.rs`). Returns
+/// `None` if the parsed value is outside `0..=100`.
 fn parse_7z_percent(line: &str) -> Option<f32> {
     let trimmed = line.trim();
     let pct_end = trimmed.find('%')?;
-    trimmed[..pct_end].trim().parse::<f32>().ok()
+    let raw = trimmed[..pct_end].trim().parse::<f32>().ok()?;
+    if !(0.0..=100.0).contains(&raw) {
+        return None;
+    }
+    Some(raw / 100.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn parse_7z_percent_normalises_to_0_1_range() {
+        // Typical 7z stdout line.
+        let v = parse_7z_percent("  7% - filename.ext").expect("parse");
+        assert!((v - 0.07).abs() < 1e-6, "got {v}");
+
+        // Boundary: 0% → 0.0
+        let z = parse_7z_percent("0% - foo").expect("parse zero");
+        assert_eq!(z, 0.0);
+
+        // Boundary: 100% → 1.0
+        let h = parse_7z_percent(" 100% - bar").expect("parse hundred");
+        assert!((h - 1.0).abs() < 1e-6, "got {h}");
+
+        // Out-of-range values rejected.
+        assert!(parse_7z_percent("150% - oops").is_none());
+        assert!(parse_7z_percent("-5% - oops").is_none());
+
+        // Non-percent line returns None.
+        assert!(parse_7z_percent("no percent here").is_none());
+    }
 
     #[test]
     fn resolve_seven_zip_bin_prefers_7z_when_present() {
