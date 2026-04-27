@@ -13,3 +13,5 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** The TASK-3 worker was directed by the task file to look at `args/video.rs ~line 882` for the prior trivial-case test; the actual existing assertions live in `lib.rs` integration-style test block at lines 2764 and 2776. Two-line update: change expected literal from `"subtitles=in.mkv"` to `"subtitles='in.mkv'"`.
 - **Next:** `src/lib.rs:2764` and `src/lib.rs:2776` — update assertion strings to match new single-quoted emit.
+
+## Fail arc closed — 2026-04-27 — 1 entry — green CI 24986902424
