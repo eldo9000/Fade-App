@@ -1,5 +1,19 @@
 use crate::ConvertOptions;
 
+/// Escape a value for use inside an ffmpeg filter argument.
+/// Applies inner-layer escaping for `\`, `:`, `'` then single-quote-wraps
+/// the whole value (outer-layer protection against `,`, `[`, `]`, `;`).
+fn escape_for_subtitles_filter(path: &str) -> String {
+    let inner: String = path
+        .chars()
+        .flat_map(|c| match c {
+            '\\' | ':' | '\'' => vec!['\\', c],
+            _ => vec![c],
+        })
+        .collect();
+    format!("'{}'", inner)
+}
+
 /// Build the full ffmpeg argument list for a video conversion. GIF output
 /// uses a completely different pipeline (palettegen/paletteuse) and is
 /// dispatched to `build_gif_args`.
@@ -138,7 +152,7 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
             ));
         }
         if opts.output_format == "mkv" && opts.mkv_subtitle.as_deref() == Some("burn") {
-            filters.push(format!("subtitles={}", input));
+            filters.push(format!("subtitles={}", escape_for_subtitles_filter(input)));
         }
         if !filters.is_empty() {
             args.extend(["-vf".to_string(), filters.join(",")]);
@@ -879,7 +893,82 @@ mod tests {
         };
         let args = build_ffmpeg_video_args("in.mkv", "out.mkv", &opts);
         let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
-        assert!(args[vf_idx + 1].contains("subtitles=in.mkv"));
+        assert!(args[vf_idx + 1].contains("subtitles='in.mkv'"));
+    }
+
+    fn burn_opts() -> ConvertOptions {
+        ConvertOptions {
+            output_format: "mkv".into(),
+            codec: Some("h264".into()),
+            mkv_subtitle: Some("burn".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn subtitles_filter_escapes_colon_in_windows_path() {
+        let opts = burn_opts();
+        let args = build_ffmpeg_video_args(r"C:\Users\me\v.mkv", "out.mkv", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        // Each `\` and each `:` must be backslash-escaped, then the whole
+        // value wrapped in single quotes.
+        assert!(
+            args[vf_idx + 1].contains(r"subtitles='C\:\\Users\\me\\v.mkv'"),
+            "got: {}",
+            args[vf_idx + 1]
+        );
+    }
+
+    #[test]
+    fn subtitles_filter_escapes_apostrophe() {
+        let opts = burn_opts();
+        let args = build_ffmpeg_video_args("/u/me/My's Video.mkv", "out.mkv", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        assert!(
+            args[vf_idx + 1].contains(r"subtitles='/u/me/My\'s Video.mkv'"),
+            "got: {}",
+            args[vf_idx + 1]
+        );
+    }
+
+    #[test]
+    fn subtitles_filter_escapes_comma() {
+        let opts = burn_opts();
+        let args = build_ffmpeg_video_args("/u/me/A,B.mkv", "out.mkv", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        // Outer single-quote wrap protects the comma from being interpreted
+        // as a filter separator.
+        assert!(
+            args[vf_idx + 1].contains("subtitles='/u/me/A,B.mkv'"),
+            "got: {}",
+            args[vf_idx + 1]
+        );
+    }
+
+    #[test]
+    fn subtitles_filter_escapes_brackets() {
+        let opts = burn_opts();
+        let args = build_ffmpeg_video_args("/u/me/[A]Video.mkv", "out.mkv", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        assert!(
+            args[vf_idx + 1].contains("subtitles='/u/me/[A]Video.mkv'"),
+            "got: {}",
+            args[vf_idx + 1]
+        );
+    }
+
+    #[test]
+    fn subtitles_filter_simple_path_unchanged_or_safely_quoted() {
+        let opts = burn_opts();
+        let args = build_ffmpeg_video_args("in.mkv", "out.mkv", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        // Trivial paths get the same single-quote wrapping; ffmpeg accepts
+        // this identically to the unquoted form.
+        assert!(
+            args[vf_idx + 1].contains("subtitles='in.mkv'"),
+            "got: {}",
+            args[vf_idx + 1]
+        );
     }
 
     #[test]
