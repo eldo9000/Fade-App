@@ -1,5 +1,6 @@
 //! Filesystem-related Tauri commands that don't fit a larger module.
 
+use crate::{validate_no_traversal, validate_output_dir};
 use tauri::command;
 
 /// Max directories to descend into below the root in recursive mode.
@@ -15,7 +16,18 @@ const SCAN_MAX_ENTRIES: usize = 10_000;
 /// Return true if a file or directory exists at `path`.
 #[command]
 pub fn file_exists(path: String) -> Result<bool, String> {
-    Ok(std::path::Path::new(&path).exists())
+    validate_no_traversal(&path)?;
+    let p = std::path::Path::new(&path);
+    let dir_for_check = if p.is_dir() {
+        path.clone()
+    } else {
+        p.parent()
+            .and_then(|d| d.to_str())
+            .unwrap_or(&path)
+            .to_string()
+    };
+    validate_output_dir(&dir_for_check)?;
+    Ok(p.exists())
 }
 
 /// List files in a directory. When `recursive` is true, descends into all
@@ -27,6 +39,8 @@ pub fn file_exists(path: String) -> Result<bool, String> {
 /// than a hang or an IPC payload blowout.
 #[command]
 pub fn scan_dir(path: String, recursive: Option<bool>) -> Result<Vec<String>, String> {
+    validate_no_traversal(&path)?;
+    validate_output_dir(&path)?;
     let recurse = recursive.unwrap_or(false);
     let mut files: Vec<String> = Vec::new();
     let root = std::path::PathBuf::from(&path);
@@ -189,6 +203,79 @@ mod tests {
             !files.iter().any(|f| f.ends_with("beyond.txt")),
             "depth cap failed — returned: {files:?}"
         );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_exists_rejects_traversal_path() {
+        let result = file_exists("../etc/passwd".to_string());
+        assert!(
+            result.is_err(),
+            "expected traversal rejection, got: {result:?}"
+        );
+        assert!(
+            result.as_ref().unwrap_err().contains("traversal"),
+            "expected traversal error message, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn file_exists_rejects_path_outside_allowed_roots() {
+        let result = file_exists("/etc/passwd".to_string());
+        assert!(
+            result.is_err(),
+            "expected outside-roots rejection, got: {result:?}"
+        );
+        assert!(
+            result.as_ref().unwrap_err().contains("allowed roots"),
+            "expected allowed-roots error message, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn file_exists_accepts_path_under_home() {
+        // Regression — temp_dir is in the allowed-roots set.
+        let dir = unique_tmp("exists-allowed");
+        let f = dir.join("a.txt");
+        fs::write(&f, b"hi").unwrap();
+        assert!(file_exists(f.to_string_lossy().to_string()).unwrap());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_dir_rejects_traversal() {
+        let result = scan_dir("../".to_string(), None);
+        assert!(
+            result.is_err(),
+            "expected traversal rejection, got: {result:?}"
+        );
+        assert!(
+            result.as_ref().unwrap_err().contains("traversal"),
+            "expected traversal error message, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn scan_dir_rejects_root_outside_allowed_roots() {
+        let result = scan_dir("/etc".to_string(), None);
+        assert!(
+            result.is_err(),
+            "expected outside-roots rejection, got: {result:?}"
+        );
+        assert!(
+            result.as_ref().unwrap_err().contains("allowed roots"),
+            "expected allowed-roots error message, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn scan_dir_accepts_temp_dir() {
+        // Regression — temp_dir is in the allowed-roots set.
+        let dir = unique_tmp("scan-allowed");
+        fs::write(dir.join("a.txt"), b"").unwrap();
+        let files = scan_dir(dir.to_string_lossy().to_string(), None).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("a.txt"));
         fs::remove_dir_all(&dir).ok();
     }
 
