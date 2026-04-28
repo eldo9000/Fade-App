@@ -3,7 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { setHint } from './stores/tooltip.svelte.js';
 
-  let { item, duration = null, options = $bindable(null), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(false), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false, replacedAudioMode = false, analysisMode = false, analysisHistogramDim = false, analysisHistogram = null } = $props();
+  let { item, duration = null, options = $bindable(), mediaEl = null, onscrubstart = null, vizExpanded = $bindable(), mediaReady = false, waveformReady = false, spectrogramReady = false, filmstripReady = false, cachedWaveform = null, cachedFilmstripFrames = null, draft = false, replacedAudioMode = false, analysisMode = false, analysisHistogramDim = false, analysisHistogram = null } = $props();
 
   // ── Media element ─────────────────────────────────────────────────────────
   // When `mediaEl` prop is supplied (e.g. the preview <video>), Timeline drives

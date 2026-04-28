@@ -5,8 +5,8 @@
     imgNaturalW,
     imgNaturalH,
     previewAreaEl,
-    cropActive = $bindable(false),
-    cropAspect = $bindable(null),
+    cropActive = $bindable(),
+    cropAspect = $bindable(),
     selectedId,
   } = $props();
 

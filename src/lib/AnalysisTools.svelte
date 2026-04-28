@@ -4,7 +4,7 @@
   import { markConverting, markError } from './itemStatus.js';
 
   let {
-    selectedItem = $bindable(null),   // $bindable for runAudioNorm which mutates status
+    selectedItem = $bindable(),   // $bindable for runAudioNorm which mutates status
     selectedOperation,
     outputDir,
     outputSeparator,

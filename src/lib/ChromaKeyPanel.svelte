@@ -3,7 +3,7 @@
   import { markConverting, markError } from './itemStatus.js';
 
   let {
-    selectedItem = $bindable(null),
+    selectedItem = $bindable(),
     videoOptions,
     outputDir,
     outputSeparator,
