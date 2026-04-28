@@ -295,8 +295,18 @@ pub fn chroma_key_preview(
     let vf = format!("{vf_core},scale='min(960,iw)':-2");
 
     let ts = time_s.max(0.0);
-    let job_id = uuid::Uuid::new_v4().to_string();
-    let out = std::env::temp_dir().join(format!("fade-chroma-preview-{job_id}.png"));
+    #[cfg(unix)]
+    let sandbox = {
+        use std::os::unix::fs::PermissionsExt;
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(std::env::temp_dir())
+            .map_err(|e| format!("failed to create temp sandbox: {e}"))?
+    };
+    #[cfg(not(unix))]
+    let sandbox = tempfile::TempDir::new_in(std::env::temp_dir())
+        .map_err(|e| format!("failed to create temp sandbox: {e}"))?;
+    let out = sandbox.path().join("output.png");
 
     let status = Command::new("ffmpeg")
         .args([
@@ -319,7 +329,8 @@ pub fn chroma_key_preview(
         return Err(crate::truncate_stderr(&stderr));
     }
 
-    Ok(out.to_string_lossy().to_string())
+    let kept = sandbox.keep().join("output.png");
+    Ok(kept.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

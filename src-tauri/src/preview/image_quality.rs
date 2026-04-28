@@ -34,15 +34,24 @@ pub async fn preview_image_quality(
             }
         }
 
-        let tmp_dir = std::env::temp_dir();
-        let job_id = uuid::Uuid::new_v4().to_string();
         let ext = if output_format == "jpeg" {
             "jpg"
         } else {
             output_format.as_str()
         };
-        let compressed = tmp_dir.join(format!("fade-imgq-enc-{job_id}.{ext}"));
-        let diff = tmp_dir.join(format!("fade-imgq-diff-{job_id}.png"));
+        #[cfg(unix)]
+        let sandbox = {
+            use std::os::unix::fs::PermissionsExt;
+            tempfile::Builder::new()
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in(std::env::temp_dir())
+                .map_err(|e| format!("failed to create temp sandbox: {e}"))?
+        };
+        #[cfg(not(unix))]
+        let sandbox = tempfile::TempDir::new_in(std::env::temp_dir())
+            .map_err(|e| format!("failed to create temp sandbox: {e}"))?;
+        let compressed = sandbox.path().join(format!("compressed.{ext}"));
+        let diff = sandbox.path().join("diff.png");
 
         // Pass 1: encode at requested quality (induces lossy compression artifacts)
         let enc_out = Command::new("magick")
@@ -79,16 +88,19 @@ pub async fn preview_image_quality(
             .output()
             .map_err(|e| format!("magick not found: {e}"))?;
         if !diff_out.status.success() {
-            let _ = std::fs::remove_file(&compressed);
             return Err(format!(
                 "diff failed: {}",
                 truncate_stderr(&String::from_utf8_lossy(&diff_out.stderr))
             ));
         }
 
+        let kept_dir = sandbox.keep();
         Ok(ImageQualityPreview {
-            diff_path: diff.to_string_lossy().to_string(),
-            compressed_path: compressed.to_string_lossy().to_string(),
+            diff_path: kept_dir.join("diff.png").to_string_lossy().to_string(),
+            compressed_path: kept_dir
+                .join(format!("compressed.{ext}"))
+                .to_string_lossy()
+                .to_string(),
         })
     })
     .await
@@ -185,6 +197,18 @@ mod tests {
                 "{fmt} wrongly flagged lossless: {err}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn sandbox_directory_is_mode_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        let perms = std::fs::metadata(dir.path()).unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o700, "sandbox dir mode is not 0700");
     }
 
     #[test]

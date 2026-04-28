@@ -66,10 +66,48 @@ pub fn preview_diff(
         let mid_offset = at_secs - start;
         let total = dur + 2.0 * handle;
 
-        let tmp_dir = std::env::temp_dir();
-        let tmp_id = uuid::Uuid::new_v4().to_string();
-        let encoded = tmp_dir.join(format!("fade-diff-enc-{tmp_id}.mp4"));
-        let diff = tmp_dir.join(format!("fade-diff-out-{tmp_id}.mp4"));
+        #[cfg(unix)]
+        let make_sandbox = || -> Result<tempfile::TempDir, String> {
+            use std::os::unix::fs::PermissionsExt;
+            tempfile::Builder::new()
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in(std::env::temp_dir())
+                .map_err(|e| format!("failed to create temp sandbox: {e}"))
+        };
+        #[cfg(not(unix))]
+        let make_sandbox = || -> Result<tempfile::TempDir, String> {
+            tempfile::TempDir::new_in(std::env::temp_dir())
+                .map_err(|e| format!("failed to create temp sandbox: {e}"))
+        };
+
+        let enc_sandbox = match make_sandbox() {
+            Ok(d) => d,
+            Err(e) => {
+                let payload = DiffPreviewResult {
+                    job_id: job_id.clone(),
+                    data: None,
+                    error: Some(e),
+                    cancelled: false,
+                };
+                let _ = window.emit(&format!("analysis-result:{}", job_id), payload);
+                return;
+            }
+        };
+        let encoded = enc_sandbox.path().join("encoded.mp4");
+        let diff_sandbox = match make_sandbox() {
+            Ok(d) => d,
+            Err(e) => {
+                let payload = DiffPreviewResult {
+                    job_id: job_id.clone(),
+                    data: None,
+                    error: Some(e),
+                    cancelled: false,
+                };
+                let _ = window.emit(&format!("analysis-result:{}", job_id), payload);
+                return;
+            }
+        };
+        let diff = diff_sandbox.path().join("diff.mp4");
 
         // Optional spatial scaling — must be applied to BOTH inputs during the diff
         // pass so resolutions match for blend.
@@ -197,8 +235,13 @@ pub fn preview_diff(
             Arc::clone(&cancelled),
         );
 
-        // Intermediate encoded file no longer needed.
+        // Intermediate encoded file no longer needed; enc_sandbox drops here via RAII.
         let _ = std::fs::remove_file(&encoded);
+        drop(enc_sandbox);
+
+        // Keep diff sandbox alive for the renderer; caller is responsible for cleanup.
+        let kept_diff_dir = diff_sandbox.keep();
+        let kept_diff = kept_diff_dir.join("diff.mp4");
 
         {
             let mut map = cancellations.lock();
@@ -209,7 +252,7 @@ pub fn preview_diff(
             Ok(_) => DiffPreviewResult {
                 job_id: job_id.clone(),
                 data: Some(DiffPreview {
-                    path: diff.to_string_lossy().to_string(),
+                    path: kept_diff.to_string_lossy().to_string(),
                     note: format!("codec={codec} handles={handle:.1}s amp={amp:.0}×"),
                 }),
                 error: None,
