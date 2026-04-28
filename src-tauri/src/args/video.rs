@@ -345,9 +345,15 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             }
             let preset = opts.preset.as_deref().unwrap_or("medium");
             out.extend(["-preset".to_string(), preset.to_string()]);
-            if opts.h264_profile.is_some() || opts.pix_fmt.is_some() {
+            // H.264 lossless (crf=0) requires yuv444p + high444 profile.
+            let effective_pix_fmt: Option<&str> = if opts.crf == Some(0) {
+                Some("yuv444p")
+            } else {
+                opts.pix_fmt.as_deref()
+            };
+            if opts.h264_profile.is_some() || effective_pix_fmt.is_some() {
                 let effective =
-                    h264_effective_profile(opts.h264_profile.as_deref(), opts.pix_fmt.as_deref());
+                    h264_effective_profile(opts.h264_profile.as_deref(), effective_pix_fmt);
                 out.extend(["-profile:v".to_string(), effective.to_string()]);
             }
             if let Some(t) = opts.tune.as_deref() {
@@ -355,7 +361,7 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
                     out.extend(["-tune".to_string(), t.to_string()]);
                 }
             }
-            if let Some(pf) = opts.pix_fmt.as_deref() {
+            if let Some(pf) = effective_pix_fmt {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);
             }
         }
