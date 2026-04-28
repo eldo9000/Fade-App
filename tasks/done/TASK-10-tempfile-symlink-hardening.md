@@ -1,5 +1,10 @@
 # TASK-10: Harden temp-file creation against symlink-pre-placement attacks
 
+> **STATUS: REJECTED 2026-04-28 — false positive on mitigation.**
+> The static-analysis report cited `File::create`/`std::fs::write` at six renderer-facing sites. The TASK-10 worker verified each line and found no Rust-side file creation at any of them — file creation is performed by spawned `ffmpeg`/`magick` subprocesses, not by Rust. `OpenOptions::create_new(true)` cannot mitigate a write performed by an external CLI tool that the kernel opens with its own flags (and `ffmpeg -y` truncates through symlinks regardless).
+>
+> The underlying exposure is real (attacker pre-places symlink at predicted UUID path, ffmpeg/magick truncates the symlink target), but the mitigation specified here doesn't fit the sink shape. Follow-up: **TASK-14** uses per-job mkdtemp sandboxes (mode 0700) instead, which protects opens regardless of who performs them.
+
 ## Goal
 The renderer-facing temp-file creation sites use `OpenOptions::create_new(true)` (or `tempfile::NamedTempFile`), making symlink-pre-placement attacks impossible. The most exposed sites — `operations/chroma_key.rs` (preview path returned to renderer), `preview/image_quality.rs`, `preview/video_diff.rs` — are migrated first; lower-exposure sites in convert modules are migrated as a sweep.
 
