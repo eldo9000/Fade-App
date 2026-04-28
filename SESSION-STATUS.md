@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-28 (three sprints complete — 21 tasks total, all CI-green)
+Last updated: 2026-04-28 (four sprints complete — 23 tasks total, all CI-green)
 
 ---
 
@@ -15,6 +15,8 @@ Two full sessions of substantial work landed 2026-04-25.
 CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
+
+Cleanup sprint complete 2026-04-28 (TASK-22–23, all CI-green). TASK-22: INVESTIGATION-LOG stale OPEN entries marked CONFIRMED (h264 lossless, h265 profile, DNxHD guard). TASK-23: av1_speed remapped from -cpu-used to -preset with 0–10 → 0–13 scaling for libsvtav1; test updated. No arc in flight. tasks/ queue empty.
 
 BC-005 fix sprint complete 2026-04-28 (TASK-18–21, all CI-green). TASK-18: H.265 codec-aware profile builder — splits h264|h265 branch, adds h265_effective_profile() (27 sweep cases → green). TASK-19: H.264 lossless guard — forces yuv444p/high444 when crf=0 (120 sweep cases → green). TASK-20: DNxHD resolution guard + DNxHR contract annotation. TASK-21: AV1 encoder → libsvtav1 (9 sweep cases → green). Follow-up deferred: av1_speed/-cpu-used → -preset remapping for libsvtav1.
 
