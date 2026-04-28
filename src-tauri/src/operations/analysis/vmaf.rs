@@ -70,10 +70,42 @@ pub fn analyze_vmaf(
         };
         let (w, h) = res.split_once('x').unwrap_or(("1920", "1080"));
 
-        let log_path = std::env::temp_dir()
-            .join(format!("fade_vmaf_{}.json", uuid::Uuid::new_v4()))
-            .to_string_lossy()
-            .to_string();
+        #[cfg(unix)]
+        let sandbox = {
+            use std::os::unix::fs::PermissionsExt;
+            match tempfile::Builder::new()
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in(std::env::temp_dir())
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    let payload = VmafResult {
+                        job_id: job_id.clone(),
+                        data: None,
+                        error: Some(format!("failed to create temp sandbox: {e}")),
+                        cancelled: false,
+                    };
+                    let _ = window.emit(&format!("analysis-result:{}", job_id), payload);
+                    return;
+                }
+            }
+        };
+        #[cfg(not(unix))]
+        let sandbox = match tempfile::TempDir::new_in(std::env::temp_dir()) {
+            Ok(d) => d,
+            Err(e) => {
+                let payload = VmafResult {
+                    job_id: job_id.clone(),
+                    data: None,
+                    error: Some(format!("failed to create temp sandbox: {e}")),
+                    cancelled: false,
+                };
+                let _ = window.emit(&format!("analysis-result:{}", job_id), payload);
+                return;
+            }
+        };
+        let log_path = sandbox.path().join("vmaf.json");
+        let log_path_str = log_path.to_string_lossy().to_string();
 
         // Scale both inputs to the model's native size; fps-match distorted to ref.
         // The `phone` flag is a libvmaf toggle, not a model — map accordingly.
@@ -90,7 +122,7 @@ pub fn analyze_vmaf(
             w = w,
             h = h,
             model_name = model_name,
-            log = log_path.replace(':', "\\:"),
+            log = log_path_str.replace(':', "\\:"),
             ns = subsample.max(1),
             phone = phone_flag,
         );
@@ -123,7 +155,7 @@ pub fn analyze_vmaf(
         }
 
         let payload = match result {
-            Ok(_) => match parse_vmaf_log(&log_path) {
+            Ok(_) => match parse_vmaf_log(&log_path_str) {
                 Ok(scores) => VmafResult {
                     job_id: job_id.clone(),
                     data: Some(scores),
@@ -151,7 +183,8 @@ pub fn analyze_vmaf(
             },
         };
 
-        let _ = std::fs::remove_file(&log_path);
+        // sandbox drops here → auto-cleanup (removes vmaf.json and sandbox dir)
+        drop(sandbox);
         let _ = window.emit(&format!("analysis-result:{}", job_id), payload);
     });
 

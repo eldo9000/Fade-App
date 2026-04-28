@@ -159,7 +159,7 @@ pub fn convert(
     ffmpeg_runner: &mut dyn FfmpegRunner,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     cancelled: Arc<AtomicBool>,
-    job_id: &str,
+    _job_id: &str,
 ) -> Result<(), String> {
     progress(ProgressEvent::Started);
 
@@ -199,21 +199,42 @@ pub fn convert(
         ("sbv", _) => {
             let sbv = fs::read_to_string(input).map_err(|e| e.to_string())?;
             let srt = sbv_to_srt(&sbv);
-            let tmp = std::env::temp_dir().join(format!("fade-{job_id}.srt"));
+            #[cfg(unix)]
+            let sandbox = {
+                use std::os::unix::fs::PermissionsExt;
+                tempfile::Builder::new()
+                    .permissions(std::fs::Permissions::from_mode(0o700))
+                    .tempdir_in(std::env::temp_dir())
+                    .map_err(|e| format!("failed to create temp sandbox: {e}"))?
+            };
+            #[cfg(not(unix))]
+            let sandbox = tempfile::TempDir::new_in(std::env::temp_dir())
+                .map_err(|e| format!("failed to create temp sandbox: {e}"))?;
+            let tmp = sandbox.path().join("temp.srt");
             fs::write(&tmp, srt).map_err(|e| e.to_string())?;
-            let res = ffmpeg_runner.run(
+            ffmpeg_runner.run(
                 &tmp.to_string_lossy(),
                 output,
                 Arc::clone(&processes),
                 Arc::clone(&cancelled),
-            );
-            let _ = fs::remove_file(&tmp);
-            res
+            )
+            // sandbox drops here → auto-cleanup
         }
 
         // other → SBV — bridge through a temp SRT.
         (_, "sbv") => {
-            let tmp = std::env::temp_dir().join(format!("fade-{job_id}.srt"));
+            #[cfg(unix)]
+            let sandbox = {
+                use std::os::unix::fs::PermissionsExt;
+                tempfile::Builder::new()
+                    .permissions(std::fs::Permissions::from_mode(0o700))
+                    .tempdir_in(std::env::temp_dir())
+                    .map_err(|e| format!("failed to create temp sandbox: {e}"))?
+            };
+            #[cfg(not(unix))]
+            let sandbox = tempfile::TempDir::new_in(std::env::temp_dir())
+                .map_err(|e| format!("failed to create temp sandbox: {e}"))?;
+            let tmp = sandbox.path().join("temp.srt");
             let res = ffmpeg_runner.run(
                 input,
                 &tmp.to_string_lossy(),
@@ -223,12 +244,11 @@ pub fn convert(
             if res.is_ok() {
                 let srt = fs::read_to_string(&tmp).map_err(|e| e.to_string())?;
                 let sbv = srt_to_sbv(&srt);
-                let _ = fs::remove_file(&tmp);
                 fs::write(output, sbv).map_err(|e| e.to_string())
             } else {
-                let _ = fs::remove_file(&tmp);
                 res
             }
+            // sandbox drops here → auto-cleanup
         }
 
         // Fallback — let ffmpeg try. Covers ttml/vtt/ass/ssa on either side.

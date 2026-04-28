@@ -211,8 +211,23 @@ pub fn convert(
     }
 
     // Render to a temp WAV unless the target IS wav.
-    let tmp_dir = std::env::temp_dir();
-    let tmp_wav_path = tmp_dir.join(format!("fade-tracker-{}.wav", job_id));
+    #[cfg(unix)]
+    let sandbox = {
+        use std::os::unix::fs::PermissionsExt;
+        match tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(std::env::temp_dir())
+        {
+            Ok(d) => d,
+            Err(e) => return ConvertResult::Error(format!("failed to create temp sandbox: {e}")),
+        }
+    };
+    #[cfg(not(unix))]
+    let sandbox = match tempfile::TempDir::new_in(std::env::temp_dir()) {
+        Ok(d) => d,
+        Err(e) => return ConvertResult::Error(format!("failed to create temp sandbox: {e}")),
+    };
+    let tmp_wav_path = sandbox.path().join("render.wav");
     let tmp_wav = tmp_wav_path.to_string_lossy().to_string();
     let render_target = if out_ext == "wav" {
         output.to_string()

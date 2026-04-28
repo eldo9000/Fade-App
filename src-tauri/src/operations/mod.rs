@@ -280,17 +280,32 @@ pub(crate) fn run_ffmpeg(
 
 /// Write a concat demuxer list to a temp file and return its path.
 pub(crate) fn write_temp_concat_list(input_paths: &[String]) -> Result<String, String> {
-    let path = std::env::temp_dir()
-        .join(format!("fade_concat_{}.txt", uuid::Uuid::new_v4()))
-        .to_string_lossy()
-        .to_string();
+    #[cfg(unix)]
+    let sandbox = {
+        use std::os::unix::fs::PermissionsExt;
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(std::env::temp_dir())
+            .map_err(|e| format!("failed to create temp sandbox: {e}"))?
+    };
+    #[cfg(not(unix))]
+    let sandbox = tempfile::TempDir::new_in(std::env::temp_dir())
+        .map_err(|e| format!("failed to create temp sandbox: {e}"))?;
+
+    let path = sandbox.path().join("concat.txt");
 
     let mut content = String::new();
     for p in input_paths {
         content.push_str(&format!("file '{}'\n", p.replace('\'', "'\\''")));
     }
     std::fs::write(&path, &content).map_err(|e| format!("write concat list: {e}"))?;
-    Ok(path)
+
+    // keep() suppresses auto-cleanup so the caller can pass the path to ffmpeg.
+    // The sandbox directory is leaked until the OS sweeps temp — same as TASK-14
+    // renderer-facing pattern.
+    let _kept_dir = sandbox.keep();
+
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// Container extension → set of codec names that are incompatible with it.
