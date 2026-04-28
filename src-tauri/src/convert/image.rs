@@ -40,8 +40,7 @@ pub fn convert(
         map.insert(job_id.to_string(), child);
     }
 
-    // Blocks until process exits or pipe closes after kill
-    let stderr_content = {
+    let stderr_thread = std::thread::spawn(move || {
         let mut lines = Vec::new();
         if let Some(s) = stderr {
             let reader = BufReader::new(s);
@@ -50,7 +49,7 @@ pub fn convert(
             }
         }
         lines.join("\n")
-    };
+    });
 
     let child_opt = {
         let mut map = processes.lock();
@@ -61,6 +60,8 @@ pub fn convert(
         Some(mut child) => child.wait().map(|s| s.success()).unwrap_or(false),
         None => false,
     };
+
+    let stderr_content = stderr_thread.join().unwrap_or_default();
 
     if cancelled.load(Ordering::SeqCst) {
         return ConvertResult::Cancelled;
