@@ -245,7 +245,7 @@ pub fn ffmpeg_video_codec_args(codec: &str) -> Vec<String> {
         "h264" => vec!["-vcodec".to_string(), "libx264".to_string()],
         "h265" => vec!["-vcodec".to_string(), "libx265".to_string()],
         "vp9" => vec!["-vcodec".to_string(), "libvpx-vp9".to_string()],
-        "av1" => vec!["-vcodec".to_string(), "libaom-av1".to_string()],
+        "av1" => vec!["-vcodec".to_string(), "libsvtav1".to_string()],
         "prores" => vec!["-vcodec".to_string(), "prores_ks".to_string()],
         "theora" => vec!["-vcodec".to_string(), "libtheora".to_string()],
         "mpeg2video" => vec!["-vcodec".to_string(), "mpeg2video".to_string()],
