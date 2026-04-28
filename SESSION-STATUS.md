@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-28 (sprint complete — 14 tasks, all CI-green)
+Last updated: 2026-04-28 (two sprints complete — 17 tasks total, all CI-green)
 
 ---
 
@@ -16,7 +16,9 @@ CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
 
-Security + quality sprint complete 2026-04-28 (14 tasks, all CI-green). Closed: zip-slip containment (TASK-1), input validation in convert_file (TASK-2), ffmpeg subtitle filter escaping (TASK-3), ConvertOptions.ts codegen committed (TASK-4), archive temp-dir portability (TASK-5), archive progress normalisation + emitter migration (TASK-6), SQL path validator for parquet (TASK-7), merge temp-file race fix (TASK-8), fs_commands traversal hardening (TASK-9), TASK-10 rejected (wrong mitigation shape), bindable defaults audit (TASK-11), image stderr drain thread (TASK-12), HAP sweep coverage (TASK-13 — surfaces Homebrew FFmpeg missing HAP encoder), renderer-facing temp sandbox with mode-0700 mkdtemp (TASK-14). No arc in flight. Next: run /observe-sync to refresh project model, then choose next focus area (testing-phase, v0.6→v0.8 window).
+Sweep sprint complete 2026-04-28 (TASK-15–17, all CI-green). TASK-15: full_sweep.rs run — 292 image/audio/data cases pass, 173 video failures across 6 new BC-005 constraint classes logged to INVESTIGATION-LOG.md (h264-lossless-profile, h265-profile-name-mismatch, DNxHD-bitrate-resolution-coupling, DNxHR-arg-builder-guard-bypass, libaom-av1-absent, libtheora-absent). TASK-16: extra_sweep.rs — 17/17 pass, no new findings. TASK-17: mkdtemp 0700 sandbox applied to 4 remaining medium-priority temp-file sites (subtitle.rs, tracker.rs, vmaf.rs, operations/mod.rs). All temp-file hardening now complete. No arc in flight.
+
+Security + quality sprint complete 2026-04-28 (TASK-1–14, all CI-green). Closed: zip-slip containment, input validation, subtitle filter escaping, ts-rs codegen, archive portability/progress, SQL validator, merge race fix, fs_commands hardening, bindable defaults audit, image stderr drain, HAP sweep coverage, renderer-facing temp sandbox.
 
 Previous: Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known Risks race entry removed (`71f5d93`); DNxHD bitrate + CineForm sweep cases added to `full_sweep.rs` (`1dbf064`); `window_progress_emitter_batched` helper added, `video.rs`/`audio.rs` run() wrappers migrated (`af0c7b6`, `263d7d2`).
 
@@ -45,4 +47,4 @@ Previous: Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known 
 
 ## Mode
 
-Active development. Security + quality sprint closed 2026-04-28 (14 tasks total). No arc in flight.
+Active development. Two sprints closed 2026-04-28 (17 tasks total). 6 new BC-005 constraint classes in INVESTIGATION-LOG — next arc candidates. No arc in flight.
