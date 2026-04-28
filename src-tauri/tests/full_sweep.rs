@@ -764,6 +764,77 @@ fn cineform_cases() -> Vec<Case> {
     }]
 }
 
+fn hap_cases() -> Vec<Case> {
+    // HAP is a GPU-decompressed texture codec with three sub-formats:
+    //   hap       — RGB, S3TC DXT1
+    //   hap_q     — RGB + extra quality layer
+    //   hap_alpha — RGBA, S3TC DXT5
+    //
+    // Known encoder constraints to surface (BC-005 pattern):
+    //   · Resolution must be a multiple of 4 for all sub-formats.
+    //   · hap_alpha requires an alpha channel (rgba pixel format);
+    //     testing on a non-alpha source confirms the arg-builder path even
+    //     though actual alpha preservation is not verified.
+    //   · Canonical container is MOV; HAP-in-MP4 may be rejected by FFmpeg
+    //     depending on build flags — include MP4 to surface that constraint.
+    //
+    // Resolutions tested:
+    //   1920×1080 — full HD, multiple of 4 (canonical, expected pass)
+    //   1280×720  — 720p, multiple of 4 (expected pass)
+    //     640×480 — SD, multiple of 4 (expected pass)
+    //   1023×769  — NOT a multiple of 4; surfaces divisibility constraint
+    let mut v = Vec::new();
+    for fmt in ["hap", "hap_q", "hap_alpha"] {
+        for (res, res_label) in [
+            ("1920x1080", "1920x1080"),
+            ("1280x720", "1280x720"),
+            ("640x480", "640x480"),
+            ("1023x769", "1023x769_off"),
+        ] {
+            // MOV — canonical container for HAP
+            v.push(Case {
+                name: format!("hap_{fmt}_mov_{res_label}"),
+                ext: "mov",
+                opts: ConvertOptions {
+                    output_format: "mov".into(),
+                    codec: Some("hap".into()),
+                    hap_format: Some(fmt.into()),
+                    resolution: Some(res.into()),
+                    ..Default::default()
+                },
+            });
+        }
+        // MP4 — non-canonical container; may fail depending on FFmpeg build
+        v.push(Case {
+            name: format!("hap_{fmt}_mp4_1920x1080"),
+            ext: "mp4",
+            opts: ConvertOptions {
+                output_format: "mp4".into(),
+                codec: Some("hap".into()),
+                hap_format: Some(fmt.into()),
+                resolution: Some("1920x1080".into()),
+                ..Default::default()
+            },
+        });
+    }
+    v
+}
+
+#[test]
+#[ignore]
+fn hap_full() {
+    // Sweep HAP sub-formats across resolutions and containers to surface
+    // encoder constraints (BC-005). Run with:
+    //   cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+    //     -- --include-ignored hap_full --nocapture
+    let dir = output_root("hap");
+    let fixture = dir.join("_fixture.mp4");
+    make_mp4(&fixture).expect("fixture");
+
+    let outcomes = run_video_cases(&dir, &fixture, hap_cases());
+    report("hap", outcomes);
+}
+
 fn other_video_cases() -> Vec<Case> {
     let mut v = vec![
         Case {

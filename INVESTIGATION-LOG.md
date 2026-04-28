@@ -8,3 +8,6 @@
 2026-04-25 | OPEN | dispatch 1/3 — encoder-constraint class (3 confirmed instances) undocumented in KNOWN-BUG-CLASSES.md; BC-005 entry needed
 
 2026-04-25 | CONFIRMED | encoder-constraint class (3 confirmed instances) documented as BC-005 in KNOWN-BUG-CLASSES.md — dispatch 1 green, commit 5c1d58d
+
+2026-04-28 | OPEN | HAP encoder absent from Homebrew FFmpeg 8.1 build — all 15 hap_full sweep cases fail with "Encoder not found"; --enable-hap not in Homebrew configure flags; HAP codec path in args/video.rs is unreachable on standard macOS dev installs
+2026-04-28 | OPEN | HAP resolution divisibility constraint (multiple-of-4) unverifiable until encoder is available — sweep cases at 1023×769 included but cannot distinguish constraint rejection from encoder-absent rejection on this build
