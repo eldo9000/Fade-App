@@ -28,6 +28,11 @@ pub fn convert(
     // The dnxhd encoder (which handles DNxHR) requires at least 1280×720.
     // If the caller has explicitly set a resolution we can check it now and
     // return a clear error before spawning ffmpeg.
+    //
+    // Guard fires only when opts.resolution is explicitly set. If the caller
+    // passes no resolution, the input dimensions pass through unchanged —
+    // ffmpeg will still reject sub-minimum inputs, but the error will be
+    // less descriptive. Full pre-flight dimension detection is deferred.
     if opts.codec.as_deref() == Some("dnxhr") {
         if let Some(res) = &opts.resolution {
             if let Some((w_str, h_str)) = res.split_once('x') {
@@ -35,6 +40,23 @@ pub fn convert(
                     if w < 1280 || h < 720 {
                         return ConvertResult::Error(
                             "DNxHR requires a minimum output resolution of 1280×720. \
+                             Set a higher resolution or leave unscaled."
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // DNxHD minimum-resolution guard — same constraint as DNxHR.
+    if opts.codec.as_deref() == Some("dnxhd") {
+        if let Some(res) = &opts.resolution {
+            if let Some((w_str, h_str)) = res.split_once('x') {
+                if let (Ok(w), Ok(h)) = (w_str.parse::<u32>(), h_str.parse::<u32>()) {
+                    if w < 1280 || h < 720 {
+                        return ConvertResult::Error(
+                            "DNxHD requires a minimum output resolution of 1280×720. \
                              Set a higher resolution or leave unscaled."
                                 .to_string(),
                         );
