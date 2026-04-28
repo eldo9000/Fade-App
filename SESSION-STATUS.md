@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-28 (two sprints complete — 17 tasks total, all CI-green)
+Last updated: 2026-04-28 (three sprints complete — 21 tasks total, all CI-green)
 
 ---
 
@@ -15,6 +15,8 @@ Two full sessions of substantial work landed 2026-04-25.
 CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
+
+BC-005 fix sprint complete 2026-04-28 (TASK-18–21, all CI-green). TASK-18: H.265 codec-aware profile builder — splits h264|h265 branch, adds h265_effective_profile() (27 sweep cases → green). TASK-19: H.264 lossless guard — forces yuv444p/high444 when crf=0 (120 sweep cases → green). TASK-20: DNxHD resolution guard + DNxHR contract annotation. TASK-21: AV1 encoder → libsvtav1 (9 sweep cases → green). Follow-up deferred: av1_speed/-cpu-used → -preset remapping for libsvtav1.
 
 Sweep sprint complete 2026-04-28 (TASK-15–17, all CI-green). TASK-15: full_sweep.rs run — 292 image/audio/data cases pass, 173 video failures across 6 new BC-005 constraint classes logged to INVESTIGATION-LOG.md (h264-lossless-profile, h265-profile-name-mismatch, DNxHD-bitrate-resolution-coupling, DNxHR-arg-builder-guard-bypass, libaom-av1-absent, libtheora-absent). TASK-16: extra_sweep.rs — 17/17 pass, no new findings. TASK-17: mkdtemp 0700 sandbox applied to 4 remaining medium-priority temp-file sites (subtitle.rs, tracker.rs, vmaf.rs, operations/mod.rs). All temp-file hardening now complete. No arc in flight.
 
@@ -47,4 +49,4 @@ Previous: Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known 
 
 ## Mode
 
-Active development. Two sprints closed 2026-04-28 (17 tasks total). 6 new BC-005 constraint classes in INVESTIGATION-LOG — next arc candidates. No arc in flight.
+Active development. Three sprints closed 2026-04-28 (21 tasks total). 156 sweep failures resolved (27 h265 + 120 h264-lossless + 9 av1). Remaining open sweep findings: DNxHD/DNxHR 64×64 fixture (resolution not set, guard bypass), h265-lossless (deferred), libtheora/HAP absent (env). No arc in flight.
