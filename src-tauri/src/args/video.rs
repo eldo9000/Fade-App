@@ -289,12 +289,35 @@ fn h264_effective_profile<'a>(profile: Option<&str>, pix_fmt: Option<&str>) -> &
     }
 }
 
+/// Map a user-selected H.265 profile hint and pixel format to a valid libx265
+/// profile name. libx265 uses a completely different profile namespace from
+/// libx264 — passing libx264 names (e.g. "high") to libx265 produces
+/// "unknown profile" errors.
+///
+/// Mapping:
+/// - `yuv444p`      → "main444-8"
+/// - `yuv422p`      → "main422-10"
+/// - `yuv420p10le`  → "main10"
+/// - profile hint "main10" → "main10"
+/// - everything else → "main"
+fn h265_effective_profile<'a>(profile: Option<&str>, pix_fmt: Option<&str>) -> &'a str {
+    match pix_fmt {
+        Some("yuv444p") => "main444-8",
+        Some("yuv422p") => "main422-10",
+        Some("yuv420p10le") => "main10",
+        _ => match profile {
+            Some("main10") => "main10",
+            _ => "main",
+        },
+    }
+}
+
 /// Emit codec-specific quality / preset / profile / tune / pix_fmt flags
 /// based on user options. Skips everything for `copy`.
 fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     match codec {
-        "h264" | "h265" => {
+        "h264" => {
             let mode = opts.video_bitrate_mode.as_deref().unwrap_or("crf");
             match mode {
                 "vbr" => {
@@ -325,6 +348,48 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             if opts.h264_profile.is_some() || opts.pix_fmt.is_some() {
                 let effective =
                     h264_effective_profile(opts.h264_profile.as_deref(), opts.pix_fmt.as_deref());
+                out.extend(["-profile:v".to_string(), effective.to_string()]);
+            }
+            if let Some(t) = opts.tune.as_deref() {
+                if t != "none" {
+                    out.extend(["-tune".to_string(), t.to_string()]);
+                }
+            }
+            if let Some(pf) = opts.pix_fmt.as_deref() {
+                out.extend(["-pix_fmt".to_string(), pf.to_string()]);
+            }
+        }
+        "h265" => {
+            let mode = opts.video_bitrate_mode.as_deref().unwrap_or("crf");
+            match mode {
+                "vbr" => {
+                    let br = opts.video_bitrate.unwrap_or(4000);
+                    out.extend(["-b:v".to_string(), format!("{}k", br)]);
+                }
+                "cbr" => {
+                    let br = opts.video_bitrate.unwrap_or(4000);
+                    out.extend([
+                        "-b:v".to_string(),
+                        format!("{}k", br),
+                        "-minrate".to_string(),
+                        format!("{}k", br),
+                        "-maxrate".to_string(),
+                        format!("{}k", br),
+                        "-bufsize".to_string(),
+                        format!("{}k", br * 2),
+                    ]);
+                }
+                _ => {
+                    if let Some(crf) = opts.crf {
+                        out.extend(["-crf".to_string(), crf.to_string()]);
+                    }
+                }
+            }
+            let preset = opts.preset.as_deref().unwrap_or("medium");
+            out.extend(["-preset".to_string(), preset.to_string()]);
+            if opts.h264_profile.is_some() || opts.pix_fmt.is_some() {
+                let effective =
+                    h265_effective_profile(opts.h264_profile.as_deref(), opts.pix_fmt.as_deref());
                 out.extend(["-profile:v".to_string(), effective.to_string()]);
             }
             if let Some(t) = opts.tune.as_deref() {
