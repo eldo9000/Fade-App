@@ -440,7 +440,10 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
                 "0".to_string(),
             ]);
             if let Some(s) = opts.av1_speed {
-                out.extend(["-cpu-used".to_string(), s.to_string()]);
+                // libsvtav1 uses -preset (0–13); av1_speed is stored in 0–10 range.
+                // Scale linearly: preset = round(speed * 13 / 10).
+                let preset = (s as f32 * 13.0 / 10.0).round() as u32;
+                out.extend(["-preset".to_string(), preset.to_string()]);
             }
             if let Some(pf) = opts.pix_fmt.as_deref() {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);

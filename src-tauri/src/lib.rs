@@ -2617,7 +2617,9 @@ mod tests {
             ..Default::default()
         };
         let args = build_ffmpeg_video_args("in.mp4", "out.mp4", &opts);
-        assert!(find_pair(&args, "-cpu-used", "6"));
+        // av1_speed=6 maps to preset=round(6*13/10)=round(7.8)=8
+        assert!(find_pair(&args, "-preset", "8"));
+        assert!(!args.contains(&"-cpu-used".to_string()));
     }
 
     #[test]
