@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-25 (updated post-sprint 3)
+Last updated: 2026-04-28 (sprint complete — 14 tasks, all CI-green)
 
 ---
 
@@ -16,9 +16,9 @@ CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
 
-Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known Risks race entry removed (`71f5d93`); DNxHD bitrate + CineForm sweep cases added to `full_sweep.rs` (`1dbf064`); `window_progress_emitter_batched` helper added, `video.rs`/`audio.rs` run() wrappers migrated (`af0c7b6`, `263d7d2`). `archive.rs` remains inline — 0–100 percent scale mismatch with helper, TODO left in code. No arc in flight.
+Security + quality sprint complete 2026-04-28 (14 tasks, all CI-green). Closed: zip-slip containment (TASK-1), input validation in convert_file (TASK-2), ffmpeg subtitle filter escaping (TASK-3), ConvertOptions.ts codegen committed (TASK-4), archive temp-dir portability (TASK-5), archive progress normalisation + emitter migration (TASK-6), SQL path validator for parquet (TASK-7), merge temp-file race fix (TASK-8), fs_commands traversal hardening (TASK-9), TASK-10 rejected (wrong mitigation shape), bindable defaults audit (TASK-11), image stderr drain thread (TASK-12), HAP sweep coverage (TASK-13 — surfaces Homebrew FFmpeg missing HAP encoder), renderer-facing temp sandbox with mode-0700 mkdtemp (TASK-14). No arc in flight. Next: run /observe-sync to refresh project model, then choose next focus area (testing-phase, v0.6→v0.8 window).
 
-Previous: Third arc complete (3 tasks, all CI-green, 2026-04-25): `window_progress_emitter` helper extracted deduping 12 `run()` wrappers (`da6ca88`); Blender `locate_script()` hardened with macOS bundle + Linux FHS paths (`fc1d9d3`); analysis-result `invoke` moved inside `listen().then()` to close listener race (`ce5b37e`).
+Previous: Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known Risks race entry removed (`71f5d93`); DNxHD bitrate + CineForm sweep cases added to `full_sweep.rs` (`1dbf064`); `window_progress_emitter_batched` helper added, `video.rs`/`audio.rs` run() wrappers migrated (`af0c7b6`, `263d7d2`).
 
 ## Audit outcome summary
 
@@ -45,4 +45,4 @@ Previous: Third arc complete (3 tasks, all CI-green, 2026-04-25): `window_progre
 
 ## Mode
 
-Active development. Three arcs closed 2026-04-25 (11 tasks total). No arc in flight.
+Active development. Security + quality sprint closed 2026-04-28 (14 tasks total). No arc in flight.
