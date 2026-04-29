@@ -22,3 +22,4 @@
 2026-04-28 | CONFIRMED | libaom-av1 absent — switched default AV1 encoder to libsvtav1 in args/video.rs
 2026-04-28 | OPEN | libtheora absent from Homebrew FFmpeg 8.1 — theora_default full_sweep case fails with "Encoder not found"; same encoder-absent class as HAP/AV1. Theora codec path in src/args/video.rs unreachable on standard macOS dev installs.
 2026-04-29 | CONFIRMED | dispatch 1/3 — DNxHR/DNxHD resolution guards in convert() only; convert()-only contract documented in build_ffmpeg_video_args() doc comment + BC-005 4th instance added; cargo check pass
+2026-04-29 | CONFIRMED | image_full sweep clean (143 cases, 6 live formats: jpeg, png, webp, tiff, bmp, avif) — gating run for 0.6.5 image validation
