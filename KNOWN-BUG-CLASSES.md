@@ -91,6 +91,20 @@
    > }
    > ```
 
+4. **DNxHR/DNxHD resolution guard — convert()-only contract** — The 1280×720 minimum-resolution guards for `dnxhr` and `dnxhd` live in `convert::video::convert()`, not in `build_ffmpeg_video_args()`. Because `build_ffmpeg_video_args()` returns `Vec<String>` it cannot express an error. Any direct caller of the arg builder (unit tests, future pipeline stages) that passes `opts.codec = Some("dnxhr"|"dnxhd")` with a sub-minimum resolution bypasses the pre-flight check and produces a valid-looking argument vector that FFmpeg rejects at runtime. Fix: documented as a contract comment on `build_ffmpeg_video_args()` so callers know to route through `convert()`. See BC-005 pattern note below.
+   > Authoritative source — `src-tauri/src/args/video.rs` (doc comment on `build_ffmpeg_video_args()`):
+   > ```
+   > // DNxHR / DNxHD resolution contract (BC-005)
+   > // This function returns Vec<String> and cannot express an error.
+   > // It contains no minimum-resolution guard for DNxHR or DNxHD.
+   > // Those guards live exclusively in convert::video::convert().
+   > // Callers that invoke build_ffmpeg_video_args() directly must not
+   > // pass opts.codec = Some("dnxhr"|"dnxhd") with opts.resolution
+   > // below 1280×720.
+   > ```
+
 **Pattern:** When the UI exposes encoder options (codec, pixel format, profile, speed, resolution) as independent controls, any combination that the underlying encoder rejects will only surface as a cryptic CLI error at runtime. Before adding a new encoder-option control, explicitly document which combinations are invalid and add a pre-flight guard in the arg builder (clamp, auto-promote, or early error). Do not rely on the encoder to produce a useful error message.
 
-**Resolved:** All three instances fixed. `723cbff`/`50c89cb` (H.264), `457d22c` (AVIF), `0d1c045` (DNxHR). No open instances known as of 2026-04-25.
+**Guard placement corollary:** When the arg builder cannot express an error (returns `Vec<String>`), the guard must live in the caller (e.g., `convert()`). Document this split explicitly as a contract comment on the arg builder so callers know they must not bypass it.
+
+**Resolved:** All four instances documented. `723cbff`/`50c89cb` (H.264), `457d22c` (AVIF), `0d1c045` (DNxHR guard), convert()-only contract documented 2026-04-29 (DNxHR/DNxHD arg-builder bypass). No open instances known as of 2026-04-29.

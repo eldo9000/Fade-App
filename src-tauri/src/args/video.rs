@@ -17,6 +17,23 @@ fn escape_for_subtitles_filter(path: &str) -> String {
 /// Build the full ffmpeg argument list for a video conversion. GIF output
 /// uses a completely different pipeline (palettegen/paletteuse) and is
 /// dispatched to `build_gif_args`.
+///
+/// # DNxHR / DNxHD resolution contract (BC-005)
+///
+/// This function returns `Vec<String>` and **cannot express an error**. It
+/// contains **no** minimum-resolution guard for the DNxHR or DNxHD codecs.
+/// Those guards live exclusively in `convert::video::convert()`, which
+/// checks `opts.resolution` against the 1280×720 minimum and returns a
+/// `ConvertResult::Error` before this function is ever called.
+///
+/// **Callers that invoke `build_ffmpeg_video_args()` directly** (e.g. unit
+/// tests, future pipeline stages) bypass that pre-flight check entirely.
+/// Any such caller **must not** pass `opts.codec = Some("dnxhr")` or
+/// `Some("dnxhd")` together with an `opts.resolution` below 1280×720 —
+/// doing so will produce a valid-looking argument vector that FFmpeg will
+/// reject at runtime with a cryptic encoder error.
+///
+/// To safely drive DNxHR/DNxHD conversions, route through `convert()`.
 pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<String> {
     if opts.output_format == "gif" && opts.extract_audio != Some(true) {
         return build_gif_args(input, output, opts);
