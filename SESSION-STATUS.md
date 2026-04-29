@@ -1,6 +1,6 @@
 # Fade — Session Status
 
-Last updated: 2026-04-29 (DNxHR arg-builder contract documented, CI-green)
+Last updated: 2026-04-29 (0.6.5 image validation closed, CI-green)
 
 ---
 
@@ -15,6 +15,8 @@ Two full sessions of substantial work landed 2026-04-25.
 CI green on `main`. Arc closed 2026-04-25.
 
 ## Next action
+
+2026-04-29: 0.6.5 image validation pass complete. `image_full` sweep ran clean — 143 cases, 0 failures, all 6 live image output formats verified end-to-end: **jpeg, png, webp, tiff, bmp, avif**. No format-specific clamps needed in `ImageOptions.svelte` (sweep was clean). The 19 todo-flagged formats in the picker (gif, svg, ico, jpegxl, heic, heif, psd, exr, hdr, dds, xcf, raw, cr2, cr3, nef, arw, dng, orf, rw2) remain unimplemented and out of scope for this sprint — re-enabling any of them is a separate decision requiring classifier + encoder path verification.
 
 2026-04-29: DNxHR/DNxHD convert()-only contract documented in `build_ffmpeg_video_args()` doc comment (BC-005 4th instance). INVESTIGATION-LOG DNxHR arg-builder-layer OPEN entry closed (e1d1020). CI-green. No arc in flight. Remaining genuine OPENs in log: HAP encoder absent (env), HAP divisibility unverifiable (env), libtheora absent (env). All code-shaped OPEN entries resolved.
 
