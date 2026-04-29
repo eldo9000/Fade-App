@@ -35,11 +35,11 @@
 ## BC-005: Encoder-constraint — UI presents invalid encoder-option combinations
 **First observed:** 2026-04-24 (recognized as a class)
 **Files:**
-- `src-tauri/src/args/video.rs` — H.264 profile/pix_fmt auto-promotion (`h264_effective_profile`, lines 257–276)
-- `src-tauri/src/args/image.rs` — AVIF libheif speed clamp (line 178)
-- `src-tauri/src/convert/video.rs` — DNxHR minimum-resolution guard (lines 29–47)
+- `src-tauri/src/args/video.rs` — H.264 profile/pix_fmt auto-promotion (`h264_effective_profile`), H.264 lossless yuv444p forcing, H.265 codec-aware profile builder (`h265_effective_profile`), AV1 encoder selection (libsvtav1), av1_speed → -preset mapping
+- `src-tauri/src/args/image.rs` — AVIF libheif speed clamp
+- `src-tauri/src/convert/video.rs` — DNxHR and DNxHD minimum-resolution guards
 
-**Description:** Fade's UI presented encoder-option combinations that the underlying encoder (FFmpeg or ImageMagick/libheif) either silently rejects or produces broken output for. Each instance was fixed independently before the class was recognized. Three confirmed instances:
+**Description:** Fade's UI presented encoder-option combinations that the underlying encoder (FFmpeg or ImageMagick/libheif) either silently rejects or produces broken output for. Each instance was fixed independently before the class was recognized. Nine confirmed instances:
 
 1. **H.264 profile/pix_fmt impossible combos** — `yuv422p` and `yuv444p` pixel formats are incompatible with `baseline`, `main`, and `high` H.264 profiles; only `high422`/`high444` support them. Fade's UI allowed selecting any profile regardless of pix_fmt. Fix: `h264_effective_profile()` in `src-tauri/src/args/video.rs` auto-promotes the emitted ffmpeg profile arg when pix_fmt forces a higher-chroma profile, and the UI disables unreachable profile buttons. Commits: `723cbff` (arg fix), `50c89cb` (UI disable).
    > Authoritative source — `src-tauri/src/args/video.rs:266-276`:
@@ -91,20 +91,20 @@
    > }
    > ```
 
-4. **DNxHR/DNxHD resolution guard — convert()-only contract** — The 1280×720 minimum-resolution guards for `dnxhr` and `dnxhd` live in `convert::video::convert()`, not in `build_ffmpeg_video_args()`. Because `build_ffmpeg_video_args()` returns `Vec<String>` it cannot express an error. Any direct caller of the arg builder (unit tests, future pipeline stages) that passes `opts.codec = Some("dnxhr"|"dnxhd")` with a sub-minimum resolution bypasses the pre-flight check and produces a valid-looking argument vector that FFmpeg rejects at runtime. Fix: documented as a contract comment on `build_ffmpeg_video_args()` so callers know to route through `convert()`. See BC-005 pattern note below.
-   > Authoritative source — `src-tauri/src/args/video.rs` (doc comment on `build_ffmpeg_video_args()`):
-   > ```
-   > // DNxHR / DNxHD resolution contract (BC-005)
-   > // This function returns Vec<String> and cannot express an error.
-   > // It contains no minimum-resolution guard for DNxHR or DNxHD.
-   > // Those guards live exclusively in convert::video::convert().
-   > // Callers that invoke build_ffmpeg_video_args() directly must not
-   > // pass opts.codec = Some("dnxhr"|"dnxhd") with opts.resolution
-   > // below 1280×720.
-   > ```
+4. **H.264 lossless requires high444** — H.264 with `crf=0` (lossless) is rejected by `baseline`, `main`, and `high` profiles ("baseline profile doesn't support lossless"). Only `high444` + `yuv444p` produces a valid lossless stream. Fade's arg builder previously emitted whatever profile/pix_fmt the user selected. Fix: when `crf=0`, force `yuv444p` and `high444` in `src-tauri/src/args/video.rs`. Commit: `ea93db0` (TASK-19). Closed 120 sweep failures.
+
+5. **H.265 codec-aware profile builder** — libx265 uses a different profile namespace from libx264 (`main`, `main10`, `main444-8`, …). The shared arg path was unconditionally calling `h264_effective_profile()` for both codecs, emitting `high`/`high422`/`high444` to libx265 which rejects them as unknown. Fix: add `h265_effective_profile()` and split the h264|h265 branch in `src-tauri/src/args/video.rs`. Commit: `fa74e91` (TASK-18). Closed 27 sweep failures.
+
+6. **DNxHD minimum-resolution guard** — The `dnxhd` encoder validates (bitrate, resolution, fps, pix_fmt) tuples and rejects sub-1280×720 outputs analogously to DNxHR. Fix: pre-flight resolution check for `codec = "dnxhd"` in `src-tauri/src/convert/video.rs`. Commit: `7ee89bf` (TASK-20).
+
+7. **AV1 encoder availability** — Fade hardcoded `libaom-av1` for `codec = "av1"`, but the encoder is not present in standard Homebrew FFmpeg 8.1 builds (which ship `libsvtav1` only). Result: every AV1 conversion failed with "Encoder not found". Fix: switch the default AV1 encoder to `libsvtav1` in `src-tauri/src/args/video.rs`. Commit: `0230d3d` (TASK-21). Closed 9 sweep failures.
+
+8. **AV1 speed parameter mapping** — `libsvtav1` does not honor the `-cpu-used` flag (which `libaom-av1` used); it expects `-preset 0..13`. Fade's `av1_speed` (0..10) was being emitted as `-cpu-used` and silently ignored. Fix: remap `av1_speed` to `-preset` with 0–10 → 0–13 scaling. Commit: `c74a3aa` (TASK-23).
+
+9. **DNxHR/DNxHD resolution guard — convert()-only contract** — The 1280×720 minimum-resolution guards for `dnxhr` and `dnxhd` live in `convert::video::convert()`, not in `build_ffmpeg_video_args()`. Because `build_ffmpeg_video_args()` returns `Vec<String>` it cannot express an error. Any direct caller of the arg builder (unit tests, future pipeline stages) that passes `opts.codec = Some("dnxhr"|"dnxhd")` with a sub-minimum resolution bypasses the pre-flight check and produces a valid-looking argument vector that FFmpeg rejects at runtime. Fix: documented as a contract comment on `build_ffmpeg_video_args()` so callers know to route through `convert()`. Commit: `e1d1020`. See guard-placement corollary below.
 
 **Pattern:** When the UI exposes encoder options (codec, pixel format, profile, speed, resolution) as independent controls, any combination that the underlying encoder rejects will only surface as a cryptic CLI error at runtime. Before adding a new encoder-option control, explicitly document which combinations are invalid and add a pre-flight guard in the arg builder (clamp, auto-promote, or early error). Do not rely on the encoder to produce a useful error message.
 
 **Guard placement corollary:** When the arg builder cannot express an error (returns `Vec<String>`), the guard must live in the caller (e.g., `convert()`). Document this split explicitly as a contract comment on the arg builder so callers know they must not bypass it.
 
-**Resolved:** All four instances documented. `723cbff`/`50c89cb` (H.264), `457d22c` (AVIF), `0d1c045` (DNxHR guard), convert()-only contract documented 2026-04-29 (DNxHR/DNxHD arg-builder bypass). No open instances known as of 2026-04-29.
+**Resolved:** All nine instances documented. `723cbff`/`50c89cb` (H.264 profile/pix_fmt), `457d22c` (AVIF speed cap), `0d1c045` (DNxHR guard), `ea93db0` (H.264 lossless), `fa74e91` (H.265 codec-aware profile), `7ee89bf` (DNxHD guard), `0230d3d` (AV1 encoder switch), `c74a3aa` (av1_speed remap), `e1d1020` (convert()-only contract). No open instances known as of 2026-04-29.
