@@ -23,3 +23,4 @@
 2026-04-28 | OPEN | libtheora absent from Homebrew FFmpeg 8.1 — theora_default full_sweep case fails with "Encoder not found"; same encoder-absent class as HAP/AV1. Theora codec path in src/args/video.rs unreachable on standard macOS dev installs.
 2026-04-29 | CONFIRMED | dispatch 1/3 — DNxHR/DNxHD resolution guards in convert() only; convert()-only contract documented in build_ffmpeg_video_args() doc comment + BC-005 4th instance added; cargo check pass
 2026-04-29 | CONFIRMED | image_full sweep clean (143 cases, 6 live formats: jpeg, png, webp, tiff, bmp, avif) — gating run for 0.6.5 image validation
+2026-04-29 | CONFIRMED | 0.6.6 sweep re-baseline — video_full: 1097 total, 1080 passed, 17 failed (12 fixture-shape: DNxHR/DNxHD 64×64 no-resolution; 4 env-blocked: HAP encoder absent; 1 env-blocked: libtheora absent; none new); refactored_av_sweep: 3 total, 3 passed, 0 failed. BC-005 fixes confirmed held — no regressions.
