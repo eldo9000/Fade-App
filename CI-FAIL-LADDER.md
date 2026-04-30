@@ -27,3 +27,5 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** Worker ran `cargo check` but not `cargo fmt --check`; assert! on one line exceeds rustfmt line width.
 - **Next:** `src-tauri/src/args/model_blender.rs` — run `cargo fmt --manifest-path src-tauri/Cargo.toml`
+
+## Fail arc closed — 2026-04-30 — 1 entry — green CI 25140539416
