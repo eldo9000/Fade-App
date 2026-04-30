@@ -1524,54 +1524,54 @@
     { label: 'Audio', cat: 'audio', fmts: [
       { id: 'mp3', live: true }, { id: 'wav', live: true }, { id: 'flac', live: true }, { id: 'ogg', live: true },
       { id: 'aac', live: true }, { id: 'opus', live: true }, { id: 'm4a', live: true },
-      { id: 'aiff' },
+      { id: 'aiff', building: true },
       { id: 'vorbis', label: 'Vorbis', todo: true },
       { id: 'ddp', label: 'Dolby Digital+', todo: true },
       { id: 'truehd', label: 'Dolby TrueHD', todo: true },
     ]},
     { label: 'Video', cat: 'video', fmts: [
-      { id: 'mp4' }, { id: 'mov' }, { id: 'webm' }, { id: 'mkv' }, { id: 'avi' }, { id: 'gif' },
-      { id: 'm4v'  }, { id: 'flv'  }, { id: 'mpg'  },
-      { id: 'ogv'  }, { id: 'ts'   }, { id: '3gp'  },
-      { id: 'divx' }, { id: 'rmvb' }, { id: 'asf'  },
-      { id: 'wmv', label: 'WMV' },
+      { id: 'mp4', live: true }, { id: 'mov', live: true }, { id: 'webm', live: true }, { id: 'mkv', live: true }, { id: 'avi', live: true }, { id: 'gif', live: true },
+      { id: 'm4v', live: true }, { id: 'flv', live: true }, { id: 'mpg', live: true },
+      { id: 'ogv', building: true }, { id: 'ts', live: true }, { id: '3gp', live: true },
+      { id: 'divx', live: true }, { id: 'rmvb', live: true }, { id: 'asf', live: true },
+      { id: 'wmv', label: 'WMV', live: true },
     ]},
     { label: 'Image Sequence', cat: 'seq', fmts: [
-      { id: 'seq_png',  label: 'PNG',  cat: 'video' },
-      { id: 'seq_jpg',  label: 'JPEG', cat: 'video' },
-      { id: 'seq_tiff', label: 'TIFF', cat: 'video' },
+      { id: 'seq_png',  label: 'PNG',  cat: 'video', building: true },
+      { id: 'seq_jpg',  label: 'JPEG', cat: 'video', building: true },
+      { id: 'seq_tiff', label: 'TIFF', cat: 'video', building: true },
     ]},
     // ── Codecs: quick-picks that set both the common container AND codec.
     // Clicking a codec preset drops you onto the natural container for that
     // codec (ProRes → MOV, H.264 → MP4, FFV1 → MKV, etc.) and pre-selects
     // the codec in VideoOptions.
     { label: 'Codecs', cat: 'codec', fmts: [
-      { id: 'codec-h264',      label: 'H.264',         ext: 'mp4', codec: 'h264'        },
-      { id: 'codec-h265',      label: 'H.265 / HEVC',  ext: 'mp4', codec: 'h265'        },
-      { id: 'codec-av1',       label: 'AV1',           ext: 'mp4', codec: 'av1'         },
-      { id: 'codec-vp9',       label: 'VP9',           ext: 'webm', codec: 'vp9'        },
-      { id: 'codec-prores',    label: 'Apple ProRes',  ext: 'mov', codec: 'prores'                   },
-      { id: 'codec-dnxhd',     label: 'DNxHD',         ext: 'mov', codec: 'dnxhd'                   },
-      { id: 'codec-dnxhr',     label: 'DNxHR',         ext: 'mov', codec: 'dnxhr'                   },
-      { id: 'codec-cineform',  label: 'CineForm',      ext: 'mov', codec: 'cineform'                },
-      { id: 'codec-qtanim',    label: 'QT Animation',  ext: 'mov', codec: 'qtrle'                   },
-      { id: 'codec-uncomp',    label: 'Uncompressed',  ext: 'mov', codec: 'rawvideo'                },
-      { id: 'codec-ffv1',      label: 'FFV1',          ext: 'mkv', codec: 'ffv1'                    },
-      { id: 'codec-xdcam422',  label: 'XDCAM HD422',   ext: 'mov', codec: 'xdcam422'               },
-      { id: 'codec-xdcam35',   label: 'XDCAM HD35',    ext: 'mov', codec: 'xdcam35'                },
-      { id: 'codec-avcintra',  label: 'AVC-Intra',     ext: 'mov', codec: 'h264',       todo: true },
-      { id: 'codec-xavc',      label: 'XAVC',          ext: 'mp4', codec: 'h264',       todo: true },
-      { id: 'codec-xavclgop',  label: 'XAVC Long GOP', ext: 'mp4', codec: 'h264',       todo: true },
-      { id: 'codec-hap',       label: 'HAP',           ext: 'mov', codec: 'hap'                    },
-      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv', codec: 'theora'                  },
-      { id: 'codec-mpeg2',     label: 'MPEG-2',        ext: 'mpg', codec: 'mpeg2video'              },
-      { id: 'codec-mjpeg',     label: 'MJPEG',         ext: 'mov', codec: 'mjpeg'                   },
-      { id: 'codec-xvid',      label: 'Xvid',          ext: 'avi', codec: 'mpeg4'                   },
-      { id: 'codec-dv',        label: 'DV',            ext: 'mov', codec: 'dvvideo'                 },
-      { id: 'codec-mpeg1',     label: 'MPEG-1',        ext: 'mpg', codec: 'mpeg1video'              },
+      { id: 'codec-h264',      label: 'H.264',         ext: 'mp4',  codec: 'h264',        live: true },
+      { id: 'codec-h265',      label: 'H.265 / HEVC',  ext: 'mp4',  codec: 'h265',        live: true },
+      { id: 'codec-av1',       label: 'AV1',           ext: 'mp4',  codec: 'av1',         live: true },
+      { id: 'codec-vp9',       label: 'VP9',           ext: 'webm', codec: 'vp9',         live: true },
+      { id: 'codec-prores',    label: 'Apple ProRes',  ext: 'mov',  codec: 'prores',      live: true },
+      { id: 'codec-dnxhd',     label: 'DNxHD',         ext: 'mov',  codec: 'dnxhd',      live: true },
+      { id: 'codec-dnxhr',     label: 'DNxHR',         ext: 'mov',  codec: 'dnxhr',      live: true },
+      { id: 'codec-cineform',  label: 'CineForm',      ext: 'mov',  codec: 'cineform',   live: true },
+      { id: 'codec-qtanim',    label: 'QT Animation',  ext: 'mov',  codec: 'qtrle',      live: true },
+      { id: 'codec-uncomp',    label: 'Uncompressed',  ext: 'mov',  codec: 'rawvideo',   live: true },
+      { id: 'codec-ffv1',      label: 'FFV1',          ext: 'mkv',  codec: 'ffv1',       live: true },
+      { id: 'codec-xdcam422',  label: 'XDCAM HD422',   ext: 'mov',  codec: 'xdcam422',  live: true },
+      { id: 'codec-xdcam35',   label: 'XDCAM HD35',    ext: 'mov',  codec: 'xdcam35',   live: true },
+      { id: 'codec-avcintra',  label: 'AVC-Intra',     ext: 'mov',  codec: 'h264',       todo: true },
+      { id: 'codec-xavc',      label: 'XAVC',          ext: 'mp4',  codec: 'h264',       todo: true },
+      { id: 'codec-xavclgop',  label: 'XAVC Long GOP', ext: 'mp4',  codec: 'h264',       todo: true },
+      { id: 'codec-hap',       label: 'HAP',           ext: 'mov',  codec: 'hap',        building: true },
+      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv',  codec: 'theora',     building: true },
+      { id: 'codec-mpeg2',     label: 'MPEG-2',        ext: 'mpg',  codec: 'mpeg2video', live: true },
+      { id: 'codec-mjpeg',     label: 'MJPEG',         ext: 'mov',  codec: 'mjpeg',      live: true },
+      { id: 'codec-xvid',      label: 'Xvid',          ext: 'avi',  codec: 'mpeg4',      live: true },
+      { id: 'codec-dv',        label: 'DV',            ext: 'mov',  codec: 'dvvideo',    live: true },
+      { id: 'codec-mpeg1',     label: 'MPEG-1',        ext: 'mpg',  codec: 'mpeg1video', live: true },
     ]},
     { label: 'Image', cat: 'image', fmts: [
-      { id: 'jpeg' }, { id: 'png' }, { id: 'webp' }, { id: 'tiff' }, { id: 'bmp' }, { id: 'avif' },
+      { id: 'jpeg', live: true }, { id: 'png', live: true }, { id: 'webp', live: true }, { id: 'tiff', live: true }, { id: 'bmp', live: true }, { id: 'avif', live: true },
       { id: 'gif',   todo: true }, { id: 'svg',  todo: true }, { id: 'ico',  todo: true },
       { id: 'jpegxl', label: 'JPEG XL', todo: true },
       { id: 'heic',  todo: true }, { id: 'heif', todo: true }, { id: 'psd',  todo: true },
@@ -1582,16 +1582,16 @@
       { id: 'orf',   todo: true }, { id: 'rw2',  todo: true },
     ]},
     { label: '3D Model', cat: 'model', fmts: [
-      { id: 'obj' }, { id: 'gltf' }, { id: 'glb' },
-      { id: 'stl' }, { id: 'ply' }, { id: 'dae', label: 'COLLADA' },
-      { id: '3ds' }, { id: 'x3d' },
+      { id: 'obj', live: true }, { id: 'gltf', live: true }, { id: 'glb', live: true },
+      { id: 'stl', live: true }, { id: 'ply', live: true }, { id: 'dae', label: 'COLLADA', live: true },
+      { id: '3ds', live: true }, { id: 'x3d', live: true },
       // FBX write is ASCII-only via assimp (binary FBX needs Autodesk SDK).
-      { id: 'fbx', label: 'FBX (ASCII)' },
-      // Pro animation / CAD — placeholder scaffolding.
-      { id: 'usd',   label: 'USD',       preview: true },
-      { id: 'usdz',  label: 'USDZ',      preview: true },
-      { id: 'abc',   label: 'Alembic',   preview: true },
-      { id: 'blend', label: 'Blender',   preview: true },
+      { id: 'fbx', label: 'FBX (ASCII)', live: true },
+      // Pro animation / CAD — require managed installs (OpenUSD, Blender).
+      { id: 'usd',   label: 'USD',       building: true },
+      { id: 'usdz',  label: 'USDZ',      building: true },
+      { id: 'abc',   label: 'Alembic',   building: true },
+      { id: 'blend', label: 'Blender',   building: true },
       { id: 'step',  label: 'STEP',      todo: true, preview: true },
       { id: 'iges',  label: 'IGES',      todo: true, preview: true },
     ]},
@@ -1675,17 +1675,17 @@
     // own `cat` so all downstream routing (options objects, compat filter)
     // keeps working unchanged.
     { label: 'Data', cat: 'data', fmts: [
-      { id: 'json' }, { id: 'csv' }, { id: 'tsv' }, { id: 'xml' }, { id: 'yaml' },
+      { id: 'json', live: true }, { id: 'csv', live: true }, { id: 'tsv', live: true }, { id: 'xml', live: true }, { id: 'yaml', live: true },
       // Data-nerd: sqlite via rusqlite (bundled), parquet via duckdb CLI,
       // jupyter via `jupyter nbconvert`. See src-tauri/src/convert/data.rs
       // and src-tauri/src/convert/notebook.rs. These are INPUT format
       // markers — target codec flows through the standard data pipeline.
-      { id: 'sqlite',  label: 'SQLite'  },
-      { id: 'parquet', label: 'Parquet' },
-      { id: 'ipynb',   label: 'Jupyter' },
+      { id: 'sqlite',  label: 'SQLite',  live: true },
+      { id: 'parquet', label: 'Parquet', building: true },
+      { id: 'ipynb',   label: 'Jupyter', building: true },
     ]},
     { label: 'Document', cat: 'document', fmts: [
-      { id: 'html' }, { id: 'pdf' }, { id: 'txt' }, { id: 'md' },
+      { id: 'html', live: true }, { id: 'pdf', live: true }, { id: 'txt', live: true }, { id: 'md', live: true },
     ]},
     // Office — LibreOffice managed-install lane. `.pptx/.docx/.xlsx/.key/
     // .pages/.numbers` are all ZIP containers, so Media Extract (pull all
@@ -1719,14 +1719,14 @@
     // Subtitle file-format conversion (distinct from the Subtitling
     // operation — this is SRT-to-VTT style plumbing, not video embed/burn).
     { label: 'Subtitle', cat: 'subtitle', fmts: [
-      { id: 'srt',  label: 'SRT'  },
-      { id: 'vtt',  label: 'VTT'  },
-      { id: 'ass',  label: 'ASS'  },
-      { id: 'ssa',  label: 'SSA'  },
+      { id: 'srt',  label: 'SRT',  live: true },
+      { id: 'vtt',  label: 'VTT',  live: true },
+      { id: 'ass',  label: 'ASS',  live: true },
+      { id: 'ssa',  label: 'SSA',  live: true },
       // SBV (YouTube) is hand-rolled via a SRT bridge; TTML write is
       // ffmpeg-native. Both now ship.
-      { id: 'sbv',  label: 'SBV'  },
-      { id: 'ttml', label: 'TTML' },
+      { id: 'sbv',  label: 'SBV',  live: true },
+      { id: 'ttml', label: 'TTML', live: true },
     ]},
     // Timeline / edit decision lists — pro workflow interop (Premiere,
     // Resolve, FCP, Avid). Routed through OpenTimelineIO's `otioconvert`
@@ -1735,33 +1735,33 @@
     // timeline-native extension (edl/fcpxml/otio/aaf); generic data XML
     // still falls through to the data pipeline.
     { label: 'Timeline', cat: 'timeline', fmts: [
-      { id: 'edl',    label: 'EDL' },
-      { id: 'fcpxml', label: 'FCPXML' },
-      { id: 'xml',    label: 'Premiere XML' },
-      { id: 'otio',   label: 'OTIO' },
-      { id: 'aaf',    label: 'AAF' },
+      { id: 'edl',    label: 'EDL',          building: true },
+      { id: 'fcpxml', label: 'FCPXML',       building: true },
+      { id: 'xml',    label: 'Premiere XML', building: true },
+      { id: 'otio',   label: 'OTIO',         building: true },
+      { id: 'aaf',    label: 'AAF',          building: true },
     ]},
     { label: 'Archive', cat: 'archive', fmts: [
-      { id: 'zip' }, { id: 'tar' }, { id: 'gz' }, { id: '7z' },
-      { id: 'iso', label: 'ISO' },
-      { id: 'dmg', label: 'DMG' },
-      { id: 'cbr', label: 'CBR' },
-      { id: 'cbz', label: 'CBZ' },
-      { id: 'rar', label: 'RAR' },
+      { id: 'zip', live: true }, { id: 'tar', live: true }, { id: 'gz', live: true }, { id: '7z', live: true },
+      { id: 'iso', label: 'ISO', building: true },
+      { id: 'dmg', label: 'DMG', building: true },
+      { id: 'cbr', label: 'CBR', building: true },
+      { id: 'cbz', label: 'CBZ', building: true },
+      { id: 'rar', label: 'RAR', building: true },
     ]},
     // Font containers — routed through fonttools (Python). Flavor swap only:
     // ttf↔otf does not re-encode outlines (glyf vs. CFF is preserved).
     { label: 'Font', cat: 'font', fmts: [
-      { id: 'ttf',   label: 'TTF' },
-      { id: 'otf',   label: 'OTF' },
-      { id: 'woff',  label: 'WOFF' },
-      { id: 'woff2', label: 'WOFF2' },
+      { id: 'ttf',   label: 'TTF',   building: true },
+      { id: 'otf',   label: 'OTF',   building: true },
+      { id: 'woff',  label: 'WOFF',  building: true },
+      { id: 'woff2', label: 'WOFF2', building: true },
     ]},
-    { label: 'Email', cat: 'email', todo: true, fmts: [
+    { label: 'Email', cat: 'email', fmts: [
       // MSG (Outlook binary) remains deferred — backend returns a clear error.
       { id: 'msg',  label: 'MSG',  todo: true, preview: true },
-      { id: 'eml',  label: 'EML'  },
-      { id: 'mbox', label: 'MBOX' },
+      { id: 'eml',  label: 'EML',  live: true },
+      { id: 'mbox', label: 'MBOX', live: true },
     ]},
   ];
 
@@ -3195,7 +3195,7 @@
                 <div class="space-y-4">
                   {#each conversionGroups as group (group.cat)}
                     {@const _fmts = group.fmts.filter(f => {
-                        if (!(!f.todo || (f.preview && settings.showDevFeatures))) return false;
+                        if (!((!f.todo && !f.building) || (settings.showDevFeatures && (f.preview || f.building)))) return false;
                         if (!matchesSearch(f)) return false;
                         const entryCat = f.cat ?? group.cat;
                         if (compatibleOutputCats !== null && !compatibleOutputCats.includes(entryCat === 'codec' ? 'video' : entryCat)) return false;
@@ -3238,6 +3238,8 @@
                                      ? '!border-[var(--border)] !text-white hover:bg-[var(--accent)] hover:!text-white hover:!border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
                                      : f.todo
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                     : f.building
+                                     ? 'border-blue-900 text-blue-400 hover:border-blue-700 hover:bg-blue-950'
                                      : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
                         {/each}
@@ -3270,7 +3272,7 @@
                     {@const isOpsGroup = OPS_CATS.includes(group.cat)}
                     {@const _fmts = group.fmts.filter(f => {
                         const isOpsEntry = isOpsGroup || f.ops;
-                        if (!(!f.todo || (f.preview && settings.showDevFeatures) || isOpsGroup || f.ops)) return false;
+                        if (!((!f.todo && !f.building) || (settings.showDevFeatures && (f.preview || f.building)) || isOpsGroup || f.ops)) return false;
                         if (!matchesSearch(f)) return false;
                         if (!isOpsEntry && compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat)) return false;
                         return true;
@@ -3304,6 +3306,8 @@
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
                                    {f.todo && !isOpsEntry
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                     : f.building && !isOpsEntry
+                                     ? 'border-blue-900 text-blue-400 hover:border-blue-700 hover:bg-blue-950'
                                      : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
                         {/each}
@@ -3332,9 +3336,9 @@
               </button>
               {#if !settings.filesCollapsed}
                 <div class="space-y-4">
-                  {#each fileGroups.filter(g => !g.todo || settings.showDevFeatures) as group (group.cat)}
+                  {#each fileGroups.filter(g => (!g.todo && !g.building) || settings.showDevFeatures) as group (group.cat)}
                     {@const _fmts = group.fmts.filter(f =>
-                        (!f.todo || (f.preview && settings.showDevFeatures)) &&
+                        ((!f.todo && !f.building) || (settings.showDevFeatures && (f.preview || f.building))) &&
                         matchesSearch(f) &&
                         !(compatibleOutputCats !== null && !compatibleOutputCats.includes(group.cat))
                       )}
@@ -3342,10 +3346,10 @@
                     <div>
                       <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-[9px] font-semibold uppercase tracking-wider
-                                     {group.todo ? 'text-green-600' : '!text-[var(--text-secondary)]'}">
+                                     {group.todo ? 'text-green-600' : group.building ? 'text-blue-600' : '!text-[var(--text-secondary)]'}">
                           {group.label}
                         </span>
-                        <div class="flex-1 h-px {group.todo ? 'bg-green-900' : 'bg-[var(--border)]'}"></div>
+                        <div class="flex-1 h-px {group.todo ? 'bg-green-900' : group.building ? 'bg-blue-900' : 'bg-[var(--border)]'}"></div>
                       </div>
                       <div class="flex flex-wrap gap-1">
                         {#each _fmts as f}
@@ -3355,6 +3359,10 @@
                             class="px-2 py-0.5 rounded text-[11px] font-mono border transition-colors
                                    {f.todo
                                      ? 'border-green-900 text-green-400 hover:border-green-600 hover:bg-green-950'
+                                     : f.building
+                                     ? 'border-blue-900 text-blue-400 hover:border-blue-700 hover:bg-blue-950'
+                                     : f.live
+                                     ? '!border-[var(--border)] !text-white hover:bg-[var(--accent)] hover:!text-white hover:!border-[color-mix(in_srgb,var(--accent)_70%,#000)]'
                                      : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white hover:border-[color-mix(in_srgb,var(--accent)_70%,#000)]'}"
                           >{f.label ?? f.id}</button>
                         {/each}
