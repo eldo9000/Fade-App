@@ -15,3 +15,15 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Next:** `src/lib.rs:2764` and `src/lib.rs:2776` — update assertion strings to match new single-quoted emit.
 
 ## Fail arc closed — 2026-04-27 — 1 entry — green CI 24986902424
+
+---
+
+## Fail #1 — 2026-04-30 — cargo fmt: assert! in find_blender_does_not_panic too long
+
+- **Q1 in-last-commit:** yes — `src-tauri/src/args/model_blender.rs` (commit `555e602`) added the test
+- **Q2 named-error:** yes — `Diff in .../args/model_blender.rs:114` — assert! line over rustfmt column limit
+- **Q3 seen-before:** no — first failure in this arc
+- **Q4 broken-vs-missing:** broken — test code written without running rustfmt; format wrong
+- **Verdict:** QUICK (budget: 1 attempt)
+- **Hypothesis:** Worker ran `cargo check` but not `cargo fmt --check`; assert! on one line exceeds rustfmt line width.
+- **Next:** `src-tauri/src/args/model_blender.rs` — run `cargo fmt --manifest-path src-tauri/Cargo.toml`

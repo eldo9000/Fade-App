@@ -114,7 +114,10 @@ mod tests {
         // that any returned path is non-empty.
         let result = find_blender();
         if let Some(path) = result {
-            assert!(!path.as_os_str().is_empty(), "Blender path should be non-empty");
+            assert!(
+                !path.as_os_str().is_empty(),
+                "Blender path should be non-empty"
+            );
         }
         // None is valid — Blender may not be installed in CI
     }
