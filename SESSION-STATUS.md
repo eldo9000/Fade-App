@@ -47,7 +47,7 @@ Previous: Sprint complete 2026-04-25 (threads 1–3, all CI-green): stale Known 
 ## Known Risks
 
 - **`$bindable` chain verified correct** — all mutation paths use `$bindable()` + `bind:` explicitly.
-- **Blender backend: `blender_convert.py` path resolution at runtime is fragile.** Binary discovery and script path construction are not hardened for all deployment contexts. (BC-003/BC-004 code bugs resolved; runtime path fragility is a separate concern.)
+- **Blender backend path resolution — HARDENED.** `locate_script()` checks 4 candidate paths (CWD, exe-adjacent, macOS bundle `../Resources/`, Linux FHS `../share/fade/`). `find_blender()` does 5-stage fallback (PATH → macOS hardcoded → Windows Program Files scan → Linux hardcoded). Both emit diagnostic errors listing paths tried. Remaining gaps: no unit tests for path logic (TASK-29), no Blender version check (deferred).
 **full_sweep.rs diagnostic findings (2026-04-25):**
 - **H.264 profile/pix_fmt impossible combos — CLOSED (TASK-1 + TASK-2 this arc).** `full_sweep` surfaced 660 failing H.264 combos; fixed by arg-builder auto-promotion (`723cbff`) + UI disable of unreachable profile buttons (`50c89cb`).
 - **Missing `1px.jpg` fixture — CLOSED (TASK-4 this arc).** Pre-existing ignored test in `lib.rs` referenced a non-existent fixture; fixture restored (`8b61613`).
