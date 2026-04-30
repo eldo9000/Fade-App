@@ -179,3 +179,29 @@ pub fn run(
         input, output, opts, &mut emit, job_id, processes, &cancelled,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locate_script_error_lists_candidates() {
+        // In a test environment the script won't exist at any candidate path.
+        // Verify the error message is diagnostic (lists "blender_convert.py").
+        // NOTE: this test may pass unexpectedly if run from a dir that has the script.
+        // That's acceptable — it just means the function works correctly.
+        match locate_script() {
+            Ok(_) => { /* script found — acceptable in dev */ }
+            Err(e) => {
+                assert!(
+                    e.contains("blender_convert.py"),
+                    "Error should mention script filename, got: {e}"
+                );
+                assert!(
+                    e.contains("Tried:"),
+                    "Error should list tried paths, got: {e}"
+                );
+            }
+        }
+    }
+}

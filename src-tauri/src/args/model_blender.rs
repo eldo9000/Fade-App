@@ -103,3 +103,19 @@ pub fn build_blender_args(
 
     args
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_blender_does_not_panic() {
+        // Result is environment-dependent; just confirm no panic and
+        // that any returned path is non-empty.
+        let result = find_blender();
+        if let Some(path) = result {
+            assert!(!path.as_os_str().is_empty(), "Blender path should be non-empty");
+        }
+        // None is valid — Blender may not be installed in CI
+    }
+}
