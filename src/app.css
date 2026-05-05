@@ -4,21 +4,9 @@
 
 @variant dark (&:where(.dark, .dark *));
 
-/* Accent override — 20% darker blue than token default */
-:root {
-  --accent:       #003f7d;
-  --accent-hover: #00366d;
-
-  /* Background dark gray — the standard "slightly darker than surface-raised"
-     tone used by the bottom hint panel. Reuse this everywhere we want a
-     subtle recessed surface (checkbox tiles, info strips, etc). */
-  --surface-hint: color-mix(in srgb, var(--surface-raised) 90%, #000 10%);
-}
-html.dark {
-  --accent:       #003f7d;
-  --accent-hover: #00366d;
-  --surface-hint: color-mix(in srgb, var(--surface-raised) 90%, #000 10%);
-}
+/* Accent values, --surface-hint, .fade-check, .seg-active, .seg-inactive
+   now live in @libre/ui/src/tokens.css — shared across all Libre apps.
+   Override here only if Fade needs to diverge. */
 
 /* ── Base ──────────────────────────────────────────────────────────────────── */
 html, body, #app {
@@ -27,43 +15,6 @@ html, body, #app {
   padding: 0;
   overflow: hidden;
   font-family: Geist, -apple-system, BlinkMacSystemFont, 'Segoe UI', Cantarell, sans-serif;
-}
-
-/* ── Custom checkbox ─────────────────────────────────────────────────────── */
-.fade-check {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  background: color-mix(in srgb, #000 30%, var(--surface-raised));
-  border: 1px solid color-mix(in srgb, #fff 14%, transparent);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 120ms, border-color 120ms;
-  position: relative;
-  flex-shrink: 0;
-}
-.fade-check:hover {
-  border-color: color-mix(in srgb, #fff 24%, transparent);
-}
-.fade-check:checked {
-  background: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 70%, #000);
-}
-.fade-check:checked::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  background:
-    linear-gradient(45deg, transparent 42%, #fff 42%, #fff 58%, transparent 58%),
-    linear-gradient(-45deg, transparent 42%, #fff 42%, #fff 58%, transparent 58%);
-}
-.fade-check:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 /* ── Drag region ───────────────────────────────────────────────────────────── */
