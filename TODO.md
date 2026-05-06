@@ -7,11 +7,11 @@ Beta punch list. Edit in place. Nothing here is dated or phased — just shrink 
 ## Must close before shipping
 
 - [ ] Visual verify new shared components in native build — Checkbox, SectionLabel, SegmentedControl, Select (light + dark mode)
-- [ ] Blender version check — currently silent when wrong Blender version is on PATH; add check in `find_blender()` before invoking
-- [ ] h265-lossless guard — no encoder constraint for lossless + h265; document the limitation in-UI or add a guard to match the h264 treatment
-- [ ] DNxHD resolution guard — guard in `convert/video.rs` only fires when `opts.resolution` is explicitly set; unconditional check still missing for the passthrough path
-- [ ] Fill `CHANGELOG.md [Unreleased]` before next version cut
-- [ ] Bump CI actions to Node 24 (`actions/cache`, `actions/checkout`, `actions/setup-node`) — GitHub forces this June 2026
+- [x] Blender version check — `check_blender_version()` added; returns clear error if Blender < 3.0 (e21daf8)
+- [x] h265-lossless guard — `effective_pix_fmt` forces `yuv444p` + `main444-8` when crf=0; mirrors h264 guard (08f4dbe)
+- [x] DNxHD resolution guard — passthrough path now probes input dims via `probe_video_dimensions()`; guard fires for sub-1280×720 even when no explicit resolution set (631f0f4)
+- [x] Fill `CHANGELOG.md [Unreleased]` before next version cut — filled (b7fdbb1)
+- [x] Bump CI actions to Node 24 — `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` added to all three workflows (b7fdbb1)
 
 ---
 
