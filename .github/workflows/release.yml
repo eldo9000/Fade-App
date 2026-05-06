@@ -123,9 +123,14 @@ jobs:
             exit 1
           fi
           VERSION="${TAG#v}"
+          # Strip semver pre-release suffix — Tauri names artifacts using
+          # tauri.conf.json version (numeric base only, e.g. 0.7.0), not
+          # the full tag version (e.g. 0.7.0-beta.1).
+          VERSION_BASE="${VERSION%%-*}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag=$TAG version=$VERSION"
+          echo "version_base=$VERSION_BASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$VERSION version_base=$VERSION_BASE"
 
       - name: Verify tag matches tauri.conf.json version
         run: |
@@ -304,14 +309,18 @@ jobs:
           set -euo pipefail
           STAGE="$RUNNER_TEMP/fade-stage"
           mkdir -p "$STAGE"
+          # VERSION is the full tag version (e.g. 0.7.0-beta.1).
+          # VERSION_BASE is the numeric-only base (e.g. 0.7.0) — Tauri uses
+          # tauri.conf.json version for artifact filenames, so we need the base.
           VERSION='${{ steps.tag.outputs.version }}'
+          V='${{ steps.tag.outputs.version_base }}'
 
           case "${{ matrix.platform }}" in
             darwin-aarch64)
               BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
-              cp "$BUNDLE"/dmg/Fade_${VERSION}_aarch64.dmg "$STAGE/"
-              cp "$BUNDLE"/macos/Fade.app.tar.gz            "$STAGE/"
-              cp "$BUNDLE"/macos/Fade.app.tar.gz.sig        "$STAGE/"
+              cp "$BUNDLE"/dmg/Fade_${V}_aarch64.dmg "$STAGE/"
+              cp "$BUNDLE"/macos/Fade.app.tar.gz      "$STAGE/"
+              cp "$BUNDLE"/macos/Fade.app.tar.gz.sig  "$STAGE/"
               SIG_FILE="$STAGE/Fade.app.tar.gz.sig"
               ;;
             linux-x86_64)
@@ -320,19 +329,19 @@ jobs:
               # and the AppImage updater sig is .AppImage.sig (no .tar.gz wrapper).
               echo "--- linux bundle contents ---"
               find "$BUNDLE" -maxdepth 3 -type f | sort
-              cp "$BUNDLE"/deb/Fade_${VERSION}_amd64.deb              "$STAGE/"
-              cp "$BUNDLE"/appimage/Fade_${VERSION}_amd64.AppImage    "$STAGE/"
-              cp "$BUNDLE"/appimage/Fade_${VERSION}_amd64.AppImage.sig "$STAGE/"
-              SIG_FILE="$STAGE/Fade_${VERSION}_amd64.AppImage.sig"
+              cp "$BUNDLE"/deb/Fade_${V}_amd64.deb               "$STAGE/"
+              cp "$BUNDLE"/appimage/Fade_${V}_amd64.AppImage     "$STAGE/"
+              cp "$BUNDLE"/appimage/Fade_${V}_amd64.AppImage.sig "$STAGE/"
+              SIG_FILE="$STAGE/Fade_${V}_amd64.AppImage.sig"
               ;;
             windows-x86_64)
               BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
               # Tauri v2 produces an NSIS setup .exe with its updater .sig
               # directly (no .nsis.zip wrapper). Ship MSI + NSIS + NSIS sig.
-              cp "$BUNDLE"/msi/Fade_${VERSION}_x64_en-US.msi           "$STAGE/"
-              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.exe          "$STAGE/"
-              cp "$BUNDLE"/nsis/Fade_${VERSION}_x64-setup.exe.sig      "$STAGE/"
-              SIG_FILE="$STAGE/Fade_${VERSION}_x64-setup.exe.sig"
+              cp "$BUNDLE"/msi/Fade_${V}_x64_en-US.msi       "$STAGE/"
+              cp "$BUNDLE"/nsis/Fade_${V}_x64-setup.exe      "$STAGE/"
+              cp "$BUNDLE"/nsis/Fade_${V}_x64-setup.exe.sig  "$STAGE/"
+              SIG_FILE="$STAGE/Fade_${V}_x64-setup.exe.sig"
               ;;
           esac
 
@@ -382,8 +391,10 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
           fi
           VERSION="${TAG#v}"
-          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          VERSION_BASE="${VERSION%%-*}"
+          echo "tag=$TAG"                   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"           >> "$GITHUB_OUTPUT"
+          echo "version_base=$VERSION_BASE" >> "$GITHUB_OUTPUT"
 
       - name: Download all platform bundles
         uses: actions/download-artifact@v4
@@ -413,6 +424,7 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           VERSION: ${{ steps.tag.outputs.version }}
+          VERSION_BASE: ${{ steps.tag.outputs.version_base }}
         run: |
           set -euo pipefail
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -423,9 +435,11 @@ jobs:
             NOTES="See GitHub release notes."
           fi
 
+          # Artifact filenames use VERSION_BASE (tauri.conf.json version, e.g. 0.7.0)
+          # because Tauri names bundles from the config, not the git tag.
           DARWIN_SIG_FILE="dist/fade-sig-darwin-aarch64/Fade.app.tar.gz.sig"
-          LINUX_SIG_FILE="dist/fade-sig-linux-x86_64/Fade_${VERSION}_amd64.AppImage.sig"
-          WINDOWS_SIG_FILE="dist/fade-sig-windows-x86_64/Fade_${VERSION}_x64-setup.exe.sig"
+          LINUX_SIG_FILE="dist/fade-sig-linux-x86_64/Fade_${VERSION_BASE}_amd64.AppImage.sig"
+          WINDOWS_SIG_FILE="dist/fade-sig-windows-x86_64/Fade_${VERSION_BASE}_x64-setup.exe.sig"
 
           for f in "$DARWIN_SIG_FILE" "$LINUX_SIG_FILE" "$WINDOWS_SIG_FILE"; do
             if [ ! -s "$f" ]; then
@@ -434,12 +448,15 @@ jobs:
             fi
           done
 
-          export NOTES PUB_DATE DARWIN_SIG_FILE LINUX_SIG_FILE WINDOWS_SIG_FILE
+          export NOTES PUB_DATE DARWIN_SIG_FILE LINUX_SIG_FILE WINDOWS_SIG_FILE VERSION_BASE
           MANIFEST="latest.json"
           node - <<'NODE_EOF' > "$MANIFEST"
           const fs = require('fs');
           const base = 'https://github.com/eldo9000/Fade-App/releases/download/' + process.env.TAG + '/';
+          // VERSION is the full tag version (e.g. 0.7.0-beta.1) for the manifest version field.
+          // VERSION_BASE is used for artifact filenames (Tauri names them from tauri.conf.json).
           const v = process.env.VERSION;
+          const vBase = process.env.VERSION_BASE;
           const manifest = {
             version: v,
             notes: process.env.NOTES,
@@ -451,11 +468,11 @@ jobs:
               },
               'linux-x86_64': {
                 signature: fs.readFileSync(process.env.LINUX_SIG_FILE, 'utf8'),
-                url: base + 'Fade_' + v + '_amd64.AppImage',
+                url: base + 'Fade_' + vBase + '_amd64.AppImage',
               },
               'windows-x86_64': {
                 signature: fs.readFileSync(process.env.WINDOWS_SIG_FILE, 'utf8'),
-                url: base + 'Fade_' + v + '_x64-setup.exe',
+                url: base + 'Fade_' + vBase + '_x64-setup.exe',
               },
             },
           };

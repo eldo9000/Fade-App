@@ -55,3 +55,17 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** Release workflow version gate does exact-match between tag and config; if both are `0.7.0-beta.1` the gate passes but WiX MSI bundler rejects the non-numeric suffix. Fix: revert configs to `0.7.0`, update workflow version gate to strip semver pre-release from tag before comparing to config, and auto-set `prerelease: true` on GitHub release when tag has a `-` suffix.
 - **Next:** `.github/workflows/release.yml` version-gate step + finalize prerelease flag; `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` back to `0.7.0`
+
+## Fail arc closed — 2026-05-06 — 1 entry (WiX fix green on build step, staged wrong)
+
+---
+
+## Fail #1 — 2026-05-06 — Stage step looks for 0.7.0-beta.1 artifacts; Tauri produced 0.7.0
+
+- **Q1 in-last-commit:** yes — stage step uses `steps.tag.outputs.version` (0.7.0-beta.1) for artifact paths
+- **Q2 named-error:** yes — `cp: cannot stat '.../Fade_0.7.0-beta.1_aarch64.dmg': No such file or directory`; actual file is `Fade_0.7.0_aarch64.dmg`
+- **Q3 seen-before:** no — new failure class (artifact naming, not version gate or WiX)
+- **Q4 broken-vs-missing:** broken — Tauri names artifacts from tauri.conf.json version (0.7.0); stage step and latest.json use full tag version (0.7.0-beta.1) as filename suffix
+- **Verdict:** QUICK (budget: 1 attempt)
+- **Hypothesis:** Add `version_base` output (strip pre-release) to the Resolve tag step; use it in stage artifact file paths and latest.json URL construction.
+- **Next:** `.github/workflows/release.yml` — Resolve tag step + Stage artifacts step + Generate latest.json step
