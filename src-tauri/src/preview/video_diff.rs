@@ -1,6 +1,6 @@
 use crate::args::{ffmpeg_video_codec_args, resolution_to_scale};
 use crate::operations::analysis::run_ffmpeg_capture_registered;
-use crate::{truncate_stderr, AppState};
+use crate::{truncate_stderr, validate_input_path, AppState};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -40,7 +40,7 @@ pub fn preview_diff(
     handle_secs: Option<f64>,
     amplify: Option<f64>,
 ) -> Result<(), String> {
-    crate::validate_no_traversal(&path)?;
+    validate_input_path(&path)?;
     let p = Path::new(&path);
     if !p.exists() {
         return Err(format!("File not found: {path}"));

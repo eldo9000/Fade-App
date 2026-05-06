@@ -1,4 +1,4 @@
-use crate::{classify_ext, FileInfo};
+use crate::{classify_ext, validate_input_path, FileInfo};
 use std::path::Path;
 use std::process::Command;
 use tauri::command;
@@ -6,6 +6,7 @@ use tauri::command;
 /// Return file info (duration, dimensions, codec, media type, size).
 #[command]
 pub async fn get_file_info(path: String) -> Result<FileInfo, String> {
+    validate_input_path(&path)?;
     tokio::task::spawn_blocking(move || -> Result<FileInfo, String> {
         let p = Path::new(&path);
         if !p.exists() {

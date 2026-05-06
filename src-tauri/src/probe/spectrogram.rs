@@ -1,5 +1,5 @@
 use crate::operations::analysis::run_ffmpeg_capture_registered;
-use crate::{truncate_stderr, AppState};
+use crate::{truncate_stderr, validate_input_path, AppState};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -109,6 +109,7 @@ pub fn get_spectrogram(
     job_id: String,
     path: String,
 ) -> Result<(), String> {
+    validate_input_path(&path)?;
     // Register cancellation flag before spawning the thread.
     let cancelled = Arc::new(AtomicBool::new(false));
     {

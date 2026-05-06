@@ -19,8 +19,8 @@ pub async fn preview_image_quality(
     quality: u32,
     output_format: String,
 ) -> Result<ImageQualityPreview, String> {
+    crate::validate_input_path(&path)?;
     tokio::task::spawn_blocking(move || -> Result<ImageQualityPreview, String> {
-        crate::validate_no_traversal(&path)?;
         let p = Path::new(&path);
         if !p.exists() {
             return Err(format!("File not found: {path}"));

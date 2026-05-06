@@ -4,7 +4,7 @@
 //! loudnorm prints to stderr after processing finishes.
 
 use super::run_ffmpeg_capture_registered;
-use crate::AppState;
+use crate::{validate_input_path, AppState};
 use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -59,6 +59,7 @@ pub fn analyze_loudness(
     target_tp: f64,
     true_peak: bool,
 ) -> Result<(), String> {
+    validate_input_path(&input_path)?;
     // `loudnorm` prints a JSON summary when print_format=json.
     // loudnorm always measures true-peak with 4x oversampling; the UI toggle
     // is advisory only (kept in the payload for forward compat).

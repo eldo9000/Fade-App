@@ -175,7 +175,7 @@ pub async fn lint_subtitle(
     thresholds: LintThresholds,
 ) -> Result<Vec<LintIssue>, String> {
     tokio::task::spawn_blocking(move || -> Result<Vec<LintIssue>, String> {
-        crate::validate_no_traversal(&input_path)?;
+        crate::validate_input_path(&input_path)?;
         let body = super::read_subtitle_capped(&input_path)?;
         let ext = Path::new(&input_path)
             .extension()

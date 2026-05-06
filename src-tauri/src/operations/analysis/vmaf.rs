@@ -5,7 +5,7 @@
 //! on the distorted input to match the reference.
 
 use super::run_ffmpeg_capture_registered;
-use crate::AppState;
+use crate::{validate_input_path, AppState};
 use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -52,6 +52,8 @@ pub fn analyze_vmaf(
     model: String, // "hd" | "4k" | "phone"
     subsample: u32,
 ) -> Result<(), String> {
+    validate_input_path(&reference_path)?;
+    validate_input_path(&distorted_path)?;
     // Register cancellation flag before spawning the thread.
     let cancelled = Arc::new(AtomicBool::new(false));
     {

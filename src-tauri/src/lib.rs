@@ -471,6 +471,21 @@ pub(crate) fn validate_output_name(path: &str) -> Result<(), String> {
             return Err(format!("Path traversal rejected in output path: {}", path));
         }
     }
+    let parent = p
+        .parent()
+        .and_then(|parent| parent.to_str())
+        .ok_or_else(|| {
+            format!(
+                "Cannot determine parent directory from output path: {}",
+                path
+            )
+        })?;
+    validate_output_dir(parent)?;
+    validate_output_filename(path)
+}
+
+fn validate_output_filename(path: &str) -> Result<(), String> {
+    let p = std::path::Path::new(path);
     let stem = p
         .file_stem()
         .and_then(|s| s.to_str())
@@ -534,6 +549,31 @@ pub(crate) fn validate_no_traversal(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate a frontend-supplied input/read path:
+/// - no `..` traversal in any component
+/// - path or its parent sits inside the same allowed roots as output paths
+///
+/// This intentionally does not require the file to exist; some tests and
+/// callers validate before the external tool creates or probes the path.
+pub(crate) fn validate_input_path(path: &str) -> Result<(), String> {
+    validate_no_traversal(path)?;
+    let p = std::path::Path::new(path);
+    let dir_for_check = if p.is_dir() {
+        p
+    } else {
+        p.parent().ok_or_else(|| {
+            format!(
+                "Cannot determine parent directory from input path: {}",
+                path
+            )
+        })?
+    };
+    let dir = dir_for_check
+        .to_str()
+        .ok_or_else(|| format!("Input path is not valid UTF-8: {}", path))?;
+    validate_output_dir(dir).map_err(|e| e.replace("Output directory", "Input path directory"))
+}
+
 /// Validate the trio of paths the `convert_file` IPC entry assembles before
 /// touching the IO layer:
 /// - `input_path`: must not contain `..`
@@ -552,6 +592,7 @@ pub(crate) fn validate_convert_inputs(
     output_path: &str,
 ) -> Result<(), String> {
     validate_no_traversal(input_path)?;
+    validate_input_path(input_path)?;
     if let Some(dir) = output_dir {
         validate_output_dir(dir)?;
     }
@@ -559,7 +600,7 @@ pub(crate) fn validate_convert_inputs(
         .file_name()
         .and_then(|n| n.to_str())
     {
-        validate_output_name(name)?;
+        validate_output_filename(name)?;
     }
     Ok(())
 }
@@ -707,7 +748,7 @@ fn convert_file(
             input_path
         ));
     }
-    validate_no_traversal(&input_path)?;
+    validate_input_path(&input_path)?;
 
     // When extracting audio from video, output extension comes from audio_format, not output_format
     let ext = if options.extract_audio == Some(true) {
@@ -812,7 +853,7 @@ fn convert_file(
             .file_name()
             .and_then(|n| n.to_str())
         {
-            validate_output_name(name)?;
+            validate_output_filename(name)?;
         }
         std::fs::create_dir_all(&seq_dir)
             .map_err(|e| format!("Cannot create sequence output directory: {e}"))?;
@@ -831,11 +872,10 @@ fn convert_file(
     // produces a directory whose base name (`{stem}{sep}{suffix}_{ext}_frames`)
     // still needs the same character-set check as a normal output filename —
     // it lands in `std::fs::create_dir_all` upstream of any CLI invocation.
-    if let Some(name) = std::path::Path::new(&output_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-    {
-        validate_output_name(name)?;
+    if ext.starts_with("seq_") {
+        validate_output_dir(&output_path)?;
+    } else {
+        validate_output_name(&output_path)?;
     }
 
     // Register cancellation flag before spawning the thread
@@ -1012,24 +1052,31 @@ fn convert_file(
 }
 
 /// Cancel a running job by killing its subprocess.
-#[command]
-fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
-    // Set the cancelled flag first so the background thread knows why it stopped
+fn cancel_job_impl(state: &AppState, job_id: &str) -> Result<(), String> {
+    // Set the cancelled flag first so the background thread knows why it stopped.
     {
         let map = state.cancellations.lock();
-        if let Some(flag) = map.get(&job_id) {
+        if let Some(flag) = map.get(job_id) {
             flag.store(true, Ordering::SeqCst);
         }
     }
-    // Kill and remove the child process
+
+    // Kill the child process but leave the handle registered. The worker that
+    // inserted it remains responsible for removing it from the map and waiting
+    // on it, which prevents killed children from becoming unreaped zombies.
     {
         let mut map = state.processes.lock();
-        if let Some(child) = map.get_mut(&job_id) {
+        if let Some(child) = map.get_mut(job_id) {
             let _ = child.kill();
         }
-        map.remove(&job_id);
     }
+
     Ok(())
+}
+
+#[command]
+fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
+    cancel_job_impl(&state, &job_id)
 }
 
 /// Check whether required external tools are available in PATH.
@@ -1319,6 +1366,67 @@ pub(crate) enum OperationPayload {
 }
 
 impl OperationPayload {
+    /// Validate all input/read paths in this payload before any subprocess sees
+    /// them. Additional paths like watermark/audio replacement inputs are read
+    /// boundaries too, so keep them in this pass rather than only checking the
+    /// primary media file.
+    pub(crate) fn validate_inputs(&self) -> Result<(), String> {
+        use OperationPayload::*;
+        match self {
+            Rewrap { input_path, .. }
+            | Extract { input_path, .. }
+            | ExtractMulti { input_path, .. }
+            | Cut { input_path, .. }
+            | Split { input_path, .. }
+            | AudioOffset { input_path, .. }
+            | AudioNormalize { input_path, .. }
+            | SilenceRemove { input_path, .. }
+            | Conform { input_path, .. }
+            | RemoveAudio { input_path, .. }
+            | RemoveVideo { input_path, .. }
+            | MetadataStrip { input_path, .. }
+            | Loop { input_path, .. }
+            | RotateFlip { input_path, .. }
+            | Reverse { input_path, .. }
+            | Speed { input_path, .. }
+            | Fade { input_path, .. }
+            | Deinterlace { input_path, .. }
+            | Denoise { input_path, .. }
+            | Thumbnail { input_path, .. }
+            | ContactSheet { input_path, .. }
+            | FrameExport { input_path, .. }
+            | Volume { input_path, .. }
+            | ChannelTools { input_path, .. }
+            | PadSilence { input_path, .. }
+            | ChromaKey { input_path, .. } => validate_input_path(input_path),
+
+            ReplaceAudio {
+                video_path,
+                audio_path,
+                ..
+            } => {
+                validate_input_path(video_path)?;
+                validate_input_path(audio_path)
+            }
+
+            Merge { input_paths, .. } => {
+                for input_path in input_paths {
+                    validate_input_path(input_path)?;
+                }
+                Ok(())
+            }
+
+            Watermark {
+                input_path,
+                watermark_path,
+                ..
+            } => {
+                validate_input_path(input_path)?;
+                validate_input_path(watermark_path)
+            }
+        }
+    }
+
     /// Validate all output paths/dirs in this payload before the worker thread
     /// is spawned. Returns the first validation error encountered.
     pub(crate) fn validate_outputs(&self) -> Result<(), String> {
@@ -1348,8 +1456,22 @@ impl OperationPayload {
             | Watermark { output_path, .. }
             | Volume { output_path, .. }
             | ChannelTools { output_path, .. }
-            | PadSilence { output_path, .. }
-            | ChromaKey { output_path, .. } => validate_output_name(output_path),
+            | PadSilence { output_path, .. } => validate_output_name(output_path),
+
+            ChromaKey {
+                output_path,
+                output_target,
+                ..
+            } => {
+                if matches!(
+                    output_target,
+                    operations::chroma_key::ChromaOutput::PngSequence
+                ) {
+                    validate_output_dir(output_path)
+                } else {
+                    validate_output_name(output_path)
+                }
+            }
 
             Split { output_dir, .. } | FrameExport { output_dir, .. } => {
                 validate_output_dir(output_dir)
@@ -1404,6 +1526,23 @@ impl OperationPayload {
     }
 }
 
+fn register_operation_cancellation_after_validation(
+    state: &AppState,
+    job_id: &str,
+    operation: &OperationPayload,
+) -> Result<Arc<AtomicBool>, String> {
+    operation.validate_inputs()?;
+    operation.validate_outputs()?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.to_string(), Arc::clone(&cancelled));
+    }
+
+    Ok(cancelled)
+}
+
 /// Run a mechanical video/audio operation.
 /// Emits: job-progress, job-done, job-error, job-cancelled.
 #[command]
@@ -1413,13 +1552,7 @@ fn run_operation(
     job_id: String,
     operation: OperationPayload,
 ) -> Result<(), String> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut map = state.cancellations.lock();
-        map.insert(job_id.clone(), Arc::clone(&cancelled));
-    }
-
-    operation.validate_outputs()?;
+    let cancelled = register_operation_cancellation_after_validation(&state, &job_id, &operation)?;
 
     let processes = Arc::clone(&state.processes);
     let cancellations = Arc::clone(&state.cancellations);
@@ -1995,6 +2128,7 @@ fn run_operation(
 /// Return the list of streams in a media file (video, audio, subtitle, data).
 #[command]
 async fn get_streams(input_path: String) -> Result<Vec<operations::StreamInfo>, String> {
+    validate_input_path(&input_path)?;
     tokio::task::spawn_blocking(move || -> Result<Vec<operations::StreamInfo>, String> {
         operations::extract::get_streams(&input_path)
     })
@@ -3317,10 +3451,14 @@ mod tests {
 
     #[test]
     fn output_name_accepts_safe_stems() {
-        assert!(validate_output_name("/out/video.mp4").is_ok());
-        assert!(validate_output_name("/out/my-clip_converted.mkv").is_ok());
-        assert!(validate_output_name("/Users/foo/Desktop/output.mp4").is_ok());
-        assert!(validate_output_name("/out/my.archive.backup.mp4").is_ok());
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(validate_output_name(&format!("{tmp}/video.mp4")).is_ok());
+        assert!(validate_output_name(&format!("{tmp}/my-clip_converted.mkv")).is_ok());
+        assert!(validate_output_name(&format!("{tmp}/my.archive.backup.mp4")).is_ok());
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            assert!(validate_output_name(&format!("{home}/Desktop/output.mp4")).is_ok());
+        }
     }
 
     #[test]
@@ -3332,16 +3470,23 @@ mod tests {
 
     #[test]
     fn output_name_rejects_shell_metachars_in_stem() {
-        assert!(validate_output_name("/out/bad;ls.mp4").is_err());
-        assert!(validate_output_name("/out/$(whoami).mp4").is_err());
-        assert!(validate_output_name("/out/file name.mp4").is_err());
-        assert!(validate_output_name("/out/file|pipe.mp4").is_err());
-        assert!(validate_output_name("/out/file&bg.mp4").is_err());
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(validate_output_name(&format!("{tmp}/bad;ls.mp4")).is_err());
+        assert!(validate_output_name(&format!("{tmp}/$(whoami).mp4")).is_err());
+        assert!(validate_output_name(&format!("{tmp}/file name.mp4")).is_err());
+        assert!(validate_output_name(&format!("{tmp}/file|pipe.mp4")).is_err());
+        assert!(validate_output_name(&format!("{tmp}/file&bg.mp4")).is_err());
     }
 
     #[test]
     fn output_name_rejects_empty_stem() {
-        assert!(validate_output_name("/out/.mp4").is_err());
+        let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(validate_output_name(&format!("{tmp}/.mp4")).is_err());
+    }
+
+    #[test]
+    fn output_name_rejects_parent_outside_allowed_roots() {
+        assert!(validate_output_name("/etc/fade-output.mp4").is_err());
     }
 
     // ── validate_output_dir ──────────────────────────────────────────────────
@@ -3380,6 +3525,17 @@ mod tests {
     fn no_traversal_accepts_normal_paths() {
         assert!(validate_no_traversal("/Users/foo/Videos/clip.mp4").is_ok());
         assert!(validate_no_traversal("/tmp/subtitle.srt").is_ok());
+    }
+
+    #[test]
+    fn input_path_rejects_parent_outside_allowed_roots() {
+        assert!(validate_input_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn input_path_accepts_temp_file_path() {
+        let path = std::env::temp_dir().join("fade-input.mp4");
+        assert!(validate_input_path(&path.to_string_lossy()).is_ok());
     }
 
     #[test]
@@ -3477,6 +3633,75 @@ mod tests {
             "/out/x.mp4".to_string(),
         );
         assert!(matches!(outcome, JobOutcome::Error { .. }));
+    }
+
+    // ── cancellation/process lifecycle ───────────────────────────────────────
+
+    fn test_app_state() -> AppState {
+        AppState {
+            processes: Arc::new(Mutex::new(HashMap::new())),
+            cancellations: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn spawn_long_running_child() -> Child {
+        #[cfg(unix)]
+        let mut cmd = Command::new("sleep");
+        #[cfg(unix)]
+        cmd.arg("30");
+        #[cfg(windows)]
+        let mut cmd = Command::new("cmd");
+        #[cfg(windows)]
+        cmd.args(["/C", "ping", "-n", "60", "127.0.0.1"]);
+
+        cmd.spawn()
+            .expect("spawn a long-running child for cancellation test")
+    }
+
+    #[test]
+    fn cancel_job_kills_child_but_leaves_handle_for_worker_reap() {
+        let state = test_app_state();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        state
+            .cancellations
+            .lock()
+            .insert("job-cancel".to_string(), Arc::clone(&cancelled));
+        state
+            .processes
+            .lock()
+            .insert("job-cancel".to_string(), spawn_long_running_child());
+
+        cancel_job_impl(&state, "job-cancel").expect("cancel job");
+
+        assert!(cancelled.load(Ordering::SeqCst));
+        assert!(
+            state.processes.lock().contains_key("job-cancel"),
+            "cancel must leave process removal and wait to the worker"
+        );
+
+        let mut child = state.processes.lock().remove("job-cancel").unwrap();
+        let status = child.wait().expect("worker-style wait after cancel kill");
+        assert!(!status.success(), "cancelled child must not report success");
+    }
+
+    #[test]
+    fn operation_validation_error_does_not_register_cancellation() {
+        let state = test_app_state();
+        let operation = OperationPayload::Rewrap {
+            input_path: "/tmp/input.mkv".to_string(),
+            output_path: "/tmp/bad;name.mp4".to_string(),
+        };
+
+        assert!(register_operation_cancellation_after_validation(
+            &state,
+            "job-invalid",
+            &operation
+        )
+        .is_err());
+        assert!(
+            state.cancellations.lock().is_empty(),
+            "failed validation must not leave a stale cancellation flag"
+        );
     }
 
     // ── OperationPayload::primary_input ───────────────────────────────────────

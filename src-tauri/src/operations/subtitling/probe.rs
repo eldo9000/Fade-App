@@ -14,7 +14,7 @@ pub struct SubStream {
 #[tauri::command]
 pub async fn probe_subtitles(input_path: String) -> Result<Vec<SubStream>, String> {
     tokio::task::spawn_blocking(move || -> Result<Vec<SubStream>, String> {
-        crate::validate_no_traversal(&input_path)?;
+        crate::validate_input_path(&input_path)?;
         let json = run_ffprobe(&input_path)?;
         let streams = parse_streams(&json);
         Ok(streams

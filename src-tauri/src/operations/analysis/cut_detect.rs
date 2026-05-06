@@ -5,7 +5,7 @@
 //! than the minimum shot length.
 
 use super::run_ffmpeg_capture_registered;
-use crate::AppState;
+use crate::{validate_input_path, AppState};
 use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -101,6 +101,7 @@ pub fn analyze_cut_detect(
     threshold: f64,  // scdet: 5-15 · scene: 0.2-0.5
     min_shot_s: f64, // post-filter
 ) -> Result<(), String> {
+    validate_input_path(&input_path)?;
     // Register cancellation flag before spawning the thread.
     let cancelled = Arc::new(AtomicBool::new(false));
     {

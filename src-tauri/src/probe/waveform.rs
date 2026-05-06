@@ -1,5 +1,5 @@
 use crate::probe_duration;
-use crate::AppState;
+use crate::{validate_input_path, AppState};
 use serde::Serialize;
 use std::io::{self, Read};
 use std::process::{Command, Stdio};
@@ -206,6 +206,7 @@ pub fn get_waveform(
     draft: bool,
     buckets: Option<usize>,
 ) -> Result<(), String> {
+    validate_input_path(&path)?;
     let n = buckets.unwrap_or(500).clamp(MIN_BUCKETS, MAX_BUCKETS);
     let ar_str = if draft { "2000" } else { "8000" };
     let ar: u64 = if draft { 2000 } else { 8000 };

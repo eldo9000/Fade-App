@@ -38,6 +38,11 @@ pub fn convert(
     {
         let mut map = processes.lock();
         map.insert(job_id.to_string(), child);
+        if cancelled.load(Ordering::SeqCst) {
+            if let Some(child) = map.get_mut(job_id) {
+                let _ = child.kill();
+            }
+        }
     }
 
     let stderr_thread = std::thread::spawn(move || {

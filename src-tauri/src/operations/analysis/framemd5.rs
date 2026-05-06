@@ -3,7 +3,7 @@
 //! If `diff_path` is provided, both files are hashed and the first mismatching
 //! line index is returned along with both hash lists (capped).
 
-use crate::AppState;
+use crate::{validate_input_path, AppState};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -242,6 +242,10 @@ pub fn analyze_framemd5(
     stream: String, // "video" | "audio" | "both"
     diff_path: Option<String>,
 ) -> Result<(), String> {
+    validate_input_path(&input_path)?;
+    if let Some(path) = &diff_path {
+        validate_input_path(path)?;
+    }
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut map = state.cancellations.lock();

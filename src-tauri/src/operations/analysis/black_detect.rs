@@ -3,7 +3,7 @@
 //!   [blackdetect @ 0x...] black_start:3.00 black_end:5.04 black_duration:2.04
 
 use super::run_ffmpeg_capture_registered;
-use crate::AppState;
+use crate::{validate_input_path, AppState};
 use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -62,6 +62,7 @@ pub fn analyze_black_detect(
     pix_th: f64,       // pix_th=
     pic_th: f64,       // pic_th=
 ) -> Result<(), String> {
+    validate_input_path(&input_path)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut map = state.cancellations.lock();

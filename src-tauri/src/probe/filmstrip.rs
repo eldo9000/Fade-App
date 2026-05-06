@@ -1,3 +1,4 @@
+use crate::validate_input_path;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -93,6 +94,7 @@ pub fn get_filmstrip(
     duration: f64,
     draft: bool,
 ) -> Result<(), String> {
+    validate_input_path(&path)?;
     if count == 0 || duration <= 0.0 {
         return Ok(());
     }

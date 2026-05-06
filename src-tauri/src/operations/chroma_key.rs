@@ -280,7 +280,7 @@ pub fn chroma_key_preview(
     despill_mix: f64,
     upsample: bool,
 ) -> Result<String, String> {
-    crate::validate_no_traversal(&input_path)?;
+    crate::validate_input_path(&input_path)?;
     let vf_core = build_vf(
         algo,
         &color_hex,
