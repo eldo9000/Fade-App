@@ -9,11 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared `@libre/ui` design system: Checkbox, SectionLabel, SegmentedControl,
+  and Select components. CSS primitives (`--accent`, `--surface-hint`,
+  `.fade-check`, `.seg-active`/`.seg-inactive`) lifted from Fade-local into the
+  shared token layer so all Libre apps share the same design system.
+- Format picker state flags (`live` / `building` / `todo`) on all format groups.
+  `building` formats are hidden from the picker until ready; `live` reflects
+  sweep-verified formats as of the 0.6.x validation passes.
+- Email conversion (`eml`, `mbox`) promoted to live — validated end-to-end via
+  extra_sweep.
+- Full test sweep infrastructure: `matrix.rs` (33-case smoke matrix, pre-release
+  gate), `full_sweep.rs` (~700-case Cartesian diagnostic), `extra_sweep.rs`
+  (3D model, subtitle, email, document). All `#[ignore]` — manual only.
+- `&Window`-decoupled `convert()` functions across all 15 conversion modules with
+  a `convert::progress::ProgressFn` contract, enabling direct test invocation via
+  `noop_progress()`.
+- `JobOutcome` typed enum — replaces string sentinels `"CANCELLED"` / `"__DONE__"`.
+- ts-rs codegen: 12 TypeScript types generated from Rust structs at build time
+  (eliminates hand-maintained TS/Rust type drift).
+- `TODO.md` beta punch list.
+
 ### Changed
+
+- AV1 encoder switched from `libaom-av1` to `libsvtav1` (Homebrew FFmpeg 8.1
+  compatibility). `av1_speed` remapped from `-cpu-used` to `-preset` with
+  0–10 → 0–13 scaling.
+- `run_ffmpeg` consolidated from 3 diverged copies into 1 canonical function
+  with a rate-limiter.
+- `createLimiter` batch concurrency clamped to `hardwareConcurrency` (was
+  unbounded — up to 100 simultaneous ffmpeg processes on large queues).
+- Streaming waveform RMS: O(file-size) → O(n) memory for `get_waveform`.
+- `parking_lot::Mutex` applied consistently across 32 files; return-shape drift
+  normalised.
 
 ### Fixed
 
+- H.265 profile names: added `h265_effective_profile()` and split the h264/h265
+  arg-builder branch — libx265 was receiving h264 profile names, causing 27
+  sweep failures.
+- H.264 lossless (crf=0): force `yuv444p` + `high444` profile — closed 120
+  sweep failures.
+- DNxHD/DNxHR resolution guards: sub-1280×720 inputs return a clear error;
+  `convert()`-only contract documented for the passthrough path.
+- AVIF speed cap: clamped to 9 in arg builder and UI slider.
+- 7zz tar.gz/tar.xz repack: two-step `repack_tar_compressed` function added.
+- `$bindable()` defaults removed from all conditionally-rendered Svelte 5
+  components — eliminating the write-back cascade that collapsed component
+  subtrees on initialisation.
+- Image stderr drain: background thread added to prevent ffmpeg deadlocking on
+  full stderr pipe.
+- Merge race: deterministic concat-list cleanup after `run_ffmpeg` completes.
+
+### Security
+
+- `validate_input_path()`: traversal check + allowed-roots constraint wired
+  into all frontend-supplied read paths across IPC entry points.
+- Per-job `mkdtemp 0700` sandbox for renderer-facing temp files and all
+  medium-priority conversion temp sites.
+- Zip-slip containment, subtitle filter argument escaping, archive portability
+  hardening.
+- DuckDB SQL path character validation before interpolation.
+- `file_exists` and `scan_dir` scoped to allowed filesystem roots.
+- `rustls-webpki` resolved to 0.103.13 (patched version).
+- Cancel race fix in audio/image/video convert modules: cancellation arriving
+  between process spawn and map-insert now kills the child immediately.
+
 ### Infrastructure
+
+- Backend integration tests (conversion smoke) added to CI gate.
+- E2E Playwright component tests added to CI gate.
+- CI and release workflows opt into Node 24 runner via
+  `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` (GitHub-forced June 2026).
 
 ## [0.2.2] - 2026-04-18
 
