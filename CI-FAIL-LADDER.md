@@ -29,3 +29,15 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Next:** `src-tauri/src/args/model_blender.rs` — run `cargo fmt --manifest-path src-tauri/Cargo.toml`
 
 ## Fail arc closed — 2026-04-30 — 1 entry — green CI 25140539416
+
+---
+
+## Fail #1 — 2026-05-05 — tag v0.7.0-beta.1 vs tauri.conf.json version 0.7.0
+
+- **Q1 in-last-commit:** yes — `src-tauri/tauri.conf.json` version changed in commit `45f935e`
+- **Q2 named-error:** yes — `tag version (0.7.0-beta.1) does not match src-tauri/tauri.conf.json version (0.7.0)`
+- **Q3 seen-before:** no — first failure in this arc
+- **Q4 broken-vs-missing:** broken — version bumped to `0.7.0` but tag pushed as `v0.7.0-beta.1`; config must match tag exactly
+- **Verdict:** QUICK (budget: 1 attempt)
+- **Hypothesis:** Version bump commit used `0.7.0` as the version string; tag pushed as `0.7.0-beta.1`. Release workflow exact-match gate rejects any mismatch. Fix: bump all three version fields to `0.7.0-beta.1`, commit, retag.
+- **Next:** `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` — update `0.7.0` → `0.7.0-beta.1`

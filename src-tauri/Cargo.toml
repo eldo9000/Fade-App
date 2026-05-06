@@ -17,7 +17,7 @@ strip = true
 
 [package]
 name = "fade"
-version = "0.7.0"
+version = "0.7.0-beta.1"
 description = "Fade — LibreWin media converter"
 authors = ["LibreWin"]
 edition = "2021"
