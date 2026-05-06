@@ -1,6 +1,9 @@
 use crate::args::build_ffmpeg_video_args;
 use crate::convert::progress::{ProgressEvent, ProgressFn};
-use crate::{parse_out_time_ms, probe_duration, truncate_stderr, ConvertOptions, ConvertResult};
+use crate::{
+    parse_out_time_ms, probe_duration, probe_video_dimensions, truncate_stderr, ConvertOptions,
+    ConvertResult,
+};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -26,13 +29,11 @@ pub fn convert(
 ) -> ConvertResult {
     // ── DNxHR minimum-resolution guard ────────────────────────────────────────
     // The dnxhd encoder (which handles DNxHR) requires at least 1280×720.
-    // If the caller has explicitly set a resolution we can check it now and
-    // return a clear error before spawning ffmpeg.
-    //
-    // Guard fires only when opts.resolution is explicitly set. If the caller
-    // passes no resolution, the input dimensions pass through unchanged —
-    // ffmpeg will still reject sub-minimum inputs, but the error will be
-    // less descriptive. Full pre-flight dimension detection is deferred.
+    // When an explicit resolution is set we parse and check it directly.
+    // When no resolution is set the input dimensions are inherited from the
+    // source file — we probe them via ffprobe so sub-1280×720 sources are
+    // caught before reaching the encoder with a clear pre-flight message.
+    // If the probe fails we pass through; ffmpeg will still reject the input.
     if opts.codec.as_deref() == Some("dnxhr") {
         if let Some(res) = &opts.resolution {
             if let Some((w_str, h_str)) = res.split_once('x') {
@@ -46,10 +47,21 @@ pub fn convert(
                     }
                 }
             }
+        } else if let Some((w, h)) = probe_video_dimensions(input) {
+            if w < 1280 || h < 720 {
+                return ConvertResult::Error(
+                    "DNxHR requires a minimum output resolution of 1280×720. \
+                     Set a higher resolution or leave unscaled."
+                        .to_string(),
+                );
+            }
         }
     }
 
     // DNxHD minimum-resolution guard — same constraint as DNxHR.
+    // Explicit resolution: parse and check directly.
+    // No resolution set: probe input dimensions via ffprobe; pass through on
+    // probe failure so ffmpeg provides the error instead.
     if opts.codec.as_deref() == Some("dnxhd") {
         if let Some(res) = &opts.resolution {
             if let Some((w_str, h_str)) = res.split_once('x') {
@@ -62,6 +74,14 @@ pub fn convert(
                         );
                     }
                 }
+            }
+        } else if let Some((w, h)) = probe_video_dimensions(input) {
+            if w < 1280 || h < 720 {
+                return ConvertResult::Error(
+                    "DNxHD requires a minimum output resolution of 1280×720. \
+                     Set a higher resolution or leave unscaled."
+                        .to_string(),
+                );
             }
         }
     }
@@ -178,6 +198,15 @@ mod tests {
         }
     }
 
+    fn dnxhd_opts(resolution: Option<&str>) -> ConvertOptions {
+        ConvertOptions {
+            output_format: "mov".into(),
+            codec: Some("dnxhd".into()),
+            resolution: resolution.map(|s| s.to_string()),
+            ..Default::default()
+        }
+    }
+
     // Helper: run the guard path only (no actual ffmpeg). We rely on ffmpeg not
     // being available in the test environment — if it is, the test still checks
     // the ConvertResult::Error variant for the right message, so it's safe.
@@ -193,6 +222,50 @@ mod tests {
             processes,
             &cancelled,
         )
+    }
+
+    /// Run the guard with the given input path (for passthrough tests that
+    /// supply a real or synthesised file).
+    fn run_guard_with_input(input: &str, opts: ConvertOptions) -> ConvertResult {
+        let processes = Arc::new(Mutex::new(HashMap::new()));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        super::convert(
+            input,
+            "/tmp/test_dnx_guard_passthrough_out.mov",
+            &opts,
+            &mut |_| {},
+            "test-job",
+            processes,
+            &cancelled,
+        )
+    }
+
+    /// Create a tiny (64×64, 0.1 s) raw video fixture via ffmpeg lavfi and
+    /// return the path.  Returns `None` if ffmpeg is not available.
+    fn make_small_video_fixture() -> Option<String> {
+        let path = "/tmp/fade_test_64x64.mp4".to_string();
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x64:d=0.1:r=25",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                &path,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()?;
+        if status.success() {
+            Some(path)
+        } else {
+            None
+        }
     }
 
     #[test]
@@ -225,13 +298,58 @@ mod tests {
 
     #[test]
     fn dnxhr_resolution_guard_allows_unset_resolution() {
-        // Resolution is None — guard must not fire.
+        // Resolution is None and input is nonexistent — probe returns None so
+        // the guard must not fire.
         let result = run_guard(dnxhr_opts(None));
         if let ConvertResult::Error(msg) = &result {
             assert!(
                 !msg.contains("DNxHR requires"),
-                "Guard should not fire when resolution is unset, but got: {msg}"
+                "Guard should not fire when probe returns None, but got: {msg}"
             );
+        }
+    }
+
+    #[test]
+    fn dnxhr_passthrough_rejects_small_input() {
+        // When opts.resolution is None the guard probes the input file.
+        // A 64×64 source must be caught before reaching the encoder.
+        // Skip this test if ffmpeg is not available in the test environment.
+        let Some(fixture) = make_small_video_fixture() else {
+            eprintln!("skip dnxhr_passthrough_rejects_small_input: ffmpeg not found");
+            return;
+        };
+        let result = run_guard_with_input(&fixture, dnxhr_opts(None));
+        match result {
+            ConvertResult::Error(msg) => {
+                assert!(
+                    msg.contains("1280"),
+                    "Expected min-resolution error mentioning 1280, got: {msg}"
+                );
+            }
+            other => {
+                panic!("Expected ConvertResult::Error for 64×64 DNxHR passthrough, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn dnxhd_passthrough_rejects_small_input() {
+        // Same passthrough guard check for the dnxhd codec.
+        let Some(fixture) = make_small_video_fixture() else {
+            eprintln!("skip dnxhd_passthrough_rejects_small_input: ffmpeg not found");
+            return;
+        };
+        let result = run_guard_with_input(&fixture, dnxhd_opts(None));
+        match result {
+            ConvertResult::Error(msg) => {
+                assert!(
+                    msg.contains("1280"),
+                    "Expected min-resolution error mentioning 1280, got: {msg}"
+                );
+            }
+            other => {
+                panic!("Expected ConvertResult::Error for 64×64 DNxHD passthrough, got {other:?}")
+            }
         }
     }
 }

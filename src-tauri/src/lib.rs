@@ -402,6 +402,31 @@ pub(crate) fn probe_duration(path: &str) -> Option<f64> {
     dur_str.parse::<f64>().ok()
 }
 
+/// Probe the first video stream of a file and return `(width, height)`.
+/// Returns `None` if ffprobe is unavailable, the file has no video stream,
+/// or the JSON is malformed.
+pub(crate) fn probe_video_dimensions(path: &str) -> Option<(u32, u32)> {
+    let out = Command::new("ffprobe")
+        .args([
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-select_streams",
+            "v:0",
+            path,
+        ])
+        .output()
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let streams = json["streams"].as_array()?;
+    let stream = streams.first()?;
+    let w = stream["width"].as_u64()? as u32;
+    let h = stream["height"].as_u64()? as u32;
+    Some((w, h))
+}
+
 /// Build the output path: same dir as input (or output_dir), stem + suffix + new ext.
 fn build_output_path(
     input: &str,
