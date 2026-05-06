@@ -41,3 +41,17 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** Version bump commit used `0.7.0` as the version string; tag pushed as `0.7.0-beta.1`. Release workflow exact-match gate rejects any mismatch. Fix: bump all three version fields to `0.7.0-beta.1`, commit, retag.
 - **Next:** `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` — update `0.7.0` → `0.7.0-beta.1`
+
+## Fail arc closed — 2026-05-06 — 1 entry — green CI 25448663371 (mac+linux)
+
+---
+
+## Fail #1 — 2026-05-06 — WiX rejects non-numeric pre-release: 0.7.0-beta.1 invalid for MSI
+
+- **Q1 in-last-commit:** yes — `src-tauri/tauri.conf.json` version `0.7.0-beta.1` in commit `15b4de6`
+- **Q2 named-error:** yes — `optional pre-release identifier in app version must be numeric-only and cannot be greater than 65535 for msi target`
+- **Q3 seen-before:** no — first failure in this arc
+- **Q4 broken-vs-missing:** broken — WiX cannot accept semver pre-release labels in app version; release workflow and config must be adapted for beta tagging
+- **Verdict:** QUICK (budget: 1 attempt)
+- **Hypothesis:** Release workflow version gate does exact-match between tag and config; if both are `0.7.0-beta.1` the gate passes but WiX MSI bundler rejects the non-numeric suffix. Fix: revert configs to `0.7.0`, update workflow version gate to strip semver pre-release from tag before comparing to config, and auto-set `prerelease: true` on GitHub release when tag has a `-` suffix.
+- **Next:** `.github/workflows/release.yml` version-gate step + finalize prerelease flag; `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` back to `0.7.0`

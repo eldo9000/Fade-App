@@ -131,10 +131,15 @@ jobs:
         run: |
           CONF_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           TAG_VERSION="${{ steps.tag.outputs.version }}"
+          # Strip semver pre-release suffix (e.g. 0.7.0-beta.1 → 0.7.0) before
+          # comparing to tauri.conf.json, which must stay at the numeric-only
+          # base version so WiX/MSI bundling accepts it.
+          TAG_VERSION_BASE="${TAG_VERSION%%-*}"
           echo "tauri.conf.json version: $CONF_VERSION"
           echo "tag version:             $TAG_VERSION"
-          if [ "$CONF_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::tag version ($TAG_VERSION) does not match src-tauri/tauri.conf.json version ($CONF_VERSION). Bump the config before tagging."
+          echo "tag base version:        $TAG_VERSION_BASE"
+          if [ "$CONF_VERSION" != "$TAG_VERSION_BASE" ]; then
+            echo "::error::tag base version ($TAG_VERSION_BASE) does not match src-tauri/tauri.conf.json version ($CONF_VERSION). Bump the config before tagging."
             exit 1
           fi
 
@@ -467,7 +472,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Fade ${{ steps.tag.outputs.tag }}
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.tag.outputs.version, '-') }}
           fail_on_unmatched_files: true
           files: |
             ${{ steps.files.outputs.dir }}/*
