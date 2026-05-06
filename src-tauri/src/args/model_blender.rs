@@ -1,5 +1,6 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub fn find_blender() -> Option<PathBuf> {
     // 1. PATH lookup via `which` / `where`
@@ -104,6 +105,41 @@ pub fn build_blender_args(
     args
 }
 
+/// Parse `blender --version` stdout and return `(major, minor)` from the first line.
+/// Returns `None` if the line doesn't start with `"Blender "` or the version can't be parsed.
+pub fn parse_blender_version(output: &str) -> Option<(u32, u32)> {
+    let first = output.lines().next()?.trim();
+    let rest = first.strip_prefix("Blender ")?;
+    // rest is like "4.1.0 (hash abc)" or "3.6.0 LTS" or "2.93.0"
+    let version_str = rest.split_whitespace().next()?;
+    let mut parts = version_str.split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Run `blender --version` and return an error if the version is < 3.0 or can't be determined.
+pub fn check_blender_version(bin: &Path) -> Result<(), String> {
+    let out = Command::new(bin)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("Failed to run Blender to check version: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    match parse_blender_version(&stdout) {
+        None => Err(
+            "Blender version could not be determined. Fade requires Blender 3.0 or later. \
+             Download from https://blender.org"
+                .to_string(),
+        ),
+        Some((major, minor)) if major < 3 => Err(format!(
+            "Blender {major}.{minor} is not supported. Fade requires Blender 3.0 or later. \
+             Download from https://blender.org"
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +156,41 @@ mod tests {
             );
         }
         // None is valid — Blender may not be installed in CI
+    }
+
+    #[test]
+    fn parse_blender_version_modern() {
+        assert_eq!(
+            parse_blender_version("Blender 4.1.0 (hash abc)"),
+            Some((4, 1))
+        );
+    }
+
+    #[test]
+    fn parse_blender_version_lts() {
+        assert_eq!(parse_blender_version("Blender 3.6.0 LTS"), Some((3, 6)));
+    }
+
+    #[test]
+    fn parse_blender_version_old() {
+        assert_eq!(parse_blender_version("Blender 2.93.0"), Some((2, 93)));
+    }
+
+    #[test]
+    fn parse_blender_version_empty() {
+        assert_eq!(parse_blender_version(""), None);
+    }
+
+    #[test]
+    fn parse_blender_version_garbage() {
+        assert_eq!(parse_blender_version("not blender output"), None);
+    }
+
+    #[test]
+    fn check_blender_version_environment_conditional() {
+        // Skip if Blender is not installed — same pattern as find_blender_does_not_panic.
+        let Some(bin) = find_blender() else { return };
+        // Just verify the function runs without panicking; result is environment-dependent.
+        let _ = check_blender_version(&bin);
     }
 }

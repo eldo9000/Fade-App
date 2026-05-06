@@ -1,4 +1,6 @@
-use crate::args::model_blender::{blender_not_found_msg, build_blender_args, find_blender};
+use crate::args::model_blender::{
+    blender_not_found_msg, build_blender_args, check_blender_version, find_blender,
+};
 use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::{truncate_stderr, ConvertOptions, ConvertResult};
 use parking_lot::Mutex;
@@ -73,6 +75,9 @@ pub fn convert(
         Some(b) => b,
         None => return ConvertResult::Error(blender_not_found_msg()),
     };
+    if let Err(e) = check_blender_version(&blender_bin) {
+        return ConvertResult::Error(e);
+    }
     let script_path = match locate_script() {
         Ok(p) => p,
         Err(e) => return ConvertResult::Error(e),
