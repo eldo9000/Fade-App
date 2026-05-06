@@ -69,3 +69,5 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** Add `version_base` output (strip pre-release) to the Resolve tag step; use it in stage artifact file paths and latest.json URL construction.
 - **Next:** `.github/workflows/release.yml` — Resolve tag step + Stage artifacts step + Generate latest.json step
+
+## Fail arc closed — 2026-05-06 — 3 entries — green CI 25449746387
