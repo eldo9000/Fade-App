@@ -10,3 +10,4 @@ playwright-report/
 playwright/.cache/
 __pycache__/
 scripts/computer-use/fixtures/test.*
+audits/
