@@ -410,9 +410,15 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
             }
             let preset = opts.preset.as_deref().unwrap_or("medium");
             out.extend(["-preset".to_string(), preset.to_string()]);
-            if opts.h264_profile.is_some() || opts.pix_fmt.is_some() {
+            // H.265 lossless (crf=0) requires yuv444p + main444-8 profile.
+            let effective_pix_fmt: Option<&str> = if opts.crf == Some(0) {
+                Some("yuv444p")
+            } else {
+                opts.pix_fmt.as_deref()
+            };
+            if opts.h264_profile.is_some() || effective_pix_fmt.is_some() {
                 let effective =
-                    h265_effective_profile(opts.h264_profile.as_deref(), opts.pix_fmt.as_deref());
+                    h265_effective_profile(opts.h264_profile.as_deref(), effective_pix_fmt);
                 out.extend(["-profile:v".to_string(), effective.to_string()]);
             }
             if let Some(t) = opts.tune.as_deref() {
@@ -420,7 +426,7 @@ fn codec_quality_args(codec: &str, opts: &ConvertOptions) -> Vec<String> {
                     out.extend(["-tune".to_string(), t.to_string()]);
                 }
             }
-            if let Some(pf) = opts.pix_fmt.as_deref() {
+            if let Some(pf) = effective_pix_fmt {
                 out.extend(["-pix_fmt".to_string(), pf.to_string()]);
             }
         }
@@ -871,6 +877,29 @@ mod tests {
         assert!(find_pair(&args, "-profile:v", "main"));
         assert!(find_pair(&args, "-tune", "film"));
         assert!(find_pair(&args, "-pix_fmt", "yuv420p"));
+    }
+
+    #[test]
+    fn h265_lossless_forces_yuv444p_and_main444_8_profile() {
+        // BC-005: h265 crf=0 with no explicit pix_fmt must produce yuv444p
+        // (not raw stream default) and main444-8 profile (not "main").
+        let opts = ConvertOptions {
+            output_format: "mp4".into(),
+            codec: Some("h265".into()),
+            crf: Some(0),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(
+            find_pair(&args, "-pix_fmt", "yuv444p"),
+            "expected -pix_fmt yuv444p, got: {:?}",
+            args
+        );
+        assert!(
+            find_pair(&args, "-profile:v", "main444-8"),
+            "expected -profile:v main444-8, got: {:?}",
+            args
+        );
     }
 
     #[test]
