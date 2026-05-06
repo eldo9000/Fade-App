@@ -15,13 +15,14 @@ Beta punch list. Edit in place. Nothing here is dated or phased — just shrink 
 
 ---
 
-## Decide: in or out
+## To implement
 
-Each item is a binary. Pick one outcome, then either implement it or remove it from the picker.
+- [ ] **aiff** — audio output. FFmpeg supports it; wire up and sweep-verify.
+- [ ] **ogv / theora** — video + codec. Requires non-standard FFmpeg build (theora absent from Homebrew 8.1); need custom build or bundle.
+- [ ] **hap** — video codec. Same blocker as theora; need custom FFmpeg build or bundle.
+- [ ] **Image sequences** (`seq_png`, `seq_jpg`, `seq_tiff`) — video → frame extraction. New arg-builder path + sweep coverage needed.
+- [ ] **Archive extras** — `iso`, `dmg`, `cbr`/`cbz`/`rar`.
 
-- [ ] **aiff** — audio output. FFmpeg supports it; likely low-effort to wire up and sweep-verify.
-- [ ] **ogv / theora** — video + codec. Requires non-standard FFmpeg build (theora absent from Homebrew 8.1). Probably drop unless there's a real user need.
-- [ ] **hap** — video codec. Same blocker as theora (non-standard FFmpeg). Probably drop.
-- [ ] **Image sequences** (`seq_png`, `seq_jpg`, `seq_tiff`) — video → frame extraction. Meaningful backend work; needs new arg-builder path and sweep coverage.
-- [ ] **Managed-install formats** — `font`, `parquet`, `ipynb`, `timeline`, `usd`/`usdz`/`abc`/`blend` — all require external tools installed separately. Decide whether to gate behind a dependency check or drop from the picker.
-- [ ] **Archive extras** — `iso`, `dmg`, `cbr`/`cbz`/`rar` — uncommon enough to drop; keep only if there's a clear use case.
+## Dropped
+
+- ~~**Managed-install formats**~~ — `font`, `parquet`, `ipynb`, `timeline`, `usd`/`usdz`/`abc`/`blend` — dropped. Remove `building` flags from picker; these stay as-is (managed-install, user's responsibility).
