@@ -1,12 +1,14 @@
 # Fade — Session Status
 
-Last updated: 2026-05-05 (Known Risks: TASK-29 stale ref cleared)
+Last updated: 2026-05-07 (Sprint A–H complete — all TODO features implemented, CI green)
 
 ---
 
 ## Current Focus
 
-Two full sessions of substantial work landed 2026-04-25.
+2026-05-07: Sprint A–H dispatch complete. 8 sprints, 35 tasks, 10 commits — all green CI. Full TODO backlog cleared: image formats (GIF/ICO/SVG/HEIC/JXL/PSD/HDR/DDS/XCF/RAW), audio formats (AIFF/Vorbis/EAC3/TrueHD), video sequences (PNG/JPEG/TIFF) + OGV, office docs (LibreOffice pipeline, DOCX/XLSX/PPTX/iWork/MSG), 3D formats (USD/USDZ/Alembic/.blend/STEP/IGES), optical media (DVD/Blu-ray rip+author, web preset), AI tools (demucs/whisper/argos/ddcolor/rembg), neural matte + CBZ + ISO/DMG + video inserts + subtitle burn/embed/shift. README updated. No arc in flight.
+
+Previous focus: Two full sessions of substantial work landed 2026-04-25.
 
 **Session A — test sweep infrastructure (`46c37db`):** Three new test files added to `src-tauri/tests/`: `matrix.rs` (33-case smoke matrix; pre-release sanity gate), `full_sweep.rs` (~700-case Cartesian diagnostic; surfaces broken combos), `extra_sweep.rs` (cheap-to-test categories: 3D models, subtitle pure-Rust, email, document text). Seven helper functions made `pub` across `email.rs`, `subtitle.rs`, `document.rs` to support direct test calls. All sweep tests subsequently marked `#[ignore]` (manual-only; CI runs `--lib` and `--include-ignored` only on the conversions integration suite).
 
