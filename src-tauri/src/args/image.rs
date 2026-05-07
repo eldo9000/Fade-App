@@ -1,7 +1,21 @@
 use crate::ConvertOptions;
 
 pub fn build_image_magick_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<String> {
-    let mut args: Vec<String> = vec![input.to_string()];
+    // Pre-input flags must appear before the input filename on the magick command line.
+    // Currently only SVG rasterisation requires this (-density must precede the input).
+    let mut args: Vec<String> = Vec::new();
+    let input_ext = std::path::Path::new(input)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    if input_ext == "svg" || input_ext == "svgz" {
+        // Default 150 DPI for SVG → raster; ImageMagick default (72 DPI) produces
+        // blurry output. Users who want a different size should use the resize controls.
+        args.push("-density".to_string());
+        args.push("150".to_string());
+    }
+    args.push(input.to_string());
 
     if opts.auto_rotate == Some(true) {
         args.push("-auto-orient".to_string());
@@ -171,6 +185,28 @@ fn format_specific_args(opts: &ConvertOptions) -> Vec<String> {
                 args.push("-depth".to_string());
                 args.push(d.to_string());
             }
+        }
+        "ico" => {
+            // Produce standard multi-size Windows icon in one pass.
+            args.push("-define".to_string());
+            args.push("icon:auto-resize=16,24,32,48,64,128,256".to_string());
+        }
+        "dds" => {
+            // Ensure the DDS: prefix is implicit via output filename; no extra
+            // flags needed for standard DXT1/5 output via ImageMagick.
+            // Colour space must be sRGB for most game engines.
+            args.push("-colorspace".to_string());
+            args.push("sRGB".to_string());
+        }
+        "svg" => {
+            // Set a reasonable default DPI for SVG rasterisation when used as
+            // INPUT (this branch fires on SVG output — writing SVG is also
+            // supported by ImageMagick).
+        }
+        "hdr" => {
+            // Radiance RGBE: preserve floating-point range.
+            args.push("-colorspace".to_string());
+            args.push("RGB".to_string());
         }
         "avif" => {
             if let Some(s) = opts.avif_speed {

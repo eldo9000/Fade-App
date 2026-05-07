@@ -640,7 +640,8 @@ pub(crate) fn parse_out_time_ms(line: &str) -> Option<f64> {
 pub(crate) fn classify_ext(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" | "png" | "webp" | "tiff" | "tif" | "bmp" | "gif" | "avif" | "heic"
-        | "heif" | "psd" | "svg" | "ico" | "raw" | "cr2" | "nef" | "arw" | "dng" => "image",
+        | "heif" | "psd" | "svg" | "ico" | "raw" | "cr2" | "cr3" | "nef" | "arw" | "dng"
+        | "orf" | "rw2" | "exr" | "hdr" | "dds" | "xcf" | "jxl" => "image",
         "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "flv" | "wmv" | "ts" | "mpg" | "mpeg"
         | "3gp" | "ogv" | "divx" | "rmvb" | "asf" => "video",
         "seq_png" | "seq_jpg" | "seq_tiff" => "video",

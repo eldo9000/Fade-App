@@ -348,6 +348,145 @@ fn avif_cases() -> Vec<Case> {
     v
 }
 
+fn gif_image_cases() -> Vec<Case> {
+    // Static GIF output from a raster input (ImageMagick native, no ffmpeg).
+    [
+        Case {
+            name: "gif_default".into(),
+            ext: "gif",
+            opts: ConvertOptions {
+                output_format: "gif".into(),
+                ..Default::default()
+            },
+        },
+        Case {
+            name: "gif_quality50".into(),
+            ext: "gif",
+            opts: ConvertOptions {
+                output_format: "gif".into(),
+                quality: Some(50),
+                ..Default::default()
+            },
+        },
+    ]
+    .into()
+}
+
+fn ico_cases() -> Vec<Case> {
+    vec![Case {
+        name: "ico_default".into(),
+        ext: "ico",
+        opts: ConvertOptions {
+            output_format: "ico".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+fn psd_cases() -> Vec<Case> {
+    vec![Case {
+        name: "psd_default".into(),
+        ext: "psd",
+        opts: ConvertOptions {
+            output_format: "psd".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+fn hdr_cases() -> Vec<Case> {
+    vec![Case {
+        name: "hdr_default".into(),
+        ext: "hdr",
+        opts: ConvertOptions {
+            output_format: "hdr".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+fn dds_cases() -> Vec<Case> {
+    vec![Case {
+        name: "dds_default".into(),
+        ext: "dds",
+        opts: ConvertOptions {
+            output_format: "dds".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+fn heic_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for q in [50u32, 80, 95] {
+        v.push(Case {
+            name: format!("heic_q{q}"),
+            ext: "heic",
+            opts: ConvertOptions {
+                output_format: "heic".into(),
+                quality: Some(q),
+                ..Default::default()
+            },
+        });
+    }
+    v
+}
+
+fn heif_cases() -> Vec<Case> {
+    vec![Case {
+        name: "heif_default".into(),
+        ext: "heif",
+        opts: ConvertOptions {
+            output_format: "heif".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+fn svg_output_cases() -> Vec<Case> {
+    // SVG output: ImageMagick can produce SVG from raster (limited fidelity).
+    vec![Case {
+        name: "svg_default".into(),
+        ext: "svg",
+        opts: ConvertOptions {
+            output_format: "svg".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+/// SVG → raster: input is an SVG file; outputs are PNG and JPEG.
+/// The fixture helper creates a minimal SVG.
+fn run_svg_input_cases(dir: &Path) -> Vec<Outcome> {
+    let svg_fixture = dir.join("_fixture.svg");
+    // Minimal valid SVG for testing.
+    std::fs::write(
+        &svg_fixture,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="blue"/></svg>"#,
+    )
+    .expect("write svg fixture");
+
+    let cases = vec![
+        Case {
+            name: "svg_to_png".into(),
+            ext: "png",
+            opts: ConvertOptions {
+                output_format: "png".into(),
+                ..Default::default()
+            },
+        },
+        Case {
+            name: "svg_to_jpeg".into(),
+            ext: "jpg",
+            opts: ConvertOptions {
+                output_format: "jpeg".into(),
+                ..Default::default()
+            },
+        },
+    ];
+    run_image_cases(dir, &svg_fixture, cases)
+}
+
 #[test]
 #[ignore]
 fn image_full() {
@@ -362,8 +501,20 @@ fn image_full() {
     cases.extend(tiff_cases());
     cases.extend(bmp_cases());
     cases.extend(avif_cases());
+    cases.extend(gif_image_cases());
+    cases.extend(ico_cases());
+    cases.extend(psd_cases());
+    cases.extend(hdr_cases());
+    cases.extend(dds_cases());
+    cases.extend(heic_cases());
+    cases.extend(heif_cases());
+    cases.extend(svg_output_cases());
 
-    let outcomes = run_image_cases(&dir, &fixture, cases);
+    let mut outcomes = run_image_cases(&dir, &fixture, cases);
+
+    // SVG input → raster: separate fixture required.
+    outcomes.extend(run_svg_input_cases(&dir));
+
     report("image", outcomes);
 }
 

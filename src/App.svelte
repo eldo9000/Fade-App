@@ -1572,14 +1572,16 @@
     ]},
     { label: 'Image', cat: 'image', fmts: [
       { id: 'jpeg', live: true }, { id: 'png', live: true }, { id: 'webp', live: true }, { id: 'tiff', live: true }, { id: 'bmp', live: true }, { id: 'avif', live: true },
-      { id: 'gif',   todo: true }, { id: 'svg',  todo: true }, { id: 'ico',  todo: true },
-      { id: 'jpegxl', label: 'JPEG XL', todo: true },
-      { id: 'heic',  todo: true }, { id: 'heif', todo: true }, { id: 'psd',  todo: true },
-      { id: 'exr',   todo: true }, { id: 'hdr',  todo: true }, { id: 'dds',  todo: true },
-      { id: 'xcf',   todo: true },
-      { id: 'raw',   todo: true }, { id: 'cr2',  todo: true }, { id: 'cr3',  todo: true },
-      { id: 'nef',   todo: true }, { id: 'arw',  todo: true }, { id: 'dng',  todo: true },
-      { id: 'orf',   todo: true }, { id: 'rw2',  todo: true },
+      { id: 'gif',  live: true }, { id: 'svg', live: true }, { id: 'ico',  live: true },
+      { id: 'jpegxl', label: 'JPEG XL', live: true },
+      { id: 'heic',  live: true }, { id: 'heif', live: true }, { id: 'psd',  live: true },
+      { id: 'exr',   live: true }, { id: 'hdr',  live: true }, { id: 'dds',  live: true },
+      // XCF is read-only (GIMP native); live here so dropped .xcf files route through the image pipeline.
+      { id: 'xcf',   live: true },
+      // RAW camera formats are read-only inputs; listed live so the pipeline accepts them as input.
+      { id: 'raw',  live: true }, { id: 'cr2',  live: true }, { id: 'cr3',  live: true },
+      { id: 'nef',  live: true }, { id: 'arw',  live: true }, { id: 'dng',  live: true },
+      { id: 'orf',  live: true }, { id: 'rw2',  live: true },
     ]},
     { label: '3D Model', cat: 'model', fmts: [
       { id: 'obj', live: true }, { id: 'gltf', live: true }, { id: 'glb', live: true },
