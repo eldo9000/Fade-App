@@ -10,6 +10,8 @@ pub mod audio_offset;
 pub mod chroma_key;
 pub mod conform;
 pub mod cut;
+pub mod dvd_author;
+pub mod dvd_rip;
 pub mod extract;
 pub mod frame_ops;
 pub mod loop_op;

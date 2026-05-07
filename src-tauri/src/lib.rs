@@ -647,6 +647,9 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "flv" | "wmv" | "ts" | "mpg" | "mpeg"
         | "3gp" | "ogv" | "divx" | "rmvb" | "asf" => "video",
         "seq_png" | "seq_jpg" | "seq_tiff" => "video",
+        // Web video preset — virtual format that forces H.264/AAC/faststart.
+        // Treated as video so convert_file routes it through run_video_convert.
+        "web_mp4" => "video",
         "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" | "vorbis"
         | "eac3" | "ddp" | "truehd" => "audio",
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
@@ -864,6 +867,15 @@ fn convert_file(
         validate_output_dir(dir)?;
     }
 
+    // Map virtual format identifiers to their real file extension.
+    // "web_mp4" is a preset that still produces an .mp4 file; the
+    // build_ffmpeg_video_args dispatcher is keyed on output_format, not the
+    // extension, so we remap here before building the output path.
+    let file_ext: &str = match ext.as_str() {
+        "web_mp4" => "mp4",
+        other => other,
+    };
+
     let output_path = if let Some(real_ext) = ext.strip_prefix("seq_") {
         // Image sequences go to a directory of frames rather than a single file.
         // Build the directory path, create it, and pass it to the converter which
@@ -899,7 +911,7 @@ fn convert_file(
     } else {
         build_output_path(
             &input_path,
-            &ext,
+            file_ext,
             options.output_dir.as_deref(),
             suffix,
             separator,
@@ -2217,6 +2229,162 @@ fn validate_url_scheme(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Rip a DVD source file/device to an H.264 MKV using HandBrakeCLI.
+///
+/// `quality` must be one of: "high" (RF 18), "default" (RF 20),
+/// "fast" (RF 22), or "small" (RF 24). Defaults to "default".
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+fn run_dvd_rip(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input_path: String,
+    output_path: String,
+    quality: Option<String>,
+) -> Result<(), String> {
+    validate_input_path(&input_path)?;
+    validate_output_name(&output_path)?;
+
+    let rf = match quality.as_deref().unwrap_or("default") {
+        "high" => operations::dvd_rip::RfQuality::High,
+        "fast" => operations::dvd_rip::RfQuality::Fast,
+        "small" => operations::dvd_rip::RfQuality::Small,
+        _ => operations::dvd_rip::RfQuality::Default,
+    };
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::dvd_rip::run_dvd_rip(
+            &window,
+            &job_id,
+            &input_path,
+            &output_path,
+            rf,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output_path.clone());
+        finalize_job(&window, job_id, &input_path, outcome);
+    });
+
+    Ok(())
+}
+
+/// Rip a Blu-ray source file/device to an H.265 MKV using HandBrakeCLI.
+///
+/// Note: BD+ DRM requires libbluray compiled into HandBrake.
+///
+/// `quality` must be one of: "high" (RF 18), "default" (RF 20),
+/// "fast" (RF 22), or "small" (RF 24). Defaults to "default".
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+fn run_bluray_rip(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input_path: String,
+    output_path: String,
+    quality: Option<String>,
+) -> Result<(), String> {
+    validate_input_path(&input_path)?;
+    validate_output_name(&output_path)?;
+
+    let rf = match quality.as_deref().unwrap_or("default") {
+        "high" => operations::dvd_rip::RfQuality::High,
+        "fast" => operations::dvd_rip::RfQuality::Fast,
+        "small" => operations::dvd_rip::RfQuality::Small,
+        _ => operations::dvd_rip::RfQuality::Default,
+    };
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::dvd_rip::run_bluray_rip(
+            &window,
+            &job_id,
+            &input_path,
+            &output_path,
+            rf,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output_path.clone());
+        finalize_job(&window, job_id, &input_path, outcome);
+    });
+
+    Ok(())
+}
+
+/// Author a DVD ISO from an arbitrary input video.
+///
+/// Requires: ffmpeg, dvdauthor, and mkisofs or genisoimage in PATH.
+/// Returns a clear error listing which tools are absent if any are missing.
+///
+/// Emits: job-done or job-error (no progress events — dvdauthor does not
+/// emit a machine-readable progress stream).
+#[command]
+fn run_dvd_author(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input_path: String,
+    output_path: String,
+) -> Result<(), String> {
+    validate_input_path(&input_path)?;
+    validate_output_name(&output_path)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::dvd_author::run(&input_path, &output_path);
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = match result {
+            Ok(()) => JobOutcome::Done {
+                output_path: output_path.clone(),
+            },
+            Err(msg) => JobOutcome::Error { message: msg },
+        };
+        finalize_job(&window, job_id, &input_path, outcome);
+    });
+
+    Ok(())
+}
+
 /// Open a URL in the user's default browser.
 /// Used for "download update" on platforms where in-place updates
 /// are disabled (macOS/Windows without codesigning).
@@ -2273,6 +2441,9 @@ pub fn run() {
             diag_clear,
             run_operation,
             get_streams,
+            run_dvd_rip,
+            run_bluray_rip,
+            run_dvd_author,
             operations::analysis::loudness::analyze_loudness,
             operations::analysis::cut_detect::analyze_cut_detect,
             operations::analysis::black_detect::analyze_black_detect,

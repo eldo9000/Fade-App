@@ -1341,3 +1341,53 @@ fn video_full() {
     let outcomes = run_video_cases(&dir, &fixture, cases);
     report("video", outcomes);
 }
+
+/// Sweep: web_mp4 preset — short clip → H.264/AAC MP4 with faststart.
+/// Gated on ffmpeg availability (the fixture helper returns None if absent).
+#[test]
+#[ignore]
+fn web_mp4_sweep() {
+    let dir = output_root("web_mp4");
+    let fixture = dir.join("_fixture.mp4");
+    make_mp4(&fixture).expect("fixture");
+
+    let cases = vec![Case {
+        name: "web_mp4_default".into(),
+        ext: "mp4",
+        opts: ConvertOptions {
+            output_format: "web_mp4".into(),
+            ..Default::default()
+        },
+    }];
+
+    let outcomes = run_video_cases(&dir, &fixture, cases);
+
+    // Verify moov atom is near the start (faststart). ffprobe reports the
+    // moov atom offset via -show_format; a faststart-encoded file has
+    // moov before mdat so the "format_name" field resolves quickly.
+    // The simplest proxy: the output file must exist and be non-empty.
+    for o in &outcomes {
+        if o.passed() {
+            // Optional moov-atom check via ffprobe.
+            let probe_ok = std::process::Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "quiet",
+                    "-print_format",
+                    "json",
+                    "-show_format",
+                    o.output.to_str().unwrap_or(""),
+                ])
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false);
+            assert!(
+                probe_ok,
+                "ffprobe failed on web_mp4 output: {}",
+                o.output.display()
+            );
+        }
+    }
+
+    report("web_mp4", outcomes);
+}

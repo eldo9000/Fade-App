@@ -41,6 +41,9 @@ pub fn build_ffmpeg_video_args(input: &str, output: &str, opts: &ConvertOptions)
     if opts.output_format.starts_with("seq_") {
         return build_image_sequence_args(input, output, opts);
     }
+    if opts.output_format == "web_mp4" {
+        return build_web_preset_args(input, output, opts);
+    }
 
     let mut args: Vec<String> = vec!["-y".to_string()];
 
@@ -683,6 +686,75 @@ fn build_gif_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<Strin
 
     // No audio in GIF.
     args.push("-an".to_string());
+
+    args.extend([
+        "-progress".to_string(),
+        "pipe:1".to_string(),
+        "-nostats".to_string(),
+    ]);
+
+    args.push(output.to_string());
+    args
+}
+
+/// Web video preset: H.264 + AAC, tuned for browser playback.
+///
+/// Forces the following flags regardless of user options:
+///   -c:v libx264 -crf 23 -preset slow
+///   -movflags +faststart   (moov atom near start — avoids buffering on HTTP)
+///   -c:a aac -b:a 128k
+///   -vf scale=-2:1080      (scale down to ≤ 1080 p, preserve aspect ratio)
+///
+/// The output container is always MP4. The caller is responsible for
+/// ensuring the output path ends with `.mp4`.
+fn build_web_preset_args(input: &str, output: &str, opts: &ConvertOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-y".to_string()];
+
+    if let Some(ss) = opts.trim_start {
+        args.extend(["-ss".to_string(), ss.to_string()]);
+    }
+
+    args.extend(["-i".to_string(), input.to_string()]);
+
+    if let Some(t) = opts.trim_end {
+        let end = if let Some(ss) = opts.trim_start {
+            t - ss
+        } else {
+            t
+        };
+        args.extend(["-t".to_string(), end.to_string()]);
+    }
+
+    if opts.preserve_metadata == Some(false) {
+        args.extend(["-map_metadata".to_string(), "-1".to_string()]);
+    }
+
+    // Video: H.264, CRF 23, slow preset for better compression.
+    args.extend([
+        "-c:v".to_string(),
+        "libx264".to_string(),
+        "-crf".to_string(),
+        "23".to_string(),
+        "-preset".to_string(),
+        "slow".to_string(),
+    ]);
+
+    // faststart: relocate moov atom to the start so browsers can play while
+    // still downloading.
+    args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+
+    // Audio: AAC at 128 kbps — compatible with all modern browsers.
+    args.extend([
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-b:a".to_string(),
+        "128k".to_string(),
+    ]);
+
+    // Scale to ≤ 1080 p, preserving aspect ratio. -2 keeps the width
+    // divisible by 2 (libx264 requirement). Does not upscale: if the source
+    // is already ≤ 1080 p tall, the filter passes through unchanged.
+    args.extend(["-vf".to_string(), "scale=-2:min(ih\\,1080)".to_string()]);
 
     args.extend([
         "-progress".to_string(),
@@ -1405,5 +1477,68 @@ mod tests {
             "expected -profile:v high but got: {:?}",
             args
         );
+    }
+
+    // ── Web preset (web_mp4) ────────────────────────────────────────────────
+
+    #[test]
+    fn web_preset_emits_libx264_crf23_slow() {
+        let opts = ConvertOptions {
+            output_format: "web_mp4".into(),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(find_pair(&args, "-c:v", "libx264"), "args: {args:?}");
+        assert!(find_pair(&args, "-crf", "23"), "args: {args:?}");
+        assert!(find_pair(&args, "-preset", "slow"), "args: {args:?}");
+    }
+
+    #[test]
+    fn web_preset_emits_faststart() {
+        let opts = ConvertOptions {
+            output_format: "web_mp4".into(),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(
+            find_pair(&args, "-movflags", "+faststart"),
+            "args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn web_preset_emits_aac_128k() {
+        let opts = ConvertOptions {
+            output_format: "web_mp4".into(),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert!(find_pair(&args, "-c:a", "aac"), "args: {args:?}");
+        assert!(find_pair(&args, "-b:a", "128k"), "args: {args:?}");
+    }
+
+    #[test]
+    fn web_preset_emits_scale_filter_1080() {
+        let opts = ConvertOptions {
+            output_format: "web_mp4".into(),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("has -vf");
+        assert!(
+            args[vf_idx + 1].contains("1080"),
+            "expected 1080 in vf filter, got: {}",
+            args[vf_idx + 1]
+        );
+    }
+
+    #[test]
+    fn web_preset_output_is_last_arg() {
+        let opts = ConvertOptions {
+            output_format: "web_mp4".into(),
+            ..Default::default()
+        };
+        let args = build_ffmpeg_video_args("in.mov", "out.mp4", &opts);
+        assert_eq!(args.last().unwrap(), "out.mp4");
     }
 }
