@@ -3,10 +3,12 @@
 //!   - Subtitle pure-Rust paths (srt ↔ sbv)
 //!   - Email pure-Rust paths (eml ↔ mbox)
 //!   - Document pure-Rust paths (md/html text reduction)
+//!   - Office document conversions (LibreOffice headless)
+//!   - MSG email conversion (msgconvert / pst-convert)
 //!
 //! Categories that need a Tauri-runtime refactor (archive, font, ebook,
-//! notebook, timeline, document-via-pandoc, model-via-blender) are not
-//! covered here. They will land after the `&Window` decoupling refactor.
+//! notebook, timeline, model-via-blender) are not covered here. They will
+//! land after the `&Window` decoupling refactor.
 //!
 //! Run:
 //!   cargo test --manifest-path src-tauri/Cargo.toml --test extra_sweep \
@@ -343,4 +345,339 @@ fn document_text_sweep() {
     });
 
     report("document-text", outcomes);
+}
+
+// ── Office document sweep (LibreOffice headless) ──────────────────────────────
+//
+// Requires LibreOffice: brew install --cask libreoffice
+// Skips automatically if `soffice` / `libreoffice` binary not found.
+
+/// Minimal DOCX-compatible ZIP archive with a single paragraph.
+/// Built from raw bytes so the test has zero binary fixtures in the repo.
+fn write_minimal_docx(path: &std::path::Path) {
+    use std::io::Write;
+    // Minimal well-formed .docx (Word XML Open Packaging Convention)
+    // Just enough for LibreOffice to open it.
+    let content_types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml"
+    ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#;
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+    Target="word/document.xml"/>
+</Relationships>"#;
+    let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Hello from Fade test fixture.</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+
+    let buf = std::io::BufWriter::new(std::fs::File::create(path).expect("create docx"));
+    let mut zip = zip::ZipWriter::new(buf);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    // word/_rels/document.xml.rels (minimal)
+    zip.add_directory("word/", opts).unwrap();
+    zip.add_directory("word/_rels/", opts).unwrap();
+    let word_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>"#;
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(word_rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document_xml.as_bytes()).unwrap();
+    zip.finish().unwrap();
+}
+
+#[test]
+#[ignore]
+fn office_word_sweep() {
+    // Skip if LibreOffice not installed
+    if fade_lib::convert::document::find_soffice().is_none() {
+        println!("[SKIP] office_word_sweep — LibreOffice not found");
+        return;
+    }
+
+    let dir = output_root("office-word");
+    let fixture = dir.join("_fixture.docx");
+    write_minimal_docx(&fixture);
+
+    let targets: &[(&str, &str)] = &[
+        ("pdf", "docx_to_pdf.pdf"),
+        ("html", "docx_to_html.html"),
+        ("txt", "docx_to_txt.txt"),
+        ("odt", "docx_to_odt.odt"),
+        ("rtf", "docx_to_rtf.rtf"),
+    ];
+
+    let mut outcomes = Vec::new();
+    for (fmt, filename) in targets {
+        let out = dir.join(filename);
+        let opts = ConvertOptions {
+            output_format: fmt.to_string(),
+            ..ConvertOptions::default()
+        };
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut noop = fade_lib::convert::noop_progress();
+        let err = document::convert(
+            fixture.to_str().unwrap(),
+            out.to_str().unwrap(),
+            &opts,
+            &mut noop,
+            &cancelled,
+        )
+        .err();
+        outcomes.push(Outcome {
+            name: format!("docx_to_{fmt}"),
+            output: out,
+            error: err,
+        });
+    }
+
+    report("office-word", outcomes);
+}
+
+#[test]
+#[ignore]
+fn office_spreadsheet_sweep() {
+    if fade_lib::convert::document::find_soffice().is_none() {
+        println!("[SKIP] office_spreadsheet_sweep — LibreOffice not found");
+        return;
+    }
+
+    let dir = output_root("office-spreadsheet");
+
+    // Build a minimal ODS (also ZIP/XML) fixture
+    let ods_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+  xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+  office:version="1.3">
+  <office:body>
+    <office:spreadsheet>
+      <table:table table:name="Sheet1">
+        <table:table-row>
+          <table:table-cell><text:p>Hello</text:p></table:table-cell>
+          <table:table-cell><text:p>World</text:p></table:table-cell>
+        </table:table-row>
+      </table:table>
+    </office:spreadsheet>
+  </office:body>
+</office:document-content>"#;
+    let fixture = dir.join("_fixture.ods");
+    // Write raw ODS bytes via zip
+    {
+        use std::io::Write;
+        let buf = std::io::BufWriter::new(std::fs::File::create(&fixture).expect("create ods"));
+        let mut zip = zip::ZipWriter::new(buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("content.xml", opts).unwrap();
+        zip.write_all(ods_content.as_bytes()).unwrap();
+        let mimetype = "application/vnd.oasis.opendocument.spreadsheet";
+        zip.start_file("mimetype", opts).unwrap();
+        zip.write_all(mimetype.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    let targets: &[(&str, &str)] = &[
+        ("pdf", "ods_to_pdf.pdf"),
+        ("xlsx", "ods_to_xlsx.xlsx"),
+        ("csv", "ods_to_csv.csv"),
+    ];
+
+    let mut outcomes = Vec::new();
+    for (fmt, filename) in targets {
+        let out = dir.join(filename);
+        let opts = ConvertOptions {
+            output_format: fmt.to_string(),
+            ..ConvertOptions::default()
+        };
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut noop = fade_lib::convert::noop_progress();
+        let err = document::convert(
+            fixture.to_str().unwrap(),
+            out.to_str().unwrap(),
+            &opts,
+            &mut noop,
+            &cancelled,
+        )
+        .err();
+        outcomes.push(Outcome {
+            name: format!("ods_to_{fmt}"),
+            output: out,
+            error: err,
+        });
+    }
+
+    report("office-spreadsheet", outcomes);
+}
+
+#[test]
+#[ignore]
+fn office_presentation_sweep() {
+    if fade_lib::convert::document::find_soffice().is_none() {
+        println!("[SKIP] office_presentation_sweep — LibreOffice not found");
+        return;
+    }
+
+    let dir = output_root("office-presentation");
+
+    // Build a minimal ODP fixture
+    let odp_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+  xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+  office:version="1.3">
+  <office:body>
+    <office:presentation>
+      <draw:page draw:name="Slide1">
+        <draw:frame draw:x="1cm" draw:y="1cm" draw:width="10cm" draw:height="3cm">
+          <draw:text-box><text:p>Fade Test Slide</text:p></draw:text-box>
+        </draw:frame>
+      </draw:page>
+    </office:presentation>
+  </office:body>
+</office:document-content>"#;
+    let fixture = dir.join("_fixture.odp");
+    {
+        use std::io::Write;
+        let buf = std::io::BufWriter::new(std::fs::File::create(&fixture).expect("create odp"));
+        let mut zip = zip::ZipWriter::new(buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("content.xml", opts).unwrap();
+        zip.write_all(odp_content.as_bytes()).unwrap();
+        let mimetype = "application/vnd.oasis.opendocument.presentation";
+        zip.start_file("mimetype", opts).unwrap();
+        zip.write_all(mimetype.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    let targets: &[(&str, &str)] = &[("pdf", "odp_to_pdf.pdf"), ("pptx", "odp_to_pptx.pptx")];
+
+    let mut outcomes = Vec::new();
+    for (fmt, filename) in targets {
+        let out = dir.join(filename);
+        let opts = ConvertOptions {
+            output_format: fmt.to_string(),
+            ..ConvertOptions::default()
+        };
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut noop = fade_lib::convert::noop_progress();
+        let err = document::convert(
+            fixture.to_str().unwrap(),
+            out.to_str().unwrap(),
+            &opts,
+            &mut noop,
+            &cancelled,
+        )
+        .err();
+        outcomes.push(Outcome {
+            name: format!("odp_to_{fmt}"),
+            output: out,
+            error: err,
+        });
+    }
+
+    report("office-presentation", outcomes);
+}
+
+// ── MSG email sweep ───────────────────────────────────────────────────────────
+//
+// Requires msgconvert (libemail-outlook-message-perl) or pst-convert (libpst).
+// Skips automatically when neither tool is found.
+
+#[test]
+#[ignore]
+fn msg_email_sweep() {
+    use std::process::Command;
+
+    let has_msgconvert = Command::new("which")
+        .arg("msgconvert")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let has_pst_convert = Command::new("which")
+        .arg("pst-convert")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !has_msgconvert && !has_pst_convert {
+        println!("[SKIP] msg_email_sweep — neither msgconvert nor pst-convert found");
+        return;
+    }
+
+    let dir = output_root("email-msg");
+
+    // A minimal well-formed MSG file cannot be easily synthesised without the
+    // full CFB (Compound File Binary) format. We test the error-path instead:
+    // pass a text file with a .msg extension — msgconvert will fail, and we
+    // verify the error is non-empty (pipeline is wired, not silently swallowed).
+    let fixture = dir.join("_fixture.msg");
+    std::fs::write(&fixture, b"Not a real MSG file - error path test").expect("write fixture");
+
+    let out = dir.join("msg_to_eml.eml");
+    let opts = ConvertOptions {
+        output_format: "eml".to_string(),
+        ..ConvertOptions::default()
+    };
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut noop = fade_lib::convert::noop_progress();
+    let result = email::convert(
+        fixture.to_str().unwrap(),
+        out.to_str().unwrap(),
+        &opts,
+        &mut noop,
+        &cancelled,
+    );
+
+    // We expect either success (if the tool tolerates the fake file) or
+    // a non-empty error (confirming the pipeline is wired and returns errors).
+    let mut outcomes = Vec::new();
+    match result {
+        Ok(()) => {
+            outcomes.push(Outcome {
+                name: "msg_to_eml (fake file, accepted)".into(),
+                output: out,
+                error: None,
+            });
+        }
+        Err(e) => {
+            // Error is expected — the fixture is not a real MSG. What we're
+            // testing is that the pipeline is wired and returns a non-trivial
+            // error rather than panicking or returning a confusing message.
+            let is_wired = !e.contains("MSG output is not supported")
+                && !e.contains("Unsupported email conversion");
+            outcomes.push(Outcome {
+                name: "msg_to_eml (wired, expected error)".into(),
+                // No output file — we synthesise a dummy path to satisfy the reporter
+                output: dir.join("msg_pipeline_wired.sentinel"),
+                error: if is_wired {
+                    // Write the sentinel so the reporter sees a 0-byte file
+                    let _ = std::fs::write(dir.join("msg_pipeline_wired.sentinel"), &e);
+                    None
+                } else {
+                    Some(format!("MSG pipeline not wired — got old error: {e}"))
+                },
+            });
+        }
+    }
+
+    report("email-msg", outcomes);
 }

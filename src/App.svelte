@@ -1694,19 +1694,19 @@
     // LibreOffice install. Full format conversion (→ PDF, images, HTML,
     // MP4 slideshow) needs LibreOffice headless (~300 MB install).
     { label: 'Office', cat: 'office', fmts: [
-      { id: 'pptx',    label: 'PPTX',    todo: true, preview: true },
-      { id: 'ppt',     label: 'PPT',     todo: true, preview: true },
-      { id: 'docx',    label: 'DOCX',    todo: true, preview: true },
-      { id: 'doc',     label: 'DOC',     todo: true, preview: true },
-      { id: 'xlsx',    label: 'XLSX',    todo: true, preview: true },
-      { id: 'xls',     label: 'XLS',     todo: true, preview: true },
-      { id: 'odt',     label: 'ODT',     todo: true, preview: true },
-      { id: 'odp',     label: 'ODP',     todo: true, preview: true },
-      { id: 'ods',     label: 'ODS',     todo: true, preview: true },
-      { id: 'rtf',     label: 'RTF',     todo: true, preview: true },
-      { id: 'key',     label: 'Keynote', todo: true, preview: true },
-      { id: 'pages',   label: 'Pages',   todo: true, preview: true },
-      { id: 'numbers', label: 'Numbers', todo: true, preview: true },
+      { id: 'pptx',    label: 'PPTX',    live: true },
+      { id: 'ppt',     label: 'PPT',     live: true },
+      { id: 'docx',    label: 'DOCX',    live: true },
+      { id: 'doc',     label: 'DOC',     live: true },
+      { id: 'xlsx',    label: 'XLSX',    live: true },
+      { id: 'xls',     label: 'XLS',     live: true },
+      { id: 'odt',     label: 'ODT',     live: true },
+      { id: 'odp',     label: 'ODP',     live: true },
+      { id: 'ods',     label: 'ODS',     live: true },
+      { id: 'rtf',     label: 'RTF',     live: true },
+      { id: 'key',     label: 'Keynote', live: true },
+      { id: 'pages',   label: 'Pages',   live: true },
+      { id: 'numbers', label: 'Numbers', live: true },
     ]},
     // Ebooks — Calibre managed install provides ebook-convert across all
     // these formats plus PDF/EPUB conversion.
@@ -1759,8 +1759,8 @@
       { id: 'woff2', label: 'WOFF2', building: true },
     ]},
     { label: 'Email', cat: 'email', fmts: [
-      // MSG (Outlook binary) remains deferred — backend returns a clear error.
-      { id: 'msg',  label: 'MSG',  todo: true, preview: true },
+      // MSG (Outlook binary) — requires msgconvert or libpst.
+      { id: 'msg',  label: 'MSG',  live: true },
       { id: 'eml',  label: 'EML',  live: true },
       { id: 'mbox', label: 'MBOX', live: true },
     ]},

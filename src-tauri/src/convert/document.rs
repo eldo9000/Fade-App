@@ -1,9 +1,187 @@
 use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::ConvertOptions;
 use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::Window;
+
+// ── LibreOffice binary detection ──────────────────────────────────────────────
+
+/// Locate the `soffice` binary. Returns `None` when LibreOffice is not found.
+///
+/// Search order:
+/// 1. `libreoffice` in PATH
+/// 2. `soffice` in PATH
+/// 3. macOS bundle `/Applications/LibreOffice.app/Contents/MacOS/soffice`
+/// 4. Windows default `C:\Program Files\LibreOffice\program\soffice.exe`
+pub fn find_soffice() -> Option<String> {
+    let candidates: &[&str] = &[
+        "libreoffice",
+        "soffice",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+    ];
+    for candidate in candidates {
+        if std::path::Path::new(candidate).is_absolute() {
+            if std::path::Path::new(candidate).exists() {
+                return Some(candidate.to_string());
+            }
+        } else {
+            // Try via `which`/`where`
+            let found = if cfg!(windows) {
+                Command::new("where").arg(candidate).output().ok()
+            } else {
+                Command::new("which").arg(candidate).output().ok()
+            };
+            if found.map(|o| o.status.success()).unwrap_or(false) {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Convert a document using LibreOffice headless.
+///
+/// LibreOffice always writes `<outdir>/<input_stem>.<fmt>` — we rename the
+/// result to `output_path` after the command completes.
+///
+/// Returns `Ok(())` on success, `Err(message)` on failure or missing binary.
+pub fn libreoffice_convert(
+    input: &str,
+    output_format: &str,
+    output_path: &str,
+    progress: ProgressFn<'_>,
+) -> Result<(), String> {
+    let soffice = find_soffice().ok_or_else(|| {
+        "Office conversion requires LibreOffice (https://www.libreoffice.org)".to_string()
+    })?;
+
+    // LibreOffice writes to `<outdir>/<input_stem>.<fmt>`.
+    let out_dir = Path::new(output_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_string_lossy()
+        .to_string();
+
+    progress(ProgressEvent::Phase(format!(
+        "Converting to {output_format} via LibreOffice…"
+    )));
+
+    let output = Command::new(&soffice)
+        .args([
+            "--headless",
+            "--convert-to",
+            output_format,
+            "--outdir",
+            &out_dir,
+            input,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to spawn LibreOffice: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if !stderr.trim().is_empty() {
+            stderr.to_string()
+        } else {
+            stdout.to_string()
+        };
+        return Err(format!(
+            "LibreOffice conversion failed:\n{}",
+            crate::truncate_stderr(&detail)
+        ));
+    }
+
+    // Build the path LibreOffice wrote to: <outdir>/<input_stem>.<fmt>
+    let input_stem = Path::new(input)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let lo_output = Path::new(&out_dir).join(format!("{input_stem}.{output_format}"));
+
+    if !lo_output.exists() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "LibreOffice ran but output file was not created.\nExpected: {}\nStderr: {}",
+            lo_output.display(),
+            stderr
+        ));
+    }
+
+    // Only rename if LibreOffice wrote somewhere different from our target.
+    let target = Path::new(output_path);
+    if lo_output != target {
+        std::fs::rename(&lo_output, target)
+            .map_err(|e| format!("Could not move LibreOffice output to target: {e}"))?;
+    }
+
+    progress(ProgressEvent::Done);
+    Ok(())
+}
+
+/// Convert a document via pandoc CLI.
+///
+/// Used for paths LibreOffice handles poorly (e.g. DOCX → Markdown).
+pub fn pandoc_convert(
+    input: &str,
+    output_format: &str,
+    output_path: &str,
+    progress: ProgressFn<'_>,
+) -> Result<(), String> {
+    let found = if cfg!(windows) {
+        Command::new("where").arg("pandoc").output().ok()
+    } else {
+        Command::new("which").arg("pandoc").output().ok()
+    };
+    if !found.map(|o| o.status.success()).unwrap_or(false) {
+        return Err("DOCX → Markdown conversion requires pandoc (https://pandoc.org)".to_string());
+    }
+
+    progress(ProgressEvent::Phase("Converting via pandoc…".to_string()));
+
+    let output = Command::new("pandoc")
+        .args([input, "-t", output_format, "-o", output_path])
+        .output()
+        .map_err(|e| format!("Failed to spawn pandoc: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "pandoc failed:\n{}",
+            crate::truncate_stderr(&stderr)
+        ));
+    }
+
+    progress(ProgressEvent::Done);
+    Ok(())
+}
+
+// ── macOS textutil helper (Pages → HTML) ─────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn textutil_convert(
+    input: &str,
+    output_path: &str,
+    progress: ProgressFn<'_>,
+) -> Result<(), String> {
+    progress(ProgressEvent::Phase("Converting via textutil…".to_string()));
+    let output = Command::new("textutil")
+        .args(["-convert", "html", "-output", output_path, input])
+        .output()
+        .map_err(|e| format!("Failed to spawn textutil: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("textutil failed:\n{}", stderr));
+    }
+    progress(ProgressEvent::Done);
+    Ok(())
+}
+
+// ── Main conversion dispatcher ───────────────────────────────────────────────
 
 /// Pure conversion. Used directly by tests and any future non-Tauri caller.
 /// `cancelled` is accepted for signature parity with other modules but is
@@ -17,12 +195,100 @@ pub fn convert(
 ) -> Result<(), String> {
     progress(ProgressEvent::Started);
 
-    let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
     let in_ext = Path::new(input_path)
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let out_fmt = opts.output_format.to_lowercase();
+
+    // ── LibreOffice-backed office formats ─────────────────────────────────────
+
+    // Word processing (DOCX → MD handled by pandoc; everything else via LO)
+    if matches!(in_ext.as_str(), "docx" | "doc" | "rtf" | "odt") {
+        if out_fmt == "md" {
+            return pandoc_convert(input_path, "markdown", output_path, progress);
+        }
+        // Map output format to LibreOffice's --convert-to token
+        let lo_fmt = match out_fmt.as_str() {
+            "pdf" => "pdf",
+            "html" => "html",
+            "txt" => "txt",
+            "odt" => "odt",
+            "docx" => "docx",
+            "rtf" => "rtf",
+            other => return Err(format!("Unsupported Word output format: {other}")),
+        };
+        return libreoffice_convert(input_path, lo_fmt, output_path, progress);
+    }
+
+    // Spreadsheets
+    if matches!(in_ext.as_str(), "xlsx" | "xls" | "ods") {
+        let lo_fmt = match out_fmt.as_str() {
+            "pdf" => "pdf",
+            "ods" => "ods",
+            "xlsx" => "xlsx",
+            "csv" => "csv",
+            other => return Err(format!("Unsupported spreadsheet output format: {other}")),
+        };
+        return libreoffice_convert(input_path, lo_fmt, output_path, progress);
+    }
+
+    // Presentations
+    if matches!(in_ext.as_str(), "pptx" | "ppt" | "odp") {
+        let lo_fmt = match out_fmt.as_str() {
+            "pdf" => "pdf",
+            "odp" => "odp",
+            "pptx" => "pptx",
+            "png" => "png",
+            other => return Err(format!("Unsupported presentation output format: {other}")),
+        };
+        return libreoffice_convert(input_path, lo_fmt, output_path, progress);
+    }
+
+    // Apple iWork — Pages
+    if in_ext == "pages" {
+        #[cfg(target_os = "macos")]
+        if out_fmt == "html" {
+            return textutil_convert(input_path, output_path, progress);
+        }
+        // For other output formats (or non-macOS), fall through to LibreOffice
+        let lo_fmt = match out_fmt.as_str() {
+            "pdf" => "pdf",
+            "html" => "html",
+            "txt" => "txt",
+            "docx" => "docx",
+            other => return Err(format!("Unsupported Pages output format: {other}")),
+        };
+        return libreoffice_convert(input_path, lo_fmt, output_path, progress);
+    }
+
+    // Apple iWork — Numbers
+    if in_ext == "numbers" {
+        let lo_fmt = match out_fmt.as_str() {
+            "pdf" => "pdf",
+            "xlsx" => "xlsx",
+            "csv" => "csv",
+            "ods" => "ods",
+            other => return Err(format!("Unsupported Numbers output format: {other}")),
+        };
+        return libreoffice_convert(input_path, lo_fmt, output_path, progress);
+    }
+
+    // Apple iWork — Keynote
+    if in_ext == "key" {
+        let lo_fmt = match out_fmt.as_str() {
+            "pdf" => "pdf",
+            "pptx" => "pptx",
+            "odp" => "odp",
+            "png" => "png",
+            other => return Err(format!("Unsupported Keynote output format: {other}")),
+        };
+        return libreoffice_convert(input_path, lo_fmt, output_path, progress);
+    }
+
+    // ── Pure-Rust text conversions ────────────────────────────────────────────
+
+    let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
 
     let output = match (in_ext.as_str(), out_fmt.as_str()) {
         ("md" | "markdown", "html") => {

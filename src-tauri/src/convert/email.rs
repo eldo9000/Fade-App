@@ -2,15 +2,107 @@
 //!
 //! An mbox file is a concatenation of RFC2822 messages separated by
 //! lines starting with `From ` (space, no colon). This module handles
-//! eml ↔ mbox. `.msg` (Outlook binary) is deferred and returns a clear
-//! error if requested as output.
+//! eml ↔ mbox. `.msg` (Outlook binary) is converted via `msgconvert`
+//! (libemail-outlook-message-perl) or `pst-convert` (libpst).
 
 use crate::convert::progress::{ProgressEvent, ProgressFn};
 use crate::ConvertOptions;
 use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::Window;
+
+// ── MSG conversion helper ─────────────────────────────────────────────────────
+
+/// Convert an Outlook `.msg` file to EML via `msgconvert` or `pst-convert`.
+///
+/// Tool preference: `msgconvert` first (libemail-outlook-message-perl),
+/// then `pst-convert` from libpst. If neither is found returns a clear error.
+pub fn convert_msg(input: &str, output_path: &str, progress: ProgressFn<'_>) -> Result<(), String> {
+    // Detect available tool
+    let tool = {
+        let has_msgconvert = Command::new("which")
+            .arg("msgconvert")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        let has_pst_convert = Command::new("which")
+            .arg("pst-convert")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if has_msgconvert {
+            "msgconvert"
+        } else if has_pst_convert {
+            "pst-convert"
+        } else {
+            return Err(
+                "MSG conversion requires msgconvert or libpst.\n\
+                Install with:\n  \
+                  macOS/Linux: brew install libpst  (provides pst-convert)\n  \
+                  Debian/Ubuntu: sudo apt install libemail-outlook-message-perl  (provides msgconvert)\n  \
+                  or: sudo apt install libpst-dev".to_string()
+            );
+        }
+    };
+
+    progress(ProgressEvent::Phase(format!("Converting MSG via {tool}…")));
+
+    let result = if tool == "msgconvert" {
+        // msgconvert writes to stdout; capture and write to output_path
+        Command::new("msgconvert")
+            .args(["--outfile", output_path, input])
+            .output()
+    } else {
+        // pst-convert: `pst-convert -o <outdir> <input>` — writes to directory
+        // We pass the output path parent as the outdir and rename afterwards.
+        let out_dir = Path::new(output_path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_string_lossy()
+            .to_string();
+        Command::new("pst-convert")
+            .args(["-o", &out_dir, input])
+            .output()
+    };
+
+    let output = result.map_err(|e| format!("Failed to spawn {tool}: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "{tool} failed:\n{}",
+            crate::truncate_stderr(&stderr)
+        ));
+    }
+
+    // For pst-convert we need to locate the output file and move it
+    if tool == "pst-convert" {
+        let out_dir = Path::new(output_path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let input_stem = Path::new(input)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        // pst-convert typically produces <stem>.eml or similar; try stem.eml
+        let candidate = out_dir.join(format!("{input_stem}.eml"));
+        if candidate.exists() && candidate != Path::new(output_path) {
+            std::fs::rename(&candidate, output_path)
+                .map_err(|e| format!("Could not move pst-convert output: {e}"))?;
+        } else if !Path::new(output_path).exists() {
+            return Err(format!(
+                "pst-convert ran but output file not found at expected path: {}",
+                candidate.display()
+            ));
+        }
+    }
+
+    progress(ProgressEvent::Done);
+    Ok(())
+}
 
 /// Pure conversion. Used directly by tests and any future non-Tauri caller.
 /// The `cancelled` flag is accepted for signature parity with other modules
@@ -33,6 +125,11 @@ pub fn convert(
 
     if out_fmt == "msg" {
         return Err("MSG output is not supported — try EML or MBOX.".to_string());
+    }
+
+    // MSG input — delegate to the shell-out helper
+    if in_ext == "msg" {
+        return convert_msg(input_path, output_path, progress);
     }
 
     let raw = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;

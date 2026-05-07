@@ -650,7 +650,13 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" | "vorbis"
         | "eac3" | "ddp" | "truehd" => "audio",
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
-        "md" | "markdown" | "html" | "htm" | "txt" => "document",
+        "md" | "markdown" | "html" | "htm" | "txt" | "pdf"
+        // Office formats — routed through LibreOffice headless (see convert/document.rs)
+        | "docx" | "doc" | "rtf" | "odt"          // Word processing
+        | "xlsx" | "xls" | "ods"                   // Spreadsheets
+        | "pptx" | "ppt" | "odp"                   // Presentations
+        | "pages" | "numbers" | "key"              // Apple iWork
+        => "document",
         "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" | "iso" | "dmg" | "cbz"
         | "cbr" => "archive",
         // 3D models — routed through assimp CLI. See args/model.rs for
@@ -674,8 +680,8 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         // OUTPUT via the input-extension branch isn't needed because pdf
         // output still targets the document pipeline.
         "epub" | "mobi" | "azw3" | "fb2" | "lit" => "ebook",
-        // Email — pure-Rust eml ↔ mbox. `msg` is deferred.
-        "eml" | "mbox" => "email",
+        // Email — pure-Rust eml ↔ mbox. msg via msgconvert/pst-convert.
+        "eml" | "mbox" | "msg" => "email",
         // Tracker / MIDI — routed by INPUT extension (see convert_file), but
         // classify_ext is also queried for UI compat matrices. `.sf2` is a
         // soundfont container, not convertible — see convert/tracker.rs.
