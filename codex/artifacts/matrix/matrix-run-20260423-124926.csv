@@ -1,5 +1,0 @@
-case_id,mission,lane,severity,status,exit_code,report_exists,expected_report,log_path
-"M-A-001","MP4 basic conversion obedience","prompt","P1","FAIL","1","yes","codex/reports/mission-a-latest.md","/Users/eldo/Downloads/Github/Fade-App/codex/logs/matrix-M-A-001-20260423-124926.log"
-"M-B-001","MP4 codec stress","prompt","P1","FAIL","1","yes","codex/reports/mission-b-latest.md","/Users/eldo/Downloads/Github/Fade-App/codex/logs/matrix-M-B-001-20260423-124926.log"
-"M-C-001","MP4 resolution/fps persistence","prompt","P1","FAIL","1","yes","codex/reports/mission-c-latest.md","/Users/eldo/Downloads/Github/Fade-App/codex/logs/matrix-M-C-001-20260423-124926.log"
-"M-D-001","Error-surface quality","prompt","P1","PASS","0","yes","codex/reports/mission-d-latest.md","/Users/eldo/Downloads/Github/Fade-App/codex/logs/matrix-M-D-001-20260423-124926.log"

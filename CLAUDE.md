@@ -46,16 +46,16 @@ On macOS: `brew install ffmpeg imagemagick` before running.
 
 ## Key Docs
 
-- `SPECS.md` — full product specification
-- `ARCHITECTURE.md` — technical architecture decisions
-- `INVESTIGATION-LOG.md` — active debugging arc (append-only)
-- `KNOWN-BUG-CLASSES.md` — permanent known failure patterns
+- `docs/SPECS.md` — full product specification
+- `docs/ARCHITECTURE.md` — technical architecture decisions
+- `docs/INVESTIGATION-LOG.md` — active debugging arc (append-only)
+- `docs/KNOWN-BUG-CLASSES.md` — permanent known failure patterns
 
 ---
 
 ## QC rules — enforced, no exceptions
 
-**CI is the only truth.** A gate may not be marked PASSES in `SESSION-STATUS.md` until a CI run confirms it. Local results are hypotheses. CI results are facts.
+**CI is the only truth.** A gate may not be marked PASSES in `docs/SESSION-STATUS.md` until a CI run confirms it. Local results are hypotheses. CI results are facts.
 
 **Read the pipeline before inserting into it.** Before adding code to an existing pipeline, read enough surrounding code to state what runs before this step, what runs after it, and what state it depends on.
 
@@ -65,7 +65,7 @@ On macOS: `brew install ffmpeg imagemagick` before running.
 
 ## Known Patterns & Gotchas
 
-**Append immediately when you discover something non-obvious** — don't wait until session end. If interrupted, the finding must already be here. This section is permanent knowledge; it never gets archived. For temporary debugging findings, use `INVESTIGATION-LOG.md` instead.
+**Append immediately when you discover something non-obvious** — don't wait until session end. If interrupted, the finding must already be here. This section is permanent knowledge; it never gets archived. For temporary debugging findings, use `docs/INVESTIGATION-LOG.md` instead.
 
 **FFmpeg and ImageMagick must be in PATH — Tauri does not bundle them.** On macOS dev, set PATH explicitly in the shell that runs `tauri dev`. A missing binary produces a cryptic "command not found" from inside the Rust process, not a Tauri error.
 
