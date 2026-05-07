@@ -8,17 +8,35 @@ see [`RELEASE.md`](./RELEASE.md) instead.
 
 ## Requirements
 
-- **macOS 12 (Monterey) or newer**
-- **Apple Silicon** (M1 / M2 / M3 / M4). Intel Macs aren't supported yet.
-- **ffmpeg** and **imagemagick** installed on your system. Fade calls out
-  to these for media conversion. The easiest way is [Homebrew](https://brew.sh):
+- **macOS 13 (Ventura) or newer**
+- **Apple Silicon or Intel** (x64 and aarch64 both supported)
+- **ffmpeg** and **imagemagick** — required for most conversions:
 
   ```sh
   brew install ffmpeg imagemagick
   ```
 
-  If you don't have Homebrew, install it first from the link above, then
-  run the command.
+---
+
+## Optional tools
+
+Fade detects these at runtime. If they're missing, the relevant feature shows a clear error — nothing breaks.
+
+| Tool | Feature | Install |
+|------|---------|---------|
+| `libreoffice` | Office doc conversion (DOCX, XLSX, PPTX, iWork) | [libreoffice.org](https://www.libreoffice.org) or `brew install --cask libreoffice` |
+| `blender` | 3D format conversion (USD, USDZ, Alembic, .blend) | [blender.org](https://www.blender.org) — requires Blender 3.0+; USDZ requires 3.5+ |
+| `freecad` | CAD format conversion (STEP, IGES) | [freecad.org](https://www.freecad.org) |
+| `HandBrakeCLI` | DVD / Blu-ray rip | [handbrake.fr](https://handbrake.fr/downloads2.php) |
+| `dvdauthor` + `mkisofs` | DVD authoring | `brew install dvdauthor dvdauthor cdrtools` |
+| `dcraw` | Camera RAW input (CR2, NEF, ARW, DNG, etc.) | `brew install dcraw` |
+| `cjxl` / `djxl` | JPEG XL conversion | `brew install jpeg-xl` |
+| Python + `demucs` | Audio stem separation | `pip install demucs` |
+| Python + `openai-whisper` | Speech transcription | `pip install openai-whisper` |
+| Python + `argostranslate` | Subtitle/text translation | `pip install argostranslate` |
+| Python + `ddcolor` | Video/image colorization | `pip install ddcolor` |
+| Python + `rembg` | Background removal | `pip install rembg` |
+| Python + `robust-video-matting` | Neural video matting | `pip install robust-video-matting` |
 
 ---
 

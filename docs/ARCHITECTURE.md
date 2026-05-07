@@ -17,18 +17,25 @@ args/               pure arg builders — no I/O, trivially testable
 └── audio.rs            build_ffmpeg_audio_args (incl. DSP filter chain)
 
 convert/            per-media-type conversion pipelines (spawn + progress)
-├── image.rs            ImageMagick driver
-├── video.rs            ffmpeg video driver
-├── audio.rs            ffmpeg audio driver
+├── image.rs            ImageMagick driver; GIF/ICO/SVG/HEIC/HEIF/JXL/PSD/EXR/HDR/DDS/XCF/RAW live;
+│                       RAW decode via dcraw→TIFF→IM; JXL via cjxl/djxl; EXR/HEIC dep-detected
+├── video.rs            ffmpeg video driver; seq_png/seq_jpg/seq_tiff sequence output
+├── audio.rs            ffmpeg audio driver; AIFF/Vorbis/EAC3/TrueHD wired
 ├── data.rs             pure-Rust JSON/CSV/YAML/TOML/XML (parse_input + write_output)
-├── document.rs         Markdown/HTML/text (strip_md, html_to_text, html_to_md)
-├── archive.rs          7z extract + repack (parse_7z_percent)
+├── document.rs         LibreOffice headless pipeline (find_soffice, libreoffice_convert);
+│                       DOCX/DOC/RTF/ODT/XLSX/XLS/ODS/PPTX/PPT/ODP/Pages/Numbers/Keynote/MSG;
+│                       pandoc for Markdown paths; textutil macOS fallback for Pages
+├── archive.rs          7z extract + repack; ISO extract (7z); DMG extract (hdiutil, macOS);
+│                       CBZ create (zip crate); parse_7z_percent
 ├── subtitle.rs         ffmpeg subtitle convert
 ├── font.rs             fontforge/ffmpeg font convert
 ├── ebook.rs            Calibre ebook convert
-├── model.rs            Assimp 3D model convert
+├── model.rs            Assimp 3D model convert; STEP/IGES via FreeCAD CLI
+├── model_blender.rs    Blender Python script driver; USD/USDZ/Alembic/.blend I/O;
+│                       USDZ requires Blender ≥ 3.5 (version guard in Python)
 ├── notebook.rs         Jupyter notebook convert
 ├── timeline.rs         DaVinci/Premiere timeline convert
+├── email.rs            EML/MBOX pure-Rust; MSG via msgconvert/pst-convert
 └── tracker.rs          OpenMPT tracker convert
 
 operations/         single-purpose non-converting filters (run via run_operation)
@@ -47,10 +54,18 @@ operations/         single-purpose non-converting filters (run via run_operation
 ├── frame_ops.rs        frame-level operations (rotate, flip, etc.)
 ├── metadata_strip.rs   strip metadata tags
 ├── silence_remove.rs   remove silence segments
-├── chroma_key.rs       chroma-key compositing
+├── chroma_key.rs       chroma-key compositing; run_corridor_key stub
 ├── video_filters.rs    general video filter chain
 ├── audio_filters.rs    general audio filter chain
 ├── audio_offset.rs     audio delay offset
+├── video_inserts.rs    replace video segment with insert clip (complex FFmpeg filter)
+├── subtitle_ops.rs     run_burn_subtitles, run_embed_subtitles, run_shift_subtitles (pure Rust)
+├── dvd_rip.rs          DVD/Blu-ray rip via HandBrakeCLI; run_dvd_rip + run_bluray_rip
+├── dvd_author.rs       DVD authoring via dvdauthor+mkisofs; create_dvd_iso pipeline
+├── ai_tools.rs         run_audio_separation (demucs), run_transcription (whisper),
+│                       run_translation (argostranslate), run_colorize (ddcolor),
+│                       run_bg_remove (rembg), run_neural_matte (RVM);
+│                       all gate-check for Python tool at runtime
 ├── analysis/           analysis-only commands (read-only, return JSON)
 │   ├── mod.rs
 │   ├── audio_norm.rs   EBU/Peak/ReplayGain loudness normalise
@@ -59,7 +74,7 @@ operations/         single-purpose non-converting filters (run via run_operation
 │   ├── black_detect.rs black-frame detection
 │   ├── vmaf.rs         VMAF quality scoring
 │   └── framemd5.rs     per-frame MD5 checksums
-└── subtitling/         subtitle-specific operations
+└── subtitling/         subtitle analysis (read-only)
     ├── mod.rs
     ├── diff.rs         subtitle diff
     ├── lint.rs         subtitle lint
