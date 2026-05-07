@@ -1534,14 +1534,14 @@
     { label: 'Video', cat: 'video', fmts: [
       { id: 'mp4', live: true }, { id: 'mov', live: true }, { id: 'webm', live: true }, { id: 'mkv', live: true }, { id: 'avi', live: true }, { id: 'gif', live: true },
       { id: 'm4v', live: true }, { id: 'flv', live: true }, { id: 'mpg', live: true },
-      { id: 'ogv', building: true }, { id: 'ts', live: true }, { id: '3gp', live: true },
+      { id: 'ogv', live: true }, { id: 'ts', live: true }, { id: '3gp', live: true },
       { id: 'divx', live: true }, { id: 'rmvb', live: true }, { id: 'asf', live: true },
       { id: 'wmv', label: 'WMV', live: true },
     ]},
     { label: 'Image Sequence', cat: 'seq', fmts: [
-      { id: 'seq_png',  label: 'PNG',  cat: 'video', building: true },
-      { id: 'seq_jpg',  label: 'JPEG', cat: 'video', building: true },
-      { id: 'seq_tiff', label: 'TIFF', cat: 'video', building: true },
+      { id: 'seq_png',  label: 'PNG',  cat: 'video', live: true },
+      { id: 'seq_jpg',  label: 'JPEG', cat: 'video', live: true },
+      { id: 'seq_tiff', label: 'TIFF', cat: 'video', live: true },
     ]},
     // ── Codecs: quick-picks that set both the common container AND codec.
     // Clicking a codec preset drops you onto the natural container for that
@@ -1561,11 +1561,8 @@
       { id: 'codec-ffv1',      label: 'FFV1',          ext: 'mkv',  codec: 'ffv1',       live: true },
       { id: 'codec-xdcam422',  label: 'XDCAM HD422',   ext: 'mov',  codec: 'xdcam422',  live: true },
       { id: 'codec-xdcam35',   label: 'XDCAM HD35',    ext: 'mov',  codec: 'xdcam35',   live: true },
-      { id: 'codec-avcintra',  label: 'AVC-Intra',     ext: 'mov',  codec: 'h264',       todo: true },
-      { id: 'codec-xavc',      label: 'XAVC',          ext: 'mp4',  codec: 'h264',       todo: true },
-      { id: 'codec-xavclgop',  label: 'XAVC Long GOP', ext: 'mp4',  codec: 'h264',       todo: true },
       { id: 'codec-hap',       label: 'HAP',           ext: 'mov',  codec: 'hap',        building: true },
-      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv',  codec: 'theora',     building: true },
+      { id: 'codec-theora',    label: 'Theora',        ext: 'ogv',  codec: 'theora',     live: true },
       { id: 'codec-mpeg2',     label: 'MPEG-2',        ext: 'mpg',  codec: 'mpeg2video', live: true },
       { id: 'codec-mjpeg',     label: 'MJPEG',         ext: 'mov',  codec: 'mjpeg',      live: true },
       { id: 'codec-xvid',      label: 'Xvid',          ext: 'avi',  codec: 'mpeg4',      live: true },

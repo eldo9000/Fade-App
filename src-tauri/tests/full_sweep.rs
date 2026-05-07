@@ -221,6 +221,40 @@ fn run_video_cases(dir: &Path, fixture: &Path, cases: Vec<Case>) -> Vec<Outcome>
         .collect()
 }
 
+/// Runner for image-sequence cases.  The output is a directory; we create it
+/// before calling ffmpeg, then check that at least one frame file landed inside.
+fn run_sequence_cases(dir: &Path, fixture: &Path, cases: Vec<Case>) -> Vec<Outcome> {
+    cases
+        .into_iter()
+        .map(|c| {
+            let seq_dir = dir.join(&c.name);
+            std::fs::create_dir_all(&seq_dir).expect("create seq dir");
+            let args = build_ffmpeg_video_args(
+                fixture.to_str().expect("fixture path"),
+                seq_dir.to_str().expect("seq dir path"),
+                &c.opts,
+            );
+            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let err = run_cmd("ffmpeg", &arg_refs).err();
+            // Outcome::passed() checks output.exists() + len() > 0.  For a dir
+            // that is always true if it was created, which would hide an empty
+            // sequence.  Instead report the first frame as the output so the
+            // presence + size check is meaningful.
+            let img_ext = match c.opts.output_format.as_str() {
+                "seq_jpg" => "jpg",
+                "seq_tiff" => "tiff",
+                _ => "png",
+            };
+            let first_frame = seq_dir.join(format!("frame_0001.{img_ext}"));
+            Outcome {
+                name: c.name,
+                output: first_frame,
+                error: err,
+            }
+        })
+        .collect()
+}
+
 // ── Image cases ──────────────────────────────────────────────────────────────
 
 fn jpeg_cases() -> Vec<Case> {
@@ -1199,6 +1233,90 @@ fn gif_cases() -> Vec<Case> {
         }
     }
     v
+}
+
+// ── Image-sequence cases ─────────────────────────────────────────────────────
+
+fn seq_png_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for fps in ["original", "1", "5", "10", "24", "30"] {
+        v.push(Case {
+            name: format!("seq_png_fps{fps}"),
+            ext: "seq_png",
+            opts: ConvertOptions {
+                output_format: "seq_png".into(),
+                frame_rate: Some(fps.into()),
+                ..Default::default()
+            },
+        });
+    }
+    v
+}
+
+fn seq_jpg_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for (fps, crf) in [("original", 23u32), ("10", 0), ("10", 51)] {
+        v.push(Case {
+            name: format!("seq_jpg_fps{fps}_crf{crf}"),
+            ext: "seq_jpg",
+            opts: ConvertOptions {
+                output_format: "seq_jpg".into(),
+                frame_rate: Some(fps.into()),
+                crf: Some(crf),
+                ..Default::default()
+            },
+        });
+    }
+    v
+}
+
+fn seq_tiff_cases() -> Vec<Case> {
+    vec![Case {
+        name: "seq_tiff_default".into(),
+        ext: "seq_tiff",
+        opts: ConvertOptions {
+            output_format: "seq_tiff".into(),
+            ..Default::default()
+        },
+    }]
+}
+
+#[test]
+#[ignore]
+fn sequence_full() {
+    // Sweep image-sequence output formats (PNG / JPEG / TIFF frames).
+    // Run with:
+    //   cargo test --manifest-path src-tauri/Cargo.toml --test full_sweep \
+    //     -- --include-ignored sequence_full --nocapture
+    let dir = output_root("sequence");
+    let fixture = dir.join("_fixture.mp4");
+    // Short 5-frame fixture at 5 fps so every case produces exactly 5 frames.
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:size=64x64:rate=5",
+            "-t",
+            "1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            fixture.to_str().expect("fixture path"),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("ffmpeg spawn");
+    assert!(status.success(), "failed to create sequence fixture");
+
+    let mut outcomes = Vec::new();
+    outcomes.extend(run_sequence_cases(&dir, &fixture, seq_png_cases()));
+    outcomes.extend(run_sequence_cases(&dir, &fixture, seq_jpg_cases()));
+    outcomes.extend(run_sequence_cases(&dir, &fixture, seq_tiff_cases()));
+    report("sequence", outcomes);
 }
 
 #[test]
