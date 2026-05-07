@@ -97,3 +97,5 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** Worker didn't run Clippy; function needs `#[allow(clippy::too_many_arguments)]` matching existing operations pattern
 - **Next:** `src-tauri/src/operations/dvd_rip.rs:72` — add allow attribute
+
+## Fail arc closed — 2026-05-07 — 2 entries — green CI 25514869150
