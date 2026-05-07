@@ -7,6 +7,9 @@ Invoked as:
 
 For non-.blend inputs the positional .blend arg is omitted; Blender starts
 with an empty scene and the script imports from --input.
+
+For .blend output the scene is saved with bpy.ops.wm.save_as_mainfile.
+For USDZ output Blender >= 3.5 is required.
 """
 
 import sys
@@ -28,6 +31,16 @@ def _parse_args():
 
 def _ext(path):
     return os.path.splitext(path)[1].lstrip(".").lower()
+
+
+def _blender_version():
+    """Return (major, minor) of the running Blender, or (0, 0) on failure."""
+    try:
+        import bpy  # noqa: F401
+        ver = bpy.app.version  # tuple like (4, 1, 0)
+        return (ver[0], ver[1])
+    except Exception:
+        return (0, 0)
 
 
 def _import(path, in_ext):
@@ -96,7 +109,20 @@ def _import(path, in_ext):
 def _export(path, out_ext):
     import bpy  # noqa: F401
 
-    if out_ext in ("usd", "usdc", "usda", "usdz"):
+    if out_ext == "blend":
+        result = bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+        if "FINISHED" not in result:
+            raise RuntimeError(f"Blender save_as_mainfile failed: {result}")
+
+    elif out_ext in ("usd", "usdc", "usda", "usdz"):
+        if out_ext == "usdz":
+            major, minor = _blender_version()
+            if (major, minor) < (3, 5):
+                raise RuntimeError(
+                    f"USDZ export requires Blender 3.5 or later "
+                    f"(running {major}.{minor}). "
+                    "Download from https://blender.org"
+                )
         result = bpy.ops.wm.usd_export(
             filepath=path,
             selected_objects_only=False,

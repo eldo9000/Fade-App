@@ -131,9 +131,12 @@ fn refactored_model_sweep() {
     }
 
     // ── blender path ──
-    let blender_targets: &[&str] = &["usd", "usdz", "abc", "blend"];
+    // OBJ → USD, USDZ, ABC, BLEND; BLEND → OBJ (blend input); ABC → OBJ
     let blender_present = tool_available("blender");
-    for ext in blender_targets {
+
+    // OBJ → Blender-native formats
+    let blender_out_targets: &[&str] = &["usd", "usdz", "abc", "blend"];
+    for ext in blender_out_targets {
         let label = format!("cube_to_{ext}");
         if !blender_present {
             rows.push(Row::Skip(label, "blender not in PATH".to_string()));
@@ -141,6 +144,101 @@ fn refactored_model_sweep() {
         }
         let out = dir.join(format!("cube_to_{ext}.{ext}"));
         rows.push(convert_one(&fixture, &out, ext, &label));
+    }
+
+    // ABC → OBJ (Alembic input via Blender)
+    {
+        let label = "abc_to_obj";
+        if !blender_present {
+            rows.push(Row::Skip(
+                label.to_string(),
+                "blender not in PATH".to_string(),
+            ));
+        } else {
+            // Produce an ABC fixture from the OBJ we already made (if present).
+            let abc_fixture = dir.join("cube_to_abc.abc");
+            if abc_fixture.exists() {
+                let out = dir.join("abc_to_obj.obj");
+                let opts = ConvertOptions {
+                    output_format: "obj".to_string(),
+                    ..ConvertOptions::default()
+                };
+                let mut progress = noop_progress();
+                let processes = Arc::new(Mutex::new(HashMap::new()));
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let result = model::convert(
+                    abc_fixture.to_str().unwrap(),
+                    out.to_str().unwrap(),
+                    &opts,
+                    &mut progress,
+                    "test-model-abc_to_obj",
+                    processes,
+                    &cancelled,
+                );
+                rows.push(match result {
+                    ConvertResult::Done => Row::Pass(label.to_string()),
+                    ConvertResult::Error(msg) => Row::Fail(label.to_string(), msg),
+                    other => Row::Fail(label.to_string(), format!("unexpected: {other:?}")),
+                });
+            } else {
+                rows.push(Row::Skip(
+                    label.to_string(),
+                    "abc fixture not produced (cube_to_abc failed)".to_string(),
+                ));
+            }
+        }
+    }
+
+    // ── FreeCAD path (STEP/IGES) ──
+    // Try `FreeCAD --version` then `freecad --version`.
+    let freecad_present = tool_available("FreeCAD") || tool_available("freecad");
+
+    // OBJ is not a valid CAD input — use STEP↔IGES cross-conversion.
+    // We write a minimal valid ASCII STEP file as a fixture.
+    const MINIMAL_STEP: &str = "ISO-10303-21;\n\
+HEADER;\nFILE_DESCRIPTION(('Fade test'),'2;1');\n\
+FILE_NAME('test.stp','2024-01-01T00:00:00',(''),(''),'','','');\n\
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n\
+ENDSEC;\nDATA;\n#1=PRODUCT('part','part','',(#2));\n\
+#2=PRODUCT_CONTEXT('',#3,'mechanical');\n\
+#3=APPLICATION_CONTEXT('automotive design');\n\
+ENDSEC;\nEND-ISO-10303-21;\n";
+
+    let step_fixture = dir.join("_fixture.stp");
+    std::fs::write(&step_fixture, MINIMAL_STEP).expect("write step fixture");
+
+    // STP → IGES
+    {
+        let label = "stp_to_iges";
+        if !freecad_present {
+            rows.push(Row::Skip(
+                label.to_string(),
+                "FreeCAD not in PATH (freecad.org)".to_string(),
+            ));
+        } else {
+            let out = dir.join("stp_to_iges.iges");
+            rows.push(convert_one(&step_fixture, &out, "iges", label));
+        }
+    }
+
+    // IGES → STP  (round-trip: only if STP→IGES above produced output)
+    {
+        let label = "iges_to_stp";
+        let iges_fixture = dir.join("stp_to_iges.iges");
+        if !freecad_present {
+            rows.push(Row::Skip(
+                label.to_string(),
+                "FreeCAD not in PATH (freecad.org)".to_string(),
+            ));
+        } else if iges_fixture.exists() {
+            let out = dir.join("iges_to_stp.stp");
+            rows.push(convert_one(&iges_fixture, &out, "stp", label));
+        } else {
+            rows.push(Row::Skip(
+                label.to_string(),
+                "iges fixture not produced (stp_to_iges failed)".to_string(),
+            ));
+        }
     }
 
     // ── Report ──

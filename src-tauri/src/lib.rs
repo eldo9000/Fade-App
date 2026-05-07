@@ -659,9 +659,12 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         => "document",
         "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" | "iso" | "dmg" | "cbz"
         | "cbr" => "archive",
-        // 3D models — routed through assimp CLI. See args/model.rs for
-        // the full extension→assimp-format-id mapping.
-        "obj" | "stl" | "ply" | "gltf" | "glb" | "dae" | "fbx" | "3ds" | "x3d" => "model",
+        // 3D models — routed through assimp CLI. Blender-native formats
+        // (usd/usdz/abc/blend) and CAD formats (step/iges) are also "model";
+        // the dispatcher in convert/model.rs handles the sub-routing.
+        "obj" | "stl" | "ply" | "gltf" | "glb" | "dae" | "fbx" | "3ds" | "x3d"
+        | "usd" | "usdc" | "usda" | "usdz" | "abc" | "blend"
+        | "stp" | "step" | "igs" | "iges" => "model",
         // Font containers — routed through fonttools (Python). See
         // convert/font.rs for the ttf/otf/woff/woff2 matrix.
         "ttf" | "otf" | "woff" | "woff2" => "font",

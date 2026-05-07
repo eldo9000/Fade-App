@@ -1588,13 +1588,13 @@
       { id: '3ds', live: true }, { id: 'x3d', live: true },
       // FBX write is ASCII-only via assimp (binary FBX needs Autodesk SDK).
       { id: 'fbx', label: 'FBX (ASCII)', live: true },
-      // Pro animation / CAD — require managed installs (OpenUSD, Blender).
-      { id: 'usd',   label: 'USD',       building: true },
-      { id: 'usdz',  label: 'USDZ',      building: true },
-      { id: 'abc',   label: 'Alembic',   building: true },
-      { id: 'blend', label: 'Blender',   building: true },
-      { id: 'step',  label: 'STEP',      todo: true, preview: true },
-      { id: 'iges',  label: 'IGES',      todo: true, preview: true },
+      // Pro animation / CAD — require managed installs (Blender, FreeCAD).
+      { id: 'usd',   label: 'USD',       live: true },
+      { id: 'usdz',  label: 'USDZ',      live: true },
+      { id: 'abc',   label: 'Alembic',   live: true },
+      { id: 'blend', label: 'Blender',   live: true },
+      { id: 'step',  label: 'STEP',      live: true },
+      { id: 'iges',  label: 'IGES',      live: true },
     ]},
     // Intact Video Operations — mechanical operations that stream-copy the
     // video track (no re-encode). Fast, lossless, metadata/container-level.
