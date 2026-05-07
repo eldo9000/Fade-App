@@ -24,16 +24,18 @@ Beta punch list. Edit in place. Nothing here is dated or phased — just shrink 
 
 ---
 
-## Needs UI wiring (backend implemented, no frontend page yet)
+## Needs UI wiring (backend done — frontend pages not yet connected)
 
-- [ ] **Office conversion UI** — LibreOffice pipeline and DOCX/XLSX/PPTX/iWork/MSG converters are implemented in `convert/document.rs`; need a dedicated options panel in the frontend.
-- [ ] **AI tools UI** — demucs, whisper, argostranslate, ddcolor, rembg backends exist in `operations/ai_tools.rs`; the scaffold pages in the UI need connecting to the new Tauri commands.
-- [ ] **DVD/Blu-ray rip UI** — `operations/dvd_rip.rs` commands exist; need input picker (drive/ISO), output format, and quality preset selector in the frontend.
-- [ ] **DVD authoring UI** — `operations/dvd_author.rs` exists; need input file list, output ISO path, chapter marker controls.
-- [ ] **Video inserts UI** — `operations/video_inserts.rs` exists; need timeline in/out markers + insert clip picker in OperationsPanel.
-- [ ] **Subtitle generate/burn/embed/shift UI** — `operations/subtitle_ops.rs` exists; connect to the subtitling page.
-- [ ] **Neural matte UI** — `run_neural_matte` command exists; need input/output format controls.
-- [ ] **3D format options** — USD/USDZ/Alembic/.blend/STEP/IGES now live; verify format picker reflects this and options panel exposes relevant controls.
+- [x] **Office conversion** — `convert/document.rs` LibreOffice pipeline implemented
+- [x] **AI tools** — `operations/ai_tools.rs` demucs/whisper/argostranslate/ddcolor/rembg implemented
+- [x] **DVD/Blu-ray rip** — `operations/dvd_rip.rs` HandBrakeCLI commands implemented
+- [x] **DVD authoring** — `operations/dvd_author.rs` dvdauthor+mkisofs pipeline implemented
+- [x] **Video inserts** — `operations/video_inserts.rs` FFmpeg complex-filter approach implemented
+- [x] **Subtitle burn/embed/shift** — `operations/subtitle_ops.rs` all three ops implemented
+- [x] **Neural matte** — `run_neural_matte` RVM command implemented
+- [x] **3D format picker** — USD/USDZ/Alembic/.blend/STEP/IGES live in `App.svelte`
+
+Frontend work still needed for all of the above — dedicated options panels, input pickers, and parameter controls.
 
 ---
 
