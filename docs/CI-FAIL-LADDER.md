@@ -83,3 +83,17 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Verdict:** QUICK (budget: 1 attempt)
 - **Hypothesis:** Worker ran `cargo check` but not `cargo fmt --check`; chained `.args([...]).status()` calls and `format!(...)` macro bodies need reformatting
 - **Next:** `cargo fmt --manifest-path src-tauri/Cargo.toml`
+
+## Fail arc closed — 2026-05-07 — 1 entry — green CI 25512815939
+
+---
+
+## Fail #2 — 2026-05-07 — Clippy: run_handbrake has 8 args (limit 7)
+
+- **Q1 in-last-commit:** yes — `src-tauri/src/operations/dvd_rip.rs` in commit `7bf40ff`
+- **Q2 named-error:** yes — `src/operations/dvd_rip.rs:72:1` `run_handbrake` too_many_arguments (8/7)
+- **Q3 seen-before:** no — first Clippy arg-count failure in this arc
+- **Q4 broken-vs-missing:** broken — function works, violates lint
+- **Verdict:** QUICK (budget: 1 attempt)
+- **Hypothesis:** Worker didn't run Clippy; function needs `#[allow(clippy::too_many_arguments)]` matching existing operations pattern
+- **Next:** `src-tauri/src/operations/dvd_rip.rs:72` — add allow attribute

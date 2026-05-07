@@ -69,6 +69,7 @@ fn parse_hb_percent(line: &str) -> Option<f32> {
 
 /// Run a HandBrakeCLI encode with the given preset. Used by both `run_dvd_rip`
 /// and `run_bluray_rip`; the only difference is the preset string.
+#[allow(clippy::too_many_arguments)]
 fn run_handbrake(
     window: &Window,
     job_id: &str,
