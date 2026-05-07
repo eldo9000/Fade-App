@@ -2385,6 +2385,234 @@ fn run_dvd_author(
     Ok(())
 }
 
+// ── AI tool Tauri commands ────────────────────────────────────────────────────
+
+/// Separate audio sources using Demucs (local, offline).
+///
+/// `model`: `"htdemucs"` (default) or `"htdemucs_ft"`.
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_audio_separation(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output_dir: String,
+    model: Option<String>,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let model_str = model.as_deref().unwrap_or("htdemucs").to_string();
+        let result = operations::ai_tools::run_audio_separation(
+            &window,
+            &job_id,
+            &input,
+            &output_dir,
+            &model_str,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output_dir.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+/// Transcribe audio/video to text using OpenAI Whisper (local, offline).
+///
+/// `model`: tiny / base / small / medium / large.
+/// `output_format`: srt / vtt / txt.
+/// `language`: ISO-639-1 code, or `None` for auto-detect.
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_transcription(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output_dir: String,
+    model: Option<String>,
+    output_format: Option<String>,
+    language: Option<String>,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let model_str = model.as_deref().unwrap_or("base").to_string();
+        let fmt_str = output_format.as_deref().unwrap_or("srt").to_string();
+        let lang_str = language.as_deref().unwrap_or("").to_string();
+        let result = operations::ai_tools::run_transcription(
+            &window,
+            &job_id,
+            &input,
+            &output_dir,
+            &model_str,
+            &fmt_str,
+            &lang_str,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output_dir.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+/// Translate a subtitle or text file using Argos Translate (local, offline).
+///
+/// `src_lang` / `tgt_lang`: ISO-639-1 language codes (e.g. "en", "es").
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_translation(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output: String,
+    src_lang: String,
+    tgt_lang: String,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::ai_tools::run_translation(
+            &window, &job_id, &input, &output, &src_lang, &tgt_lang, processes, cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+/// Colorize a grayscale image or video using DDColor (local, offline).
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+fn run_colorize(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output: String,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::ai_tools::run_colorize(
+            &window, &job_id, &input, &output, processes, cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+/// Remove the background from an image or video using rembg (local, offline).
+///
+/// `model`: `"u2net"` (default), `"u2netp"` (fast), `"isnet-general-use"` (HQ).
+/// Image output is PNG with alpha; video output uses QTRLE for alpha.
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+fn run_bg_remove(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output: String,
+    model: Option<String>,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let model_str = model.as_deref().unwrap_or("u2net").to_string();
+        let result = operations::ai_tools::run_bg_remove(
+            &window, &job_id, &input, &output, &model_str, processes, cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+// ── end AI tool commands ──────────────────────────────────────────────────────
+
 /// Open a URL in the user's default browser.
 /// Used for "download update" on platforms where in-place updates
 /// are disabled (macOS/Windows without codesigning).
@@ -2453,6 +2681,11 @@ pub fn run() {
             operations::subtitling::lint::lint_subtitle,
             operations::subtitling::diff::diff_subtitle,
             operations::chroma_key::chroma_key_preview,
+            run_audio_separation,
+            run_transcription,
+            run_translation,
+            run_colorize,
+            run_bg_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");

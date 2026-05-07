@@ -4,6 +4,7 @@
 //! emitting the same `job-progress` / `job-done` / `job-error` / `job-cancelled`
 //! events used by the existing `convert_file` command.
 
+pub mod ai_tools;
 pub mod analysis;
 pub mod audio_filters;
 pub mod audio_offset;
