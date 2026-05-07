@@ -1014,6 +1014,229 @@ fn bg_remove_video(
     Ok(())
 }
 
+// ── TASK-H1: Neural Matte (RVM) ───────────────────────────────────────────────
+
+/// Run Robust Video Matting (RVM) inference on `input`, writing an
+/// alpha-channel video to `output`.
+///
+/// `output_format`: `"mov_qtrle"` (MOV + QTRLE, preserves alpha) or
+/// `"webm_vp9"` (WebM VP9 with alpha).
+///
+/// Detection: checks for the `rvm` Python module and `torchvision`.
+/// Per-frame progress is printed by the inline script to stdout.
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[allow(clippy::too_many_arguments)]
+pub fn run_neural_matte(
+    window: &Window,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    output_format: &str,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<(), String> {
+    // Detect: require both torchvision and rvm Python module.
+    let rvm_available = python_module_available("torchvision")
+        && (python_module_available("rvm") || tool_available("rvm"));
+
+    if !rvm_available {
+        return Err(
+            "Neural matting requires Robust Video Matting: pip install robust-video-matting"
+                .to_string(),
+        );
+    }
+
+    let input_esc = input.replace('\\', "\\\\").replace('\'', "\\'");
+
+    // Step 1: Run RVM inference — write RGBA frames to a temp directory.
+    let frames_dir = format!("{}.rvm_frames", output);
+    std::fs::create_dir_all(&frames_dir).map_err(|e| format!("create frames dir: {e}"))?;
+    let frames_dir_esc = frames_dir.replace('\\', "\\\\").replace('\'', "\\'");
+
+    emit_progress(window, job_id, 5.0, "Starting RVM inference…");
+
+    let script = format!(
+        r#"
+import sys, os, glob
+try:
+    import torch
+    import torchvision
+    from torchvision.transforms.functional import to_tensor
+    from PIL import Image
+    import cv2
+    import numpy as np
+
+    try:
+        from rvm import MattingNetwork
+    except ImportError:
+        import robust_video_matting as rvm_mod
+        MattingNetwork = rvm_mod.MattingNetwork
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = MattingNetwork('mobilenetv3').eval().to(device)
+
+    cap = cv2.VideoCapture('{input}')
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
+        total = 1
+
+    rec = [None] * 4
+    downsample_ratio = 0.25
+
+    frame_idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        # BGR -> RGB -> tensor
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        src = to_tensor(rgb).unsqueeze(0).to(device)
+        with torch.no_grad():
+            fgr, pha, *rec = model(src, *rec, downsample_ratio)
+        # Compose RGBA frame
+        fgr_np = (fgr[0].permute(1,2,0).cpu().numpy() * 255).clip(0,255).astype(np.uint8)
+        pha_np = (pha[0,0].cpu().numpy() * 255).clip(0,255).astype(np.uint8)
+        rgba = np.dstack([fgr_np, pha_np])
+        out_path = os.path.join('{frames_dir}', f'frame_{{frame_idx:06d}}.png')
+        Image.fromarray(rgba, 'RGBA').save(out_path)
+        frame_idx += 1
+        if frame_idx % max(1, total // 50) == 0:
+            print(f'PROGRESS:{{frame_idx}}/{{total}}', flush=True)
+
+    cap.release()
+    print(f'PROGRESS:{{frame_idx}}/{{frame_idx}}', flush=True)
+except Exception as e:
+    print(f'ERROR: {{e}}', file=sys.stderr)
+    sys.exit(1)
+"#,
+        input = input_esc,
+        frames_dir = frames_dir_esc,
+    );
+
+    {
+        let child = Command::new("python3")
+            .args(["-c", &script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("python3 not found: {e}"))?;
+
+        if register_child(&processes, job_id, &cancelled, child) {
+            let _ = std::fs::remove_dir_all(&frames_dir);
+            return Err("CANCELLED".to_string());
+        }
+
+        let stdout = {
+            let mut map = processes.lock();
+            map.get_mut(job_id).and_then(|c| c.stdout.take())
+        };
+        let stderr = {
+            let mut map = processes.lock();
+            map.get_mut(job_id).and_then(|c| c.stderr.take())
+        };
+
+        let stderr_thread = std::thread::spawn(move || {
+            let mut lines = Vec::new();
+            if let Some(s) = stderr {
+                let reader = BufReader::new(s);
+                for line in reader.lines().map_while(Result::ok) {
+                    lines.push(line);
+                }
+            }
+            lines.join("\n")
+        });
+
+        if let Some(out) = stdout {
+            let reader = BufReader::new(out);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Some(pct) = parse_progress_line(&line) {
+                    // Scale 5%–80% for RVM inference phase.
+                    let scaled = 5.0 + pct * 0.75;
+                    emit_progress(window, job_id, scaled, &format!("{pct:.0}% matted"));
+                }
+            }
+        }
+
+        let stderr_buf = stderr_thread.join().unwrap_or_default();
+        let result = wait_child(&processes, job_id, &cancelled, stderr_buf);
+        if let Err(e) = result {
+            let _ = std::fs::remove_dir_all(&frames_dir);
+            return Err(e);
+        }
+    }
+
+    if cancelled.load(Ordering::SeqCst) {
+        let _ = std::fs::remove_dir_all(&frames_dir);
+        return Err("CANCELLED".to_string());
+    }
+
+    // Step 2: Encode RGBA frames with FFmpeg to the target format.
+    emit_progress(window, job_id, 82.0, "Encoding alpha output…");
+
+    let (codec_args, pix_fmt): (&[&str], &str) = match output_format {
+        "webm_vp9" => (
+            &["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "20"],
+            "yuva420p",
+        ),
+        _ => (
+            // mov_qtrle (default)
+            &["-c:v", "qtrle"],
+            "argb",
+        ),
+    };
+
+    {
+        let frame_pattern = format!("{}/frame_%06d.png", frames_dir.trim_end_matches('/'));
+        let mut ffmpeg_args: Vec<String> = vec![
+            "-y".into(),
+            "-framerate".into(),
+            "25".into(),
+            "-i".into(),
+            frame_pattern,
+        ];
+        for &a in codec_args {
+            ffmpeg_args.push(a.into());
+        }
+        ffmpeg_args.push("-pix_fmt".into());
+        ffmpeg_args.push(pix_fmt.into());
+        ffmpeg_args.push("-an".into());
+        ffmpeg_args.push(output.to_string());
+
+        let child = Command::new("ffmpeg")
+            .args(&ffmpeg_args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("ffmpeg not found: {e}"))?;
+
+        if register_child(&processes, job_id, &cancelled, child) {
+            let _ = std::fs::remove_dir_all(&frames_dir);
+            return Err("CANCELLED".to_string());
+        }
+
+        let stderr = {
+            let mut map = processes.lock();
+            map.get_mut(job_id).and_then(|c| c.stderr.take())
+        };
+        let stderr_buf = stderr
+            .map(|s| {
+                BufReader::new(s)
+                    .lines()
+                    .map_while(Result::ok)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+
+        let result = wait_child(&processes, job_id, &cancelled, stderr_buf);
+        let _ = std::fs::remove_dir_all(&frames_dir);
+        result?;
+    }
+
+    Ok(())
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

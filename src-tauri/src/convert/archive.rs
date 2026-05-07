@@ -239,6 +239,22 @@ fn extract_archive(
     cancelled: &Arc<AtomicBool>,
     progress_scale: f32,
 ) -> ConvertResult {
+    // DMG: macOS only — use hdiutil attach → cp → hdiutil detach.
+    if in_ext == "dmg" {
+        return extract_dmg(
+            progress,
+            job_id,
+            input_path,
+            dest_dir,
+            processes,
+            cancelled,
+            progress_scale,
+        );
+    }
+
+    // ISO: 7z handles ISO natively — fall through to the default 7z path.
+    // (No special branch needed; 7z reads ISO images directly.)
+
     // For rar/cbr, prefer `unar` (libre, handles modern RAR5 reliably);
     // fall back to 7z which can also read RAR.
     let use_unar = matches!(in_ext, "rar" | "cbr") && tool_in_path("unar");
@@ -843,6 +859,263 @@ fn repack_dmg(
             truncate_stderr(&error_output)
         });
     }
+    ConvertResult::Done
+}
+
+// ── TASK-H3: DMG extraction ────────────────────────────────────────────────────
+
+/// Extract a DMG by attaching it read-only with `hdiutil`, copying contents,
+/// and detaching the mount point. macOS only — returns an error on other
+/// platforms.
+#[allow(clippy::too_many_arguments)]
+fn extract_dmg(
+    progress: ProgressFn<'_>,
+    job_id: &str,
+    input_path: &str,
+    dest_dir: &str,
+    processes: Arc<Mutex<HashMap<String, Child>>>,
+    cancelled: &Arc<AtomicBool>,
+    progress_scale: f32,
+) -> ConvertResult {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (
+            progress,
+            job_id,
+            input_path,
+            dest_dir,
+            processes,
+            cancelled,
+            progress_scale,
+        );
+        return ConvertResult::Error("DMG extraction requires macOS".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if !tool_in_path("hdiutil") {
+            return ConvertResult::Error("DMG extraction requires macOS `hdiutil`".to_string());
+        }
+
+        if let Err(e) = std::fs::create_dir_all(dest_dir) {
+            return ConvertResult::Error(e.to_string());
+        }
+
+        // Use a temp mount point distinct from the dest dir so we never
+        // accidentally write the DMG's metadata into the extraction root.
+        let mount_point = format!("{}_dmg_mnt_{}", dest_dir, job_id);
+
+        progress(ProgressEvent::Phase("Attaching DMG…".to_string()));
+        progress(ProgressEvent::Percent(0.1 * progress_scale));
+
+        // Step 1: hdiutil attach
+        {
+            let mut child = match Command::new("hdiutil")
+                .args([
+                    "attach",
+                    "-readonly",
+                    "-nobrowse",
+                    "-mountpoint",
+                    &mount_point,
+                    input_path,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => return ConvertResult::Error(format!("hdiutil not found: {e}")),
+            };
+
+            let stderr = child.stderr.take();
+            {
+                let mut map = processes.lock();
+                map.insert(job_id.to_string(), child);
+            }
+            let stderr_lines: Vec<String> = stderr
+                .map(|s| BufReader::new(s).lines().map_while(Result::ok).collect())
+                .unwrap_or_default();
+
+            let child_opt = {
+                let mut map = processes.lock();
+                map.remove(job_id)
+            };
+            let success = match child_opt {
+                Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+                None => false,
+            };
+            if cancelled.load(Ordering::SeqCst) {
+                return ConvertResult::Cancelled;
+            }
+            if !success {
+                let msg = stderr_lines.join("\n");
+                return ConvertResult::Error(if msg.trim().is_empty() {
+                    "hdiutil attach failed".to_string()
+                } else {
+                    truncate_stderr(&msg)
+                });
+            }
+        }
+
+        progress(ProgressEvent::Phase("Copying DMG contents…".to_string()));
+        progress(ProgressEvent::Percent(0.4 * progress_scale));
+
+        // Step 2: cp -r <mnt>/. <dest_dir>
+        let cp_result: Result<(), String> = {
+            let src = format!("{}/.", mount_point.trim_end_matches('/'));
+            let mut child = match Command::new("cp")
+                .args(["-r", &src, dest_dir])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    // Detach before returning error.
+                    let _ = Command::new("hdiutil")
+                        .args(["detach", &mount_point, "-quiet"])
+                        .output();
+                    return ConvertResult::Error(format!("cp not found: {e}"));
+                }
+            };
+            let stderr = child.stderr.take();
+            {
+                let mut map = processes.lock();
+                map.insert(job_id.to_string(), child);
+            }
+            let stderr_lines: Vec<String> = stderr
+                .map(|s| BufReader::new(s).lines().map_while(Result::ok).collect())
+                .unwrap_or_default();
+            let child_opt = {
+                let mut map = processes.lock();
+                map.remove(job_id)
+            };
+            let success = match child_opt {
+                Some(mut c) => c.wait().map(|s| s.success()).unwrap_or(false),
+                None => false,
+            };
+            if cancelled.load(Ordering::SeqCst) {
+                let _ = Command::new("hdiutil")
+                    .args(["detach", &mount_point, "-quiet"])
+                    .output();
+                return ConvertResult::Cancelled;
+            }
+            if !success {
+                let msg = stderr_lines.join("\n");
+                let _ = Command::new("hdiutil")
+                    .args(["detach", &mount_point, "-quiet"])
+                    .output();
+                return ConvertResult::Error(if msg.trim().is_empty() {
+                    "cp failed copying DMG contents".to_string()
+                } else {
+                    truncate_stderr(&msg)
+                });
+            }
+            Ok(())
+        };
+
+        // Step 3: hdiutil detach (always, regardless of cp result).
+        let _ = Command::new("hdiutil")
+            .args(["detach", &mount_point, "-quiet"])
+            .output();
+
+        if cp_result.is_err() {
+            return ConvertResult::Error("DMG extraction failed".to_string());
+        }
+
+        progress(ProgressEvent::Percent(0.9 * progress_scale));
+
+        if let Err(msg) = verify_extraction_contained(dest_dir) {
+            let _ = std::fs::remove_dir_all(dest_dir);
+            return ConvertResult::Error(msg);
+        }
+
+        ConvertResult::Done
+    }
+}
+
+// ── TASK-H4: CBZ creation ──────────────────────────────────────────────────────
+
+/// Create a CBZ (comic book ZIP) from all image files in `input_dir`,
+/// writing the result to `output_path`. Files are sorted alphabetically —
+/// the standard expectation for comic book readers.
+pub fn create_cbz(input_dir: &str, output_path: &str, progress: ProgressFn<'_>) -> ConvertResult {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    progress(ProgressEvent::Phase("Building CBZ…".to_string()));
+    progress(ProgressEvent::Percent(0.05));
+
+    // Collect image files and sort alphabetically.
+    let image_exts = [
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "avif",
+    ];
+
+    let mut entries: Vec<std::path::PathBuf> = match std::fs::read_dir(input_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|ext| image_exts.contains(&ext.to_lowercase().as_str()))
+                        .unwrap_or(false)
+            })
+            .collect(),
+        Err(e) => return ConvertResult::Error(format!("read input dir: {e}")),
+    };
+
+    if entries.is_empty() {
+        return ConvertResult::Error("No image files found in input directory".to_string());
+    }
+
+    entries.sort();
+
+    let total = entries.len();
+
+    let output_file = match std::fs::File::create(output_path) {
+        Ok(f) => f,
+        Err(e) => return ConvertResult::Error(format!("create CBZ output: {e}")),
+    };
+
+    let mut zip = ZipWriter::new(output_file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    for (i, entry_path) in entries.iter().enumerate() {
+        let file_name = match entry_path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        if let Err(e) = zip.start_file(&file_name, options) {
+            return ConvertResult::Error(format!("zip entry {file_name}: {e}"));
+        }
+
+        let data = match std::fs::read(entry_path) {
+            Ok(d) => d,
+            Err(e) => return ConvertResult::Error(format!("read {file_name}: {e}")),
+        };
+
+        if let Err(e) = zip.write_all(&data) {
+            return ConvertResult::Error(format!("write {file_name}: {e}"));
+        }
+
+        let pct = (i + 1) as f32 / total as f32 * 0.9 + 0.05;
+        progress(ProgressEvent::Percent(pct));
+        progress(ProgressEvent::Phase(format!(
+            "{}/{} images packed",
+            i + 1,
+            total
+        )));
+    }
+
+    if let Err(e) = zip.finish() {
+        return ConvertResult::Error(format!("finalize CBZ: {e}"));
+    }
+
+    progress(ProgressEvent::Percent(1.0));
     ConvertResult::Done
 }
 

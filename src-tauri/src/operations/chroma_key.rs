@@ -333,6 +333,35 @@ pub fn chroma_key_preview(
     Ok(kept.to_string_lossy().to_string())
 }
 
+// ── TASK-H2: CorridorKey stub ──────────────────────────────────────────────────
+
+/// CorridorKey chroma-key stub.
+///
+/// CorridorKey does not have a publicly available standalone CLI binary.
+/// This command slot is wired so the frontend can call it today; the real
+/// implementation will land once an official CLI is released.
+///
+/// Always returns an error with a clear "coming soon" message.
+#[allow(clippy::too_many_arguments)]
+pub fn run_corridor_key(
+    _window: &tauri::Window,
+    _job_id: &str,
+    _input: &str,
+    _output: &str,
+    _key_color: &str,
+    _tolerance: f64,
+    _hair_detail: bool,
+    _processes: std::sync::Arc<
+        parking_lot::Mutex<std::collections::HashMap<String, std::process::Child>>,
+    >,
+    _cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), String> {
+    Err(
+        "CorridorKey is not yet available as a standalone CLI. Check back in a future update."
+            .to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -25,8 +25,10 @@ pub mod replace_audio;
 pub mod rewrap;
 pub mod silence_remove;
 pub mod split;
+pub mod subtitle_ops;
 pub mod subtitling;
 pub mod video_filters;
+pub mod video_inserts;
 
 use parking_lot::Mutex;
 use serde::Serialize;

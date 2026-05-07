@@ -2611,6 +2611,264 @@ fn run_bg_remove(
     Ok(())
 }
 
+// ── TASK-H1: Neural Matte (RVM) ──────────────────────────────────────────────
+
+/// Run Robust Video Matting (RVM) neural matte inference on a video.
+///
+/// `output_format`: `"mov_qtrle"` (default) or `"webm_vp9"` (VP9 alpha).
+/// Requires: `pip install robust-video-matting`
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_neural_matte(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output: String,
+    output_format: Option<String>,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let fmt = output_format.as_deref().unwrap_or("mov_qtrle").to_string();
+        let result = operations::ai_tools::run_neural_matte(
+            &window, &job_id, &input, &output, &fmt, processes, cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+// ── TASK-H2: CorridorKey stub ─────────────────────────────────────────────────
+
+/// CorridorKey chroma-key stub. Always returns a "coming soon" error — the
+/// real CLI is not yet publicly available.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_corridor_key(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    input: String,
+    output: String,
+    key_color: String,
+    tolerance: f64,
+    hair_detail: bool,
+) -> Result<(), String> {
+    validate_input_path(&input)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::chroma_key::run_corridor_key(
+            &window,
+            &job_id,
+            &input,
+            &output,
+            &key_color,
+            tolerance,
+            hair_detail,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &input, outcome);
+    });
+
+    Ok(())
+}
+
+// ── TASK-H5: Video insert ─────────────────────────────────────────────────────
+
+/// Splice a segment from `insert_video` into `base_video` at the time range
+/// `[insert_start, insert_end]` (seconds). Audio from the base is preserved
+/// around the insert; `keep_insert_audio` splices the insert's audio too.
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_video_insert(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    base_video: String,
+    insert_video: String,
+    output: String,
+    insert_start: f64,
+    insert_end: f64,
+    keep_insert_audio: bool,
+) -> Result<(), String> {
+    validate_input_path(&base_video)?;
+    validate_input_path(&insert_video)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::video_inserts::run_video_insert(
+            &window,
+            &job_id,
+            &base_video,
+            &insert_video,
+            &output,
+            insert_start,
+            insert_end,
+            keep_insert_audio,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &base_video, outcome);
+    });
+
+    Ok(())
+}
+
+// ── TASK-H6: Subtitling operations ───────────────────────────────────────────
+
+/// Hard-burn subtitles into video using `ffmpeg -vf subtitles=`.
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_burn_subtitles(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    video: String,
+    subtitle_file: String,
+    output: String,
+) -> Result<(), String> {
+    validate_input_path(&video)?;
+    validate_input_path(&subtitle_file)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::subtitle_ops::run_burn_subtitles(
+            &window,
+            &job_id,
+            &video,
+            &subtitle_file,
+            &output,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &video, outcome);
+    });
+
+    Ok(())
+}
+
+/// Soft-embed a subtitle track into the output container (stream copy).
+///
+/// Emits: job-progress, job-done, job-error, job-cancelled.
+#[command]
+#[allow(clippy::too_many_arguments)]
+fn run_embed_subtitles(
+    window: Window,
+    state: State<'_, AppState>,
+    job_id: String,
+    video: String,
+    subtitle_file: String,
+    output: String,
+) -> Result<(), String> {
+    validate_input_path(&video)?;
+    validate_input_path(&subtitle_file)?;
+    validate_output_name(&output)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.cancellations.lock();
+        map.insert(job_id.clone(), Arc::clone(&cancelled));
+    }
+
+    let processes = Arc::clone(&state.processes);
+    let cancellations = Arc::clone(&state.cancellations);
+
+    std::thread::spawn(move || {
+        let result = operations::subtitle_ops::run_embed_subtitles(
+            &window,
+            &job_id,
+            &video,
+            &subtitle_file,
+            &output,
+            processes,
+            cancelled,
+        );
+        {
+            let mut map = cancellations.lock();
+            map.remove(&job_id);
+        }
+        let outcome = op_result(result, output.clone());
+        finalize_job(&window, job_id, &video, outcome);
+    });
+
+    Ok(())
+}
+
+/// Shift all SRT timestamps by `shift_ms` milliseconds (pure Rust, no FFmpeg).
+/// Negative `shift_ms` shifts subtitles earlier; timestamps are clamped to 0.
+#[command]
+fn run_shift_subtitles(input_srt: String, output_srt: String, shift_ms: i64) -> Result<(), String> {
+    validate_input_path(&input_srt)?;
+    validate_output_name(&output_srt)?;
+    operations::subtitle_ops::run_shift_subtitles(&input_srt, &output_srt, shift_ms)
+}
+
 // ── end AI tool commands ──────────────────────────────────────────────────────
 
 /// Open a URL in the user's default browser.
@@ -2686,6 +2944,12 @@ pub fn run() {
             run_translation,
             run_colorize,
             run_bg_remove,
+            run_neural_matte,
+            run_corridor_key,
+            run_video_insert,
+            run_burn_subtitles,
+            run_embed_subtitles,
+            run_shift_subtitles,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fade");
