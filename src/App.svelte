@@ -1046,7 +1046,7 @@
     if (mediaType === 'audio') {
       const fmt = opts.output_format;
       const m4aIsLossless = fmt === 'm4a' && opts.m4a_subcodec === 'alac';
-      const lossless = ['wav', 'flac', 'alac', 'aiff'].includes(fmt) || m4aIsLossless;
+      const lossless = ['wav', 'flac', 'alac', 'aiff', 'truehd'].includes(fmt) || m4aIsLossless;
       if (!lossless && opts.bitrate) p.push(`${opts.bitrate}k`);
       if (opts.sample_rate) p.push(`${opts.sample_rate}hz`);
       if (fmt === 'mp3') {
@@ -1069,6 +1069,8 @@
         p.push(`${opts.ac3_bitrate}k`);
       } else if (fmt === 'dts') {
         p.push(`${opts.dts_bitrate}k`);
+      } else if (fmt === 'ddp') {
+        p.push(`${opts.eac3_bitrate}k`);
       } else if (fmt === 'flac') {
         p.push(`cmp${opts.flac_compression}`);
       } else if (['wav', 'aiff', 'alac'].includes(fmt) && opts.bit_depth != null) {
@@ -1524,10 +1526,10 @@
     { label: 'Audio', cat: 'audio', fmts: [
       { id: 'mp3', live: true }, { id: 'wav', live: true }, { id: 'flac', live: true }, { id: 'ogg', live: true },
       { id: 'aac', live: true }, { id: 'opus', live: true }, { id: 'm4a', live: true },
-      { id: 'aiff', building: true },
-      { id: 'vorbis', label: 'Vorbis', todo: true },
-      { id: 'ddp', label: 'Dolby Digital+', todo: true },
-      { id: 'truehd', label: 'Dolby TrueHD', todo: true },
+      { id: 'aiff', live: true },
+      { id: 'vorbis', label: 'Vorbis', live: true },
+      { id: 'ddp', label: 'Dolby Digital+', live: true },
+      { id: 'truehd', label: 'Dolby TrueHD', live: true },
     ]},
     { label: 'Video', cat: 'video', fmts: [
       { id: 'mp4', live: true }, { id: 'mov', live: true }, { id: 'webm', live: true }, { id: 'mkv', live: true }, { id: 'avi', live: true }, { id: 'gif', live: true },

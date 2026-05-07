@@ -2,7 +2,7 @@
 
 const IMAGE_EXTS = ['jpg','jpeg','png','webp','tiff','tif','bmp','gif','avif','heic','heif','psd','svg','ico','raw','cr2','nef','arw','dng'];
 const VIDEO_EXTS = ['mp4','mkv','webm','avi','mov','m4v','flv','wmv','ts','mpg','mpeg','3gp','ogv'];
-const AUDIO_EXTS = ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff'];
+const AUDIO_EXTS = ['mp3','wav','flac','ogg','aac','opus','m4a','wma','aiff','vorbis','eac3','ddp','truehd'];
 // `ipynb` lives here for UI grouping; the backend routes it to the
 // notebook pipeline by input extension regardless of output format.
 const DATA_EXTS  = ['csv','json','xml','yaml','yml','toml','tsv','ndjson','jsonl','ipynb'];

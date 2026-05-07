@@ -38,10 +38,10 @@
     }
   });
 
-  const isLossless = $derived(['flac','wav','aiff','alac'].includes(options.output_format));
+  const isLossless = $derived(['flac','wav','aiff','alac','truehd'].includes(options.output_format));
   // m4a is lossless when ALAC sub-codec selected
   const m4aIsLossless = $derived(options.output_format === 'm4a' && options.m4a_subcodec === 'alac');
-  const hideBitrate = $derived(isLossless || m4aIsLossless || options.output_format === 'ac3' || options.output_format === 'dts' || options.output_format === 'mp3' || (options.output_format === 'ogg' && options.ogg_bitrate_mode === 'vbr'));
+  const hideBitrate = $derived(isLossless || m4aIsLossless || options.output_format === 'ac3' || options.output_format === 'dts' || options.output_format === 'ddp' || options.output_format === 'mp3' || (options.output_format === 'ogg' && options.ogg_bitrate_mode === 'vbr'));
 
   function parseTime(raw) {
     if (!raw && raw !== 0) return null;
@@ -409,6 +409,72 @@
       <div class="grid" style="grid-template-columns:repeat(2,1fr)">
         {#each [['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
           <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 2)}>{lbl}</button>
+        {/each}
+      </div>
+    </fieldset>
+
+  {:else if options.output_format === 'vorbis'}
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels">
+      <legend class="fade-label">Channels</legend>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        {#each [['source','Source'],['mono','Mono'],['stereo','Stereo']] as [v, lbl], i}
+          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
+        {/each}
+      </div>
+    </fieldset>
+
+  {:else if options.output_format === 'ddp'}
+    <fieldset data-tooltip="Dolby Digital+ (E-AC-3) — 384 kbps standard · 448 kbps typical broadcast · 640 kbps high quality">
+      <legend class="fade-label">Bitrate — kbps</legend>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        {#each [384, 448, 640] as br, i}
+          <button onclick={() => options.eac3_bitrate = br} class={seg(options.eac3_bitrate === br, i, 3)}>{br}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Mono — single channel · Stereo — two channels · 5.1 — surround">
+      <legend class="fade-label">Channels</legend>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        {#each [['mono','Mono'],['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
+          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
+        {/each}
+      </div>
+    </fieldset>
+
+  {:else if options.output_format === 'truehd'}
+    <div class="px-3 py-2 text-[12px] text-[var(--text-secondary)] border border-[var(--border)] rounded-md bg-[var(--surface-hint)]"
+         data-tooltip="Dolby TrueHD is lossless — bitrate is determined by the source content.">
+      Lossless — bitrate not configurable
+    </div>
+    <fieldset data-tooltip="44.1 kHz for music/CD · 48 kHz for video sync · 96/192 kHz for recording/archival">
+      <legend class="fade-label">Sample Rate</legend>
+      <div class="inline-flex flex-col">
+        {#each sampleRates as sr, i}
+          <button onclick={() => options.sample_rate = sr.value} class={segV(options.sample_rate === sr.value, i, sampleRates.length)}>{sr.label}</button>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset data-tooltip="Source — match input · Stereo — two channels · 5.1 — surround">
+      <legend class="fade-label">Channels</legend>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        {#each [['source','Source'],['stereo','Stereo'],['5.1','5.1']] as [v, lbl], i}
+          <button onclick={() => options.channels = v} class={seg(options.channels === v, i, 3)}>{lbl}</button>
         {/each}
       </div>
     </fieldset>

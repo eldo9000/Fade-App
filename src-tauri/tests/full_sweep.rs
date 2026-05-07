@@ -688,6 +688,85 @@ fn m4a_cases() -> Vec<Case> {
     v
 }
 
+fn aiff_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for bd in [16u32, 24, 32] {
+        for sr in [44100u32, 48000, 96000] {
+            for channels in ["mono", "stereo"] {
+                v.push(Case {
+                    name: format!("aiff_b{bd}_sr{sr}_{channels}"),
+                    ext: "aiff",
+                    opts: ConvertOptions {
+                        output_format: "aiff".into(),
+                        bit_depth: Some(bd),
+                        sample_rate: Some(sr),
+                        channels: Some(channels.into()),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+    }
+    v
+}
+
+fn vorbis_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for br in [64u32, 128, 256] {
+        for channels in ["mono", "stereo"] {
+            v.push(Case {
+                name: format!("vorbis_br{br}_{channels}"),
+                ext: "vorbis",
+                opts: ConvertOptions {
+                    output_format: "vorbis".into(),
+                    bitrate: Some(br),
+                    channels: Some(channels.into()),
+                    ..Default::default()
+                },
+            });
+        }
+    }
+    v
+}
+
+fn ddp_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for br in [384u32, 448, 640] {
+        for channels in ["stereo", "5.1"] {
+            v.push(Case {
+                name: format!("ddp_br{br}_{channels}"),
+                ext: "ddp",
+                opts: ConvertOptions {
+                    output_format: "ddp".into(),
+                    eac3_bitrate: Some(br),
+                    channels: Some(channels.into()),
+                    ..Default::default()
+                },
+            });
+        }
+    }
+    v
+}
+
+fn truehd_cases() -> Vec<Case> {
+    let mut v = Vec::new();
+    for sr in [44100u32, 48000, 96000] {
+        for channels in ["stereo", "5.1"] {
+            v.push(Case {
+                name: format!("truehd_sr{sr}_{channels}"),
+                ext: "truehd",
+                opts: ConvertOptions {
+                    output_format: "truehd".into(),
+                    sample_rate: Some(sr),
+                    channels: Some(channels.into()),
+                    ..Default::default()
+                },
+            });
+        }
+    }
+    v
+}
+
 #[test]
 #[ignore]
 fn audio_full() {
@@ -703,6 +782,10 @@ fn audio_full() {
     cases.extend(aac_cases());
     cases.extend(opus_cases());
     cases.extend(m4a_cases());
+    cases.extend(aiff_cases());
+    cases.extend(vorbis_cases());
+    cases.extend(ddp_cases());
+    cases.extend(truehd_cases());
 
     let outcomes = run_audio_cases(&dir, &fixture, cases);
     report("audio", outcomes);

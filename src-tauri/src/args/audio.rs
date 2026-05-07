@@ -138,6 +138,25 @@ fn build_codec_args(opts: &ConvertOptions) -> (Vec<String>, bool) {
                 args.extend(["-b:a".to_string(), format!("{}k", br)]);
             }
         }
+        "vorbis" => {
+            // libvorbis in OGG container. Encoder is experimental — requires -strict -2.
+            args.extend(["-c:a".to_string(), "vorbis".to_string()]);
+            args.extend(["-strict".to_string(), "-2".to_string()]);
+        }
+        "eac3" | "ddp" => {
+            // Dolby Digital+ (E-AC-3). FFmpeg ships a native encoder.
+            args.extend(["-c:a".to_string(), "eac3".to_string()]);
+            if let Some(br) = opts.eac3_bitrate {
+                suppress_base_bitrate = true;
+                args.extend(["-b:a".to_string(), format!("{}k", br)]);
+            }
+        }
+        "truehd" => {
+            // Dolby TrueHD — experimental encoder, requires -strict -2.
+            args.extend(["-c:a".to_string(), "truehd".to_string()]);
+            args.extend(["-strict".to_string(), "-2".to_string()]);
+            suppress_base_bitrate = true;
+        }
         "wav" => {
             suppress_base_bitrate = true;
             match opts.bit_depth {

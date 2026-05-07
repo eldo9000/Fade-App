@@ -226,6 +226,7 @@ pub struct ConvertOptions {
     pub wma_mode: Option<String>,     // "standard" | "pro" | "lossless"
     pub ac3_bitrate: Option<u32>,     // 192 | 384 | 448 | 640 (kbps)
     pub dts_bitrate: Option<u32>,     // 754 | 1510 (kbps)
+    pub eac3_bitrate: Option<u32>,    // 384 | 448 | 640 (kbps)
 
     // ── Format-specific video controls ──
     pub crf: Option<u32>,                  // 0-51
@@ -332,6 +333,7 @@ impl Default for ConvertOptions {
             wma_mode: None,
             ac3_bitrate: None,
             dts_bitrate: None,
+            eac3_bitrate: None,
 
             crf: None,
             preset: None,
@@ -645,7 +647,8 @@ pub(crate) fn classify_ext(ext: &str) -> &'static str {
         "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "flv" | "wmv" | "ts" | "mpg" | "mpeg"
         | "3gp" | "ogv" | "divx" | "rmvb" | "asf" => "video",
         "seq_png" | "seq_jpg" | "seq_tiff" => "video",
-        "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" => "audio",
+        "mp3" | "wav" | "flac" | "ogg" | "aac" | "opus" | "m4a" | "wma" | "aiff" | "vorbis"
+        | "eac3" | "ddp" | "truehd" => "audio",
         "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "tsv" | "ndjson" | "jsonl" => "data",
         "md" | "markdown" | "html" | "htm" | "txt" => "document",
         "zip" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" | "rar" | "iso" | "dmg" | "cbz"
