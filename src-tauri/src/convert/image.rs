@@ -142,9 +142,7 @@ fn run_jxl(
 
     // Step 1: if input is JXL, decode to PNG via djxl.
     let effective_input: &str = if input_is_jxl {
-        let status = Command::new("djxl")
-            .args([input, &tmp])
-            .status();
+        let status = Command::new("djxl").args([input, &tmp]).status();
         match status {
             Ok(s) if s.success() => &tmp,
             Ok(s) => {
@@ -171,7 +169,14 @@ fn run_jxl(
                 output_format: "png".into(),
                 ..opts.clone()
             };
-            let result = run_magick(effective_input, &tmp, &png_opts, job_id, Arc::clone(&processes), cancelled);
+            let result = run_magick(
+                effective_input,
+                &tmp,
+                &png_opts,
+                job_id,
+                Arc::clone(&processes),
+                cancelled,
+            );
             match result {
                 ConvertResult::Done => {}
                 other => {
@@ -222,9 +227,7 @@ fn run_jxl(
 
 fn check_exr_support() -> Option<ConvertResult> {
     // Probe IM's list of supported delegates for "openexr".
-    let output = Command::new("magick")
-        .args(["-list", "configure"])
-        .output();
+    let output = Command::new("magick").args(["-list", "configure"]).output();
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
         if text.contains("openexr") {
@@ -249,13 +252,13 @@ fn check_exr_support() -> Option<ConvertResult> {
 
 fn check_raw_output(output_ext: &str) -> Option<ConvertResult> {
     match output_ext {
-        "cr2" | "cr3" | "nef" | "arw" | "orf" | "rw2" | "raw" => Some(ConvertResult::Error(
-            format!(
+        "cr2" | "cr3" | "nef" | "arw" | "orf" | "rw2" | "raw" => {
+            Some(ConvertResult::Error(format!(
                 "{} is a read-only camera RAW format — it cannot be used as an output target. \
                  Select a raster format (JPEG, PNG, TIFF) instead.",
                 output_ext.to_uppercase()
-            ),
-        )),
+            )))
+        }
         _ => None,
     }
 }

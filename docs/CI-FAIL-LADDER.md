@@ -71,3 +71,15 @@ Append-only triage record per `/check-in`. Closing line marks each arc.
 - **Next:** `.github/workflows/release.yml` — Resolve tag step + Stage artifacts step + Generate latest.json step
 
 ## Fail arc closed — 2026-05-06 — 3 entries — green CI 25449746387
+
+---
+
+## Fail #1 — 2026-05-07 — cargo fmt check: convert/image.rs line-wrapping
+
+- **Q1 in-last-commit:** yes — `src-tauri/src/convert/image.rs` in commit `fcf5b3f`
+- **Q2 named-error:** yes — `Diff in .../convert/image.rs:142`, `:171`, `:222`, `:249`, `:257`
+- **Q3 seen-before:** no — first failure in this arc
+- **Q4 broken-vs-missing:** broken — code compiles; formatter wants different line-break placement on chained calls and macro args
+- **Verdict:** QUICK (budget: 1 attempt)
+- **Hypothesis:** Worker ran `cargo check` but not `cargo fmt --check`; chained `.args([...]).status()` calls and `format!(...)` macro bodies need reformatting
+- **Next:** `cargo fmt --manifest-path src-tauri/Cargo.toml`
